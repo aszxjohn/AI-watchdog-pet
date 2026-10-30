@@ -1,0 +1,14 @@
+{
+ "note": "工作中 雙槍 v2: #197 complete body as root. Near arm (screen right) elbow on the body's right side, forearm across the chest to the lower pistol; far arm (screen left) forearm toward the camera, upper pistol under the chin. Rifle on the back, shield on the far shoulder. Canvas = the 94.5 s reference crop.",
+ "canvas": [380, 275],
+ "nodes": [
+  {"name": "body", "part": 197, "at": [225.5, 147], "pivot": [58.5, 72.5], "rot": -8, "scale": 1.6, "z": 0,
+   "erase": [[[0, 58], [22, 58], [24, 80], [22, 112], [0, 112]]]},
+  {"name": "rifle", "part": 242, "parent": "body", "atCanvas": [115.4, 107.1], "pivot": [68, 62], "rot": 8, "scale": 0.97, "z": -2},
+  {"name": "shield", "part": 298, "parent": "body", "atCanvas": [322, 84], "pivot": [40, 20], "rot": 6, "scale": 0.6, "z": -1},
+  {"name": "farFore", "part": 94, "parent": "body", "at": [20, 66], "pivot": [4, 11], "rot": 28, "sx": 0.65, "z": 1},
+  {"name": "farGun", "part": 141, "parent": "farFore", "at": [34, 11], "pivot": [50, 10], "rot": -20, "z": 2},
+  {"name": "nearFore", "part": 93, "flip": true, "parent": "body", "at": [72, 62], "pivot": [46, 11], "rot": 13.5, "z": 3},
+  {"name": "nearGun", "part": 102, "parent": "nearFore", "at": [16, 11], "pivot": [50, 10], "rot": -8, "z": 4}
+ ]
+}

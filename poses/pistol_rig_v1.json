@@ -1,0 +1,14 @@
+{
+ "note": "工作中 雙槍 v1: #197 complete body as root; arms/pistols/rifle/shield hung on its joints. Canvas = the 94.5 s reference crop for comparison.",
+ "canvas": [380, 275],
+ "nodes": [
+  {"name": "body", "part": 197, "at": [225.5, 147], "pivot": [58.5, 72.5], "rot": -8, "scale": 1.6, "z": 0,
+   "erase": [[[0, 58], [22, 58], [24, 80], [22, 112], [0, 112]]]},
+  {"name": "rifle", "part": 242, "parent": "body", "atCanvas": [115.4, 107.1], "pivot": [68, 62], "rot": 8, "scale": 0.97, "z": -2},
+  {"name": "shield", "part": 298, "parent": "body", "atCanvas": [320.8, 84.4], "pivot": [40, 20], "rot": 8, "scale": 0.51, "z": -1},
+  {"name": "farFore", "part": 94, "flip": true, "parent": "body", "at": [64, 54], "pivot": [46, 11], "rot": 0, "z": 1},
+  {"name": "farGun", "part": 141, "parent": "farFore", "at": [16, 11], "pivot": [50, 10], "rot": 0, "z": 2},
+  {"name": "nearFore", "part": 93, "flip": true, "parent": "body", "at": [22, 70], "pivot": [46, 11], "rot": 0, "z": 3},
+  {"name": "nearGun", "part": 102, "parent": "nearFore", "at": [16, 11], "pivot": [50, 10], "rot": 0, "z": 4}
+ ]
+}

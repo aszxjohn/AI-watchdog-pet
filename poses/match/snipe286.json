@@ -1,0 +1,24 @@
+[
+ {
+  "part": 260,
+  "scale": 0.8,
+  "x": 122,
+  "y": 146
+ },
+ {
+  "part": 286,
+  "scale": 1.0,
+  "x": 0,
+  "y": 0
+ },
+ {
+  "part": 165,
+  "flip": true,
+  "scale": 1.25,
+  "cx": 191,
+  "cy": 82
+ },
+ {
+  "note": "whole composite flipped left-right"
+ }
+]

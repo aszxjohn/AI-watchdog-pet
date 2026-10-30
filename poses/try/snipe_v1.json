@@ -1,0 +1,39 @@
+{
+ "sheet": "assets/raw/world_dynames.png",
+ "parts": "assets/parts/world_dynames/parts.json",
+ "layers": [
+  {
+   "part": 207,
+   "x": 24,
+   "y": 40,
+   "pivot": [
+    88,
+    14
+   ]
+  },
+  {
+   "part": 206,
+   "flip": true,
+   "x": 92,
+   "y": 40,
+   "pivot": [
+    26,
+    14
+   ]
+  },
+  {
+   "part": 197,
+   "x": 58.5,
+   "y": 72.5
+  },
+  {
+   "part": 231,
+   "x": 22,
+   "y": 66,
+   "pivot": [
+    140,
+    42
+   ]
+  }
+ ]
+}

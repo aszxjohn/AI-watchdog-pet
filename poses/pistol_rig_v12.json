@@ -1,0 +1,209 @@
+{
+ "note": "工作中 雙槍 v12 (2026-10-29): skeleton, not stickers. #197 (complete small body, same angle as the G Gen Wars GN Beam Pistol frame at 94.5 s) is the root; near arm = elbow on the body's right side, forearm #93 across the chest, pistol fist #102; right pistol hand = #98 (fingers wrapped round the grip show on the camera side = right hand; #102/#141 show the back of the hand = left hand; #98 is also drawn smaller, the far hand), pistol fist #141; lower leg #200 on the knee; rifle #242 on the back; shield #298 on the far shoulder. Canvas = the 94.5 s crop. #197's right shoulder shield and raised right foot (screen left) are kept. Right shoulder shield (#298 edge-on) raised up-left behind the rifle, as in the video. Right arm (v11): shoulder at body (25,57) under the chin's right side; held level and straight forward (14 deg down): upper arm #83F (shoulder socket on the shoulder) and forearm #94F (fist cut off) both horizontal, the forearm hung near the shoulder end of the upper arm and drawn in front, so the overlap reads as the arm coming toward the camera; pistol hand #98 at the wrist, tipped 18 deg down. v12: the two pistols turned 4.6 deg at the wrists (right up, left down) so both barrels point the same way (14.5 deg below level) and the bolts fly on parallel lines.",
+ "canvas": [
+  380,
+  275
+ ],
+ "nodes": [
+  {
+   "name": "body",
+   "part": 197,
+   "at": [
+    225.5,
+    147
+   ],
+   "pivot": [
+    58.5,
+    72.5
+   ],
+   "rot": -8,
+   "scale": 1.6,
+   "z": 0,
+   "erase": [
+    [
+     [
+      45,
+      106
+     ],
+     [
+      100,
+      102
+     ],
+     [
+      104,
+      145
+     ],
+     [
+      45,
+      145
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "shin",
+   "part": 200,
+   "flip": true,
+   "parent": "body",
+   "at": [
+    76,
+    104
+   ],
+   "pivot": [
+    55,
+    18
+   ],
+   "rot": 20,
+   "scale": 0.8,
+   "z": 0.5
+  },
+  {
+   "name": "rifle",
+   "part": 242,
+   "parent": "body",
+   "atCanvas": [
+    195,
+    60
+   ],
+   "pivot": [
+    119.3,
+    31.7
+   ],
+   "rot": 8,
+   "scale": 0.97,
+   "z": -2
+  },
+  {
+   "name": "shield",
+   "part": 298,
+   "parent": "body",
+   "atCanvas": [
+    322,
+    84
+   ],
+   "pivot": [
+    40,
+    20
+   ],
+   "rot": 6,
+   "scale": 0.6,
+   "z": -1
+  },
+  {
+   "name": "nearFore",
+   "part": 93,
+   "flip": true,
+   "parent": "body",
+   "at": [
+    72,
+    62
+   ],
+   "pivot": [
+    46,
+    11
+   ],
+   "rot": 13.5,
+   "z": 3
+  },
+  {
+   "name": "nearGun",
+   "part": 102,
+   "parent": "nearFore",
+   "at": [
+    16,
+    11
+   ],
+   "pivot": [
+    50,
+    10
+   ],
+   "rot": -3.4,
+   "z": 4
+  },
+  {
+   "name": "rShield",
+   "part": 298,
+   "parent": "body",
+   "atCanvas": [
+    103,
+    89
+   ],
+   "pivot": [
+    40,
+    120
+   ],
+   "rot": -27,
+   "scale": 0.32,
+   "z": -3
+  },
+  {
+   "name": "rUpper",
+   "part": 83,
+   "flip": true,
+   "parent": "body",
+   "at": [
+    25,
+    57
+   ],
+   "pivot": [
+    36,
+    11
+   ],
+   "rot": 22,
+   "scale": 0.8,
+   "z": 1
+  },
+  {
+   "name": "rFore",
+   "part": 94,
+   "flip": true,
+   "parent": "rUpper",
+   "at": [
+    28,
+    12
+   ],
+   "pivot": [
+    46,
+    11
+   ],
+   "rot": 0.0,
+   "z": 1.5,
+   "erase": [
+    [
+     [
+      0,
+      0
+     ],
+     [
+      16,
+      0
+     ],
+     [
+      16,
+      23
+     ],
+     [
+      0,
+      23
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "farGun",
+   "part": 98,
+   "parent": "rFore",
+   "at": [
+    17,
+    11
+   ],
+   "pivot": [
+    31,
+    11
+   ],
+   "rot": -0.6,
+   "scale": 1.2,
+   "z": 2
+  }
+ ]
+}

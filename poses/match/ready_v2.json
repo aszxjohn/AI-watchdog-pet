@@ -1,0 +1,16 @@
+[
+ {"part": 298, "flip": true, "scale": 0.8, "rot": 30, "x": 298, "y": 72},
+ {"part": 253, "flip": false, "scale": 1.0, "rot": 0, "x": 389, "y": 105},
+ {"part": 262, "flip": false, "scale": 1.0, "rot": -65, "x": 201, "y": 108},
+ {"part": 177, "flip": true, "scale": 0.85, "rot": -12, "x": 301, "y": 0},
+ {"part": 204, "flip": false, "scale": 1.1, "rot": 0, "x": 309, "y": 242},
+ {"part": 213, "flip": false, "scale": 0.8, "rot": 0, "x": 309, "y": 270},
+ {"part": 277, "flip": true, "scale": 0.8, "rot": 0, "x": 335, "y": 206},
+ {"part": 193, "flip": false, "scale": 0.8, "rot": 0, "x": 351, "y": 178},
+ {"part": 146, "flip": false, "scale": 0.8, "rot": 0, "x": 247, "y": 213},
+ {"part": 50, "flip": false, "scale": 0.75, "rot": 0, "x": 295, "y": 145},
+ {"part": 128, "flip": false, "scale": 0.75, "rot": 0, "x": 287, "y": 163},
+ {"part": 74, "flip": false, "scale": 0.75, "rot": 0, "x": 349, "y": 140},
+ {"part": 101, "flip": false, "scale": 0.75, "rot": 0, "x": 353, "y": 152},
+ {"part": 57, "flip": false, "scale": 0.55, "rot": 15, "x": 303, "y": 140}
+]

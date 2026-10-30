@@ -1,0 +1,15 @@
+# 這個 repo 只放程式碼（公開）。遊戲素材（萬代南夢宮拆圖、特效包、影片格）、
+# 由素材產生的 units/、App 圖示、定版備份、預覽圖、編譯產物都只留在本機，不上傳。
+/*
+!/.gitignore
+!/README.md
+!/Info.plist
+!/build.sh
+!/Sources/
+!/tools/
+!/poses/
+!/characters/
+
+.DS_Store
+__pycache__/
+*.pyc

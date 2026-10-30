@@ -1,0 +1,10 @@
+[
+ {"part": 207, "flip": false, "scale": 1.0, "rot": 0, "x": 203, "y": 62},
+ {"part": 181, "flip": false, "scale": 1.2, "rot": 0, "x": 351, "y": 120},
+ {"part": 213, "flip": false, "scale": 1.2, "rot": 0, "x": 330, "y": 205},
+ {"part": 204, "flip": false, "scale": 1.2, "rot": 0, "x": 334, "y": 180},
+ {"part": 193, "flip": true, "scale": 1.2, "rot": 0, "x": 333, "y": 140},
+ {"part": 107, "flip": false, "scale": 1.3, "rot": 3, "x": 282, "y": 83},
+ {"part": 281, "flip": false, "scale": 1.15, "rot": 0, "x": 106, "y": 122},
+ {"part": 232, "flip": true, "scale": 1.15, "rot": 0, "x": 300, "y": 180}
+]

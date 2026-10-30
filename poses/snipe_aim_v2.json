@@ -1,0 +1,264 @@
+{
+ "note": "Thinking-state aim pose, approved 2026-10-28. Drawn on a 420x340 canvas in #286's own pixels, back to front, then the whole canvas is flipped left-right so the unit faces left.",
+ "canvas": [
+  420,
+  340
+ ],
+ "flipAll": true,
+ "layers": [
+  {
+   "part": 260,
+   "why": "rifle behind the body, restores the barrel #286's rip cuts off",
+   "scale": 0.8,
+   "x": 122,
+   "y": 146
+  },
+  {
+   "part": 286,
+   "why": "complete pre-drawn body holding the rifle in both hands",
+   "scale": 1.0,
+   "x": 0,
+   "y": 0,
+   "erase": [
+    [
+     [
+      0,
+      20
+     ],
+     [
+      134,
+      20
+     ],
+     [
+      134,
+      113
+     ],
+     [
+      57,
+      113
+     ],
+     [
+      57,
+      175
+     ],
+     [
+      0,
+      175
+     ]
+    ],
+    [
+     [
+      222,
+      0
+     ],
+     [
+      384,
+      0
+     ],
+     [
+      384,
+      110
+     ],
+     [
+      340,
+      82
+     ],
+     [
+      306,
+      66
+     ],
+     [
+      298,
+      60
+     ],
+     [
+      240,
+      73
+     ],
+     [
+      222,
+      76
+     ]
+    ],
+    [
+     [
+      57,
+      112
+     ],
+     [
+      112,
+      112
+     ],
+     [
+      112,
+      121
+     ],
+     [
+      106,
+      128
+     ],
+     [
+      100,
+      134
+     ],
+     [
+      88,
+      132
+     ],
+     [
+      70,
+      127
+     ],
+     [
+      57,
+      121
+     ]
+    ]
+   ],
+   "eraseWhy": "polygons (this part's own pixels, before any flip): the two shoulder shields and their pods, and the thin plate left on the near-left shoulder (replaced by the mirrored plate below). 2026-10-29."
+  },
+  {
+   "part": 286,
+   "why": "the other shoulder's plate, mirrored, so both shoulders match (axis x=184)",
+   "flip": true,
+   "clip": [
+    [
+     224,
+     76
+    ],
+    [
+     298,
+     60
+    ],
+    [
+     307,
+     66
+    ],
+    [
+     300,
+     80
+    ],
+    [
+     280,
+     100
+    ],
+    [
+     262,
+     117
+    ],
+    [
+     250,
+     126
+    ],
+    [
+     236,
+     124
+    ],
+    [
+     226,
+     110
+    ]
+   ],
+   "scale": 1.0,
+   "x": -15,
+   "y": 2
+  },
+  {
+   "part": 286,
+   "why": "torso redrawn over the mirrored plate's inner end, so it tucks behind the body",
+   "erase": [
+    [
+     [
+      0,
+      20
+     ],
+     [
+      134,
+      20
+     ],
+     [
+      134,
+      113
+     ],
+     [
+      57,
+      113
+     ],
+     [
+      57,
+      175
+     ],
+     [
+      0,
+      175
+     ]
+    ],
+    [
+     [
+      222,
+      0
+     ],
+     [
+      384,
+      0
+     ],
+     [
+      384,
+      110
+     ],
+     [
+      340,
+      82
+     ],
+     [
+      306,
+      66
+     ],
+     [
+      298,
+      60
+     ],
+     [
+      240,
+      73
+     ],
+     [
+      222,
+      76
+     ]
+    ]
+   ],
+   "clip": [
+    [
+     136,
+     0
+    ],
+    [
+     384,
+     0
+    ],
+    [
+     384,
+     262
+    ],
+    [
+     136,
+     262
+    ]
+   ],
+   "scale": 1.0,
+   "x": 0,
+   "y": 0
+  }
+ ],
+ "headFrames": {
+  "note": "Head layer per frame: [flip, scale, cx, cy] in #286 pixels (before the whole-canvas flip). Frame 0 = the approved head. (A mirrored-head 'turn' frame was tried 2026-10-29 and dropped: looked wrong.)",
+  "0": [
+   true,
+   1.35,
+   179,
+   85
+  ]
+ },
+ "head": 119
+}

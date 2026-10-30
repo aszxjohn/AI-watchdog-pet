@@ -1,0 +1,155 @@
+{
+ "note": "工作中 雙槍 v5 (2026-10-29): skeleton, not stickers. #197 (complete small body, same angle as the G Gen Wars GN Beam Pistol frame at 94.5 s) is the root; near arm = elbow on the body's right side, forearm #93 across the chest, pistol fist #102; far (right) arm = forearm #94 pointing at the camera behind the guns, pistol fist #141; lower leg #200 on the knee; rifle #242 on the back; shield #298 on the far shoulder. Canvas = the 94.5 s crop. #197's right shoulder shield and raised right foot (screen left) are kept.",
+ "canvas": [
+  380,
+  275
+ ],
+ "nodes": [
+  {
+   "name": "body",
+   "part": 197,
+   "at": [
+    225.5,
+    147
+   ],
+   "pivot": [
+    58.5,
+    72.5
+   ],
+   "rot": -8,
+   "scale": 1.6,
+   "z": 0,
+   "erase": [
+    [
+     [
+      45,
+      106
+     ],
+     [
+      100,
+      102
+     ],
+     [
+      104,
+      145
+     ],
+     [
+      45,
+      145
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "shin",
+   "part": 200,
+   "flip": true,
+   "parent": "body",
+   "at": [
+    76,
+    104
+   ],
+   "pivot": [
+    55,
+    18
+   ],
+   "rot": 20,
+   "scale": 0.8,
+   "z": 0.5
+  },
+  {
+   "name": "rifle",
+   "part": 242,
+   "parent": "body",
+   "atCanvas": [
+    195,
+    60
+   ],
+   "pivot": [
+    119.3,
+    31.7
+   ],
+   "rot": 8,
+   "scale": 0.97,
+   "z": -2
+  },
+  {
+   "name": "shield",
+   "part": 298,
+   "parent": "body",
+   "atCanvas": [
+    322,
+    84
+   ],
+   "pivot": [
+    40,
+    20
+   ],
+   "rot": 6,
+   "scale": 0.6,
+   "z": -1
+  },
+  {
+   "name": "farFore",
+   "part": 94,
+   "parent": "body",
+   "at": [
+    30,
+    66
+   ],
+   "pivot": [
+    4,
+    11
+   ],
+   "rot": 40,
+   "sx": 0.45,
+   "z": 1
+  },
+  {
+   "name": "farGun",
+   "part": 141,
+   "parent": "farFore",
+   "at": [
+    34,
+    11
+   ],
+   "pivot": [
+    50,
+    10
+   ],
+   "rot": -32,
+   "z": 2
+  },
+  {
+   "name": "nearFore",
+   "part": 93,
+   "flip": true,
+   "parent": "body",
+   "at": [
+    72,
+    62
+   ],
+   "pivot": [
+    46,
+    11
+   ],
+   "rot": 13.5,
+   "z": 3
+  },
+  {
+   "name": "nearGun",
+   "part": 102,
+   "parent": "nearFore",
+   "at": [
+    16,
+    11
+   ],
+   "pivot": [
+    50,
+    10
+   ],
+   "rot": -8,
+   "z": 4
+  }
+ ]
+}
