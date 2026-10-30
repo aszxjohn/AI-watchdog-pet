@@ -7,7 +7,7 @@ APP=build/GundamPet.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 swiftc -O -swift-version 5 -target arm64-apple-macos13 \
-    -o "$APP/Contents/MacOS/GundamPet" Sources/*.swift
+    -o "$APP/Contents/MacOS/GundamPet" $(find Sources -name '*.swift' | sort)
 cp Info.plist "$APP/Contents/Info.plist"
 cp -R units "$APP/Contents/Resources/units"
 # the app icon (made by tools/make_icon.py from Cross Rays' own frames)

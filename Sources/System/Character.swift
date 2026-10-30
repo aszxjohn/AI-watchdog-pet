@@ -31,14 +31,62 @@ struct WanderPref: Codable, Equatable {
     }
 }
 
-/// One character's settings: characters/<id>/character.json in the app (its own defaults) with the user's changes
-/// from the settings panel laid over it (~/Library/Application Support/GundamPet/characters/<id>.json: only what
+/// One of a state's settings, declared in its script file ("params"): its type, default and range, and whether the
+/// settings panel offers it ("user": true) — the others only the character's author changes, in the file.
+struct ParamSpec {
+    let name: String
+    /// "bool" | "int" | "number" | "choice" | "asset" (a picture, "group/name")
+    let type: String
+    let defaultValue: Any
+    let min: Double?
+    let max: Double?
+    let step: Double?
+    /// For "choice": the values and how the panel names them.
+    let choices: [(value: String, label: String)]
+    let user: Bool
+    let label: String
+
+    init?(name: String, _ o: [String: Any]) {
+        guard let type = o["type"] as? String, let d = o["default"] else { return nil }
+        self.name = name
+        self.type = type
+        defaultValue = d
+        min = o["min"] as? Double
+        max = o["max"] as? Double
+        step = o["step"] as? Double
+        choices = (o["choices"] as? [[String: Any]] ?? []).compactMap { c in
+            (c["value"] as? String).map { ($0, c["label"] as? String ?? $0) }
+        }
+        user = o["user"] as? Bool ?? false
+        label = o["label"] as? String ?? name
+    }
+
+    /// `v` as this setting's type, or nil if it is not one.
+    func accept(_ v: Any) -> Any? {
+        switch type {
+        case "bool": return v as? Bool
+        case "int": return (v as? Double).map { Int($0) } ?? (v as? Int)
+        case "number": return (v as? Double) ?? (v as? Int).map(Double.init)
+        default: return v as? String
+        }
+    }
+}
+
+/// One character's settings: characters/<id>/character.json (size, wandering) and characters/<id>/states/<state>.json
+/// (each state's script: its settings, its timeline) in the app — its own defaults — with the user's changes from
+/// the settings panel laid over them (~/Library/Application Support/GundamPet/characters/<id>.json: only what
 /// differs from the defaults).
-struct CharacterProfile: Equatable {
+struct CharacterProfile {
     var id: String
     /// On-screen height in points (every state is drawn at this size).
     var height: Double
     var states: [PetState: WanderPref]
+    /// Each state's declared settings, in the file's order…
+    var params: [PetState: [ParamSpec]] = [:]
+    /// …and their values (defaults with the user's changes).
+    var values: [PetState: [String: Any]] = [:]
+    /// Each state's script ("script" in its state file), played by the system instead of the character's own act.
+    var scripts: [PetState: [String: Any]] = [:]
 
     func pref(_ s: PetState) -> WanderPref { states[s] ?? WanderPref(wander: false) }
 }
@@ -48,6 +96,8 @@ final class CharacterStore {
     private(set) var profiles: [String: CharacterProfile] = [:]
     /// Called after a change, with the character's id.
     var onChange: ((String) -> Void)?
+    /// Goes up with every change (a Gundam re-reads its state's settings when it differs).
+    private(set) var version = 0
 
     private let userDir = Config.dir.appendingPathComponent("characters")
     private static let fallbackHeight = 110.0
@@ -55,7 +105,19 @@ final class CharacterStore {
     init(ids: [String]) {
         let shipped = Bundle.main.resourceURL?.appendingPathComponent("characters")
         for id in ids {
-            let base = shipped.flatMap { Self.read($0.appendingPathComponent("\(id)/character.json")) } ?? [:]
+            var base = shipped.flatMap { Self.read($0.appendingPathComponent("\(id)/character.json")) } ?? [:]
+            // states/<state>.json: a state's wandering ("wander", over character.json's), settings and script
+            var states = base["states"] as? [String: Any] ?? [:]
+            let dir = shipped?.appendingPathComponent("\(id)/states")
+            for f in (dir.flatMap { try? FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) } ?? [])
+            where f.pathExtension == "json" {
+                let name = f.deletingPathExtension().lastPathComponent
+                guard PetState(rawValue: name) != nil, let file = Self.read(f) else { continue }
+                var st = Self.merge(states[name] as? [String: Any] ?? [:], file["wander"] as? [String: Any] ?? [:])
+                for k in ["params", "script"] where file[k] != nil { st[k] = file[k] }
+                states[name] = st
+            }
+            base["states"] = states
             let mine = Self.read(userDir.appendingPathComponent("\(id).json")) ?? [:]
             defaults[id] = Self.profile(id: id, base)
             profiles[id] = Self.profile(id: id, Self.merge(base, mine))
@@ -64,6 +126,15 @@ final class CharacterStore {
 
     func profile(_ id: String) -> CharacterProfile {
         profiles[id] ?? CharacterProfile(id: id, height: Self.fallbackHeight, states: [:])
+    }
+
+    /// Sets one of a state's settings (the panel's 演出 controls).
+    func setValue(_ v: Any, for name: String, in state: PetState, of id: String) {
+        guard var p = profiles[id], let spec = p.params[state]?.first(where: { $0.name == name }),
+              let ok = spec.accept(v) else { return }
+        p.values[state, default: [:]][name] = ok
+        profiles[id] = p
+        save(id)
     }
 
     func setHeight(_ h: Double, for id: String) {
@@ -85,7 +156,12 @@ final class CharacterStore {
     /// Puts one state (or, with nil, the whole character, size included) back to the character file's defaults.
     func reset(_ id: String, state: PetState? = nil) {
         guard let d = defaults[id], var p = profiles[id] else { return }
-        if let s = state { p.states[s] = d.states[s] } else { p = d }
+        if let s = state {
+            p.states[s] = d.states[s]
+            p.values[s] = d.values[s]
+        } else {
+            p = d
+        }
         profiles[id] = p
         save(id)
     }
@@ -104,6 +180,14 @@ final class CharacterStore {
                 states[s.rawValue] = obj
             }
         }
+        // settings that differ from the state file's defaults
+        for (s, vals) in p.values {
+            let changed = vals.filter { k, v in !((d.values[s]?[k] as AnyObject?)?.isEqual(v) ?? false) }
+            guard !changed.isEmpty else { continue }
+            var st = states[s.rawValue] as? [String: Any] ?? [:]
+            st["values"] = changed
+            states[s.rawValue] = st
+        }
         if !states.isEmpty { out["states"] = states }
         let url = userDir.appendingPathComponent("\(id).json")
         if out.isEmpty {
@@ -112,6 +196,7 @@ final class CharacterStore {
             try? FileManager.default.createDirectory(at: userDir, withIntermediateDirectories: true)
             try? data.write(to: url)
         }
+        version += 1
         onChange?(id)
     }
 
@@ -145,7 +230,22 @@ final class CharacterStore {
                 states[s] = pref
             }
         }
-        return CharacterProfile(id: id, height: obj["height"] as? Double ?? fallbackHeight, states: states)
+        var profile = CharacterProfile(id: id, height: obj["height"] as? Double ?? fallbackHeight, states: states)
+        for (k, v) in obj["states"] as? [String: Any] ?? [:] {
+            guard let s = PetState(rawValue: k), let st = v as? [String: Any] else { continue }
+            // settings: declared by the state file (an ordered list), valued by the defaults or the user's changes
+            let decl = st["params"] as? [[String: Any]] ?? []
+            let specs = decl.compactMap { o in (o["name"] as? String).flatMap { ParamSpec(name: $0, o) } }
+            if !specs.isEmpty {
+                profile.params[s] = specs
+                let set = st["values"] as? [String: Any] ?? [:]
+                var vals: [String: Any] = [:]
+                for sp in specs { vals[sp.name] = set[sp.name].flatMap(sp.accept) ?? sp.defaultValue }
+                profile.values[s] = vals
+            }
+            if let script = st["script"] as? [String: Any] { profile.scripts[s] = script }
+        }
+        return profile
     }
 }
 

@@ -40,6 +40,24 @@
 4. **展示模式（Debug）**：畫面上只留一隻，右鍵選單可以切到任一狀態（再選同一個會重播）、重播進場、觸發「工具出錯」抖一下；選「一般模式」恢復顯示真實 session。
 5. **選螢幕**：接兩個以上螢幕時，鋼彈的右鍵選單（兩種模式都有）和選單列「GN」都有「顯示在」，選哪個螢幕鋼彈就搬到那個螢幕底部，記在 config.json 的 `screen`（螢幕名稱）；那個螢幕拔掉時自動回到主螢幕。
 
+## 程式架構：系統／角色（10/30 起，第 1 階段）
+
+- `Sources/System/`：系統（引擎），程式裡不出現任何角色的名字。偵測 session（`SessionWatcher`、`SessionPicks`）、舞台與遊走（`Stage.swift` 的 `Stage`、`PetNode` 核心、`Character.swift` 的遊走公式與角色設定）、兩個視窗、選單。系統自己只會三種通用演出：`flourish`（等你回覆那種：停在第 0 格、偶爾演一次整段）、`hold`（播進場段、循環中段）、`still`（停一格）。
+- `Sources/Characters/<角色>/`：角色模組。用 `CharacterKit` 交給系統：`build`（每隻建一次自己的圖層，照自己的疊放順序）和 `acts`（每個 `Act` 對應一個演出名稱，或掛在某個狀態上）。`Act` 有這些掛鉤：`frame`（這一格畫哪張）、`update`／`hide`（每格更新／不演時收起）、`loopEnds`（一輪演完的時機，遊走只在這時出發）、`travel`（移動時顯示哪格）、`bubble`（標記位置）、`react`（身體晃動、傾斜）。角色自己的圖層放在 `ActParts`（每隻一份，`node.parts(…)` 取得）。
+- 力天使（`Sources/Characters/Dynames/`）：`Dynames.swift` 登記 9 個演出（attack、cycle 狙擊、pistols 雙槍、transam、field 力場、defend 支援防禦、drive 做完了、float 休息中、出錯了的封條），還有它自己的骨架數值 `DynamesRig`（槍口、槍管方向…）和圖片組（cutin、field、attack、drive、alarm、transam）。每個演出一個檔案，內容是從舊的 Stage.swift 原樣搬過來的。
+- 加新角色：`Sources/Characters/<id>/` 寫模組、在 `main.swift` 的 `CharacterModules.registerAll()` 登記一行，`characters/<id>/character.json` 放大小與遊走預設，`units/<id>/` 放素材（unit.json 的 `rig.states.<狀態>.mode` 寫演出名稱）。
+- 拆分前備份：`backups/before-arch-2026-10-30/`（含可直接執行的 app）。拆分後 8 個狀態新舊連拍並排比對，差異只有粒子隨機與閃爍時間（變動像素 < 0.4%）。
+
+## 狀態腳本與參數（10/30，第 2、3 階段）
+
+- 每個狀態可以有一份腳本檔 `characters/<角色>/states/<狀態>.json`：
+  - `params`：這個狀態的參數（清單）。每個寫 `name`、`type`（bool／int／number／choice／asset）、`default`、範圍（`min`／`max`／`step`）、`label`，以及 `user`：`true` 會出現在「角色設定」面板的「演出」區讓使用者調，`false` 只有角色作者在檔案裡改。使用者改的值存在 `~/Library/Application Support/GundamPet/characters/<角色>.json` 的 `states.<狀態>.values`。
+  - `script`：系統的腳本播放器照著演，取代角色模組裡同名的演出。`intro`（開頭只播一次）＋`timeline`（之後一直循環），積木：`play`（播一段格子）、`frame`（停一格多久，可 `pick: alternate` 每輪輪流）、`wait`、`repeat`（`times` 次，每輪隔 `every` 秒）、`if`（依 bool 參數）、`shoot`（從建置量好的槍口發射：`from.points`／`dirs` 是 rig 的鍵、`gun` 可 `alternate`；`shot` 光彈長相、`flash` 槍口閃光、`kick` 機體後座、`hit` 打到別隻的爆炸）、`effect`、`particles`（切換粒子樣子）。頂層還有 `moveWhileActing`（演出中也可以遊走）、`marker`（標記位置）、`particles`（粒子發射器設定與樣子）。`"$參數名"` 代入參數值；長度速度是「× 機高」。
+  - `wander`：這個狀態的遊走預設（蓋過 character.json 的）。
+- 子彈與特效由系統統一管理（`World`，畫在所有鋼彈上面）：子彈發射後在舞台上直線飛，不會被移動中的機體拖著走；`hit.pets` 開著時打到別隻鋼彈會在它身上爆炸、它會晃一下。
+- 第一個用腳本的是**思考中**（`states/thinking.json`，數值照原本的雙槍演出搬過來，新舊並排比對一致）。使用者可調：邊移動邊射擊（預設關）、每輪連射數（4～24，預設 12）、子彈打到其他寵物會爆炸（預設開）；子彈圖片（預設畫粉紅光彈）只給作者改。力天使模組裡原本的 `pistols` 演出還在，刪掉腳本檔就會用回它。
+- 程式：`Sources/System/Script.swift`（`World`、`ScriptPlan`、播放）；參數讀寫在 `Character.swift`（`ParamSpec`、`CharacterStore.setValue`）；面板「演出」區在 `CharacterPanel.swift`（`ParamRow` 依型別長控制項）。測試用：`--test-target` 在展示模式多放一隻靶在射擊方向。
+
 ## 已定案：「等你回覆」（2026-10-27，不要再動）
 
 使用者確認定案。之後調整其他狀態時，**不能讓「等你回覆」有任何變化**；如果要改的東西它也有用到，
@@ -82,7 +100,8 @@
 ## 檔案
 
 ```
-Sources/            Swift 程式（SessionWatcher 偵測、Units 素材與池子、Stage 畫面、main 選單列）
+Sources/System/     系統：SessionWatcher 偵測、SessionPicks／SessionPanel、Units 素材與池子、Stage 畫面與 PetNode 核心、Character 遊走與角色設定、main 選單
+Sources/Characters/<id>/  角色模組（力天使：Dynames/，每個演出一個檔案）
 units/<id>/         處理好的素材：unit.json（含 rig）+ 每個動作一個資料夾（stand/ aim/ shield/ …）+ fx/ 特效 + cutin/ 瞄準特寫零件
 assets/raw/         下載的原始 zip（spriters-resource.com，SD Gundam G Generation Cross Rays 拆圖）
                     特效包（10/29）：world_common_combat_effects、world_map_effects、wars_combat_effects、crossrays_{common_effects,shield_effects,explosions,rapid_fire,beams_1,beams_2,unique_weapon_effects,beam_sabers,map_weapon_effects}.zip，解壓在 assets/extracted/ 同名資料夾

@@ -406,6 +406,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 }
 
+/// The characters' modules (each registers its acts with the system).
+enum CharacterModules {
+    static func registerAll() { Dynames.register() }
+}
+
+CharacterModules.registerAll()
 let app = NSApplication.shared
 // In the Dock with its icon (10/30); --offscreen captures stay out of it.
 app.setActivationPolicy(CommandLine.arguments.contains("--offscreen") ? .accessory : .regular)

@@ -1,0 +1,41 @@
+{
+  "note": "思考中：舉槍 → 雙槍連射（10/30 改成腳本；原本是力天使模組的 pistols 演出，數值照搬）。格子：pistol 0–2 舉手、3 瞄準、4 右槍後座、5 左槍後座；槍口和槍管方向是建置時在每一格量的（rig.pistolMuzzles / pistolDirs）。",
+  "params": [
+    {"name": "fireWhileMoving", "type": "bool", "default": false, "user": true, "label": "邊移動邊射擊"},
+    {"name": "shotsPerBurst", "type": "int", "default": 12, "min": 4, "max": 24, "step": 2, "user": true, "label": "每輪連射數"},
+    {"name": "hitPets", "type": "bool", "default": true, "user": true, "label": "子彈打到其他寵物會爆炸"},
+    {"name": "bulletImage", "type": "asset", "default": "", "user": false, "label": "子彈圖片（空白＝畫粉紅光彈）"}
+  ],
+  "script": {
+    "moveWhileActing": "$fireWhileMoving",
+    "marker": [0.36, 0.98],
+    "particles": {
+      "image": "fx/glow_a", "core": "pistolCore", "size": 34,
+      "cell": {"lifetime": 2.2, "lifetimeRange": 0.6, "velocityRange": 18, "scale": 0.42, "scaleRange": 0.14,
+               "scaleSpeed": -0.12, "alphaRange": 0.3, "alphaSpeed": -0.4, "spin": 1, "spinRange": 2},
+      "looks": {
+        "aim": {"range": 2.6, "longitude": 0.1, "velocity": 48, "yAccel": 2, "xAccel": 16, "rate": 3.2},
+        "firing": {"range": 2.2, "longitude": 0.05, "velocity": 80, "yAccel": 0, "xAccel": 26, "rate": 5}
+      }
+    },
+    "intro": [
+      {"do": "particles", "look": "aim"},
+      {"do": "play", "anim": "pistol", "frames": [0, 2], "fps": 6.6667}
+    ],
+    "timeline": [
+      {"do": "particles", "look": "firing"},
+      {"do": "repeat", "times": "$shotsPerBurst", "every": 0.13, "steps": [
+        {"do": "frame", "anim": "pistol", "frames": [4, 5], "pick": "alternate", "hold": 0.07},
+        {"do": "shoot", "from": {"points": "pistolMuzzles", "dirs": "pistolDirs", "gun": "alternate"},
+         "shot": {"image": "$bulletImage", "color": [1, 0.32, 0.75], "length": 0.32, "thick": 4.5, "speed": 7.5,
+                  "life": 0.42, "fadeFrom": 0.6},
+         "flash": {"color": [1, 0.32, 0.75], "size": 22, "grow": [1.4, 0.6], "life": 0.07},
+         "kick": {"distance": 2.5, "time": 0.07},
+         "hit": {"pets": "$hitPets", "burst": {"images": ["attack/hitGlow", "attack/fireA"], "size": 34, "grow": [0.5, 1.3], "life": 0.5}}},
+        {"do": "frame", "anim": "pistol", "frame": 3, "hold": 0.06}
+      ]},
+      {"do": "particles", "look": "aim"},
+      {"do": "frame", "anim": "pistol", "frame": 3, "hold": 0.9}
+    ]
+  }
+}

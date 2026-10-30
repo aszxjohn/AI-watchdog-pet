@@ -53,6 +53,9 @@ final class PanelModel: ObservableObject {
     @Published var pref = WanderPref()
     /// Estimated share of time in the preferred cells (Wander.predictedShare).
     @Published var share = 0.0
+    /// The state's settings the panel offers (declared "user": true in its state file) and their values.
+    @Published var userParams: [ParamSpec] = []
+    @Published var values: [String: Any] = [:]
     private var loading = false
 
     init(store: CharacterStore, units: [UnitDef], stageSize: @escaping () -> CGSize, floor: @escaping () -> CGFloat,
@@ -76,6 +79,8 @@ final class PanelModel: ObservableObject {
         let p = store.profile(unitId)
         height = p.height
         pref = p.pref(state)
+        userParams = (p.params[state] ?? []).filter(\.user)
+        values = p.values[state] ?? [:]
         loading = false
         estimate()
     }
@@ -90,6 +95,12 @@ final class PanelModel: ObservableObject {
     func commitHeight() {
         store.setHeight(height, for: unitId)
         estimate()
+    }
+
+    /// Saves one of the state's settings (演出).
+    func setValue(_ v: Any, for name: String) {
+        store.setValue(v, for: name, in: state, of: unitId)
+        values = store.profile(unitId).values[state] ?? [:]
     }
 
     func resetState() {
@@ -160,8 +171,10 @@ private struct PanelView: View {
 
             Divider()
 
-            StateEditor(model: model)
-                .padding(16)
+            ScrollView {
+                StateEditor(model: model)
+                    .padding(16)
+            }
         }
         .frame(minWidth: 900, minHeight: 560)
     }
@@ -215,6 +228,13 @@ private struct StateEditor: View {
             }
             .disabled(!model.pref.wander)
             .opacity(model.pref.wander ? 1 : 0.45)
+            if !model.userParams.isEmpty {
+                Divider()
+                Text("\(model.state.label)・演出").font(.title3).bold()
+                ForEach(model.userParams, id: \.name) { spec in
+                    ParamRow(spec: spec, model: model)
+                }
+            }
             HStack {
                 Button("在畫面上預覽") { model.preview(model.state) }
                 Button("這個狀態恢復預設") { model.resetState() }
@@ -239,6 +259,39 @@ private struct StateEditor: View {
             model.pref.stay = [lo, hi]
             model.commitPref()
         })
+    }
+}
+
+/// One of the state's settings, as the control its type calls for (declared in the state file).
+private struct ParamRow: View {
+    let spec: ParamSpec
+    @ObservedObject var model: PanelModel
+
+    var body: some View {
+        switch spec.type {
+        case "bool":
+            Toggle(spec.label, isOn: Binding(get: { model.values[spec.name] as? Bool ?? false },
+                                             set: { model.setValue($0, for: spec.name) }))
+        case "int":
+            let v = model.values[spec.name] as? Int ?? 0
+            Stepper("\(spec.label)：\(v)", value: Binding(get: { v }, set: { model.setValue($0, for: spec.name) }),
+                    in: Int(spec.min ?? 0)...Int(spec.max ?? 100), step: Int(spec.step ?? 1))
+        case "number":
+            let v = model.values[spec.name] as? Double ?? 0
+            HStack {
+                Text(spec.label)
+                Slider(value: Binding(get: { v }, set: { model.setValue($0, for: spec.name) }),
+                       in: (spec.min ?? 0)...(spec.max ?? 1))
+                Text(String(format: "%.2f", v)).frame(width: 50, alignment: .trailing)
+            }
+        case "choice":
+            Picker(spec.label, selection: Binding(get: { model.values[spec.name] as? String ?? "" },
+                                                  set: { model.setValue($0, for: spec.name) })) {
+                ForEach(spec.choices, id: \.value) { Text($0.label).tag($0.value) }
+            }
+        default:
+            EmptyView()
+        }
     }
 }
 
