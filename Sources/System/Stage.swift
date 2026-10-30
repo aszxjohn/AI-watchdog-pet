@@ -108,17 +108,8 @@ final class PetNode {
     let tint = CALayer()
     let tintMask = CALayer()
     let gn = CAEmitterLayer()
-    let gnIdle = CAEmitterLayer()
-    let jet = CAEmitterLayer()
-    let charge = CAEmitterLayer()
     let sparks = CAEmitterLayer()
-    let beam = CALayer()
-    let beamGlow = CAGradientLayer()
-    let beamCore = CALayer()
-    let flash = CALayer()
-    let impact = CALayer()
     let halo = CALayer()
-    let reticle = CAShapeLayer()
     let brackets = CAShapeLayer()
     let bubble = CAShapeLayer()
     let bubbleText = CATextLayer()
@@ -162,10 +153,6 @@ final class PetNode {
     var shownAnim = ""
     var shownFrame = -1
     var fadeStart: CFTimeInterval = -10
-    /// 0…1: how far into the forward move the flourish is (drives the backward stream and the jet).
-    var dashLevel: CGFloat = 0
-    /// 0…1: how far the waiting pose has switched to a fidget pose (低頭 etc.).
-    var fidgetLevel: CGFloat = 0
 
     let enterTime = 1.0
     let leaveTime = 0.9
@@ -229,7 +216,7 @@ final class PetNode {
 
     /// `at`: where it appears; `entering: false` skips the descent (rebuilt in place, e.g. after a size change).
     init(sessionId: String, unit: UnitDef, at: CGPoint, unitHeight: CGFloat, showLabel: Bool, now: CFTimeInterval,
-         entering: Bool = true) {
+         entering: Bool = true, trail: TrailLook? = nil) {
         self.sessionId = sessionId
         self.unit = unit
         self.pos = at
@@ -250,14 +237,8 @@ final class PetNode {
         body.position = CGPoint(x: 0, y: unitHeight * 0.55)
         root.addSublayer(body)
 
-        // The GN drive sits behind the torso; its particles are drawn under the body and leave
-        // towards the back (+x, the unit faces left).
-        let drive = CGPoint(x: unitHeight * 0.2, y: unitHeight * 0.1)
-        Fx.configureIdle(gnIdle, at: CGPoint(x: unitHeight * 0.02, y: unitHeight * 0.06), image: unit.fx["glow_a"])
-        body.addSublayer(gnIdle)
-        Fx.configureJet(jet, at: drive, image: unit.fx["glow_b"])
-        body.addSublayer(jet)
-        Fx.configureGN(gn, unitHeight: unitHeight, image: unit.fx["glow_a"])
+        // Trail particles (coming in, going out, moving), as the character file sets them (none if it does not).
+        Fx.configureTrail(gn, unitHeight: unitHeight, look: trail)
         body.addSublayer(gn)
 
         for l in [sprite, ghost] {
@@ -272,56 +253,16 @@ final class PetNode {
         tint.mask = tintMask
         body.addSublayer(tint)
 
-        Fx.configureCharge(charge, image: unit.fx["glow_b"])
-        body.addSublayer(charge)
         Fx.configureSparks(sparks, images: [unit.fx["spark_a"], unit.fx["spark_b"]].compactMap { $0 })
         body.addSublayer(sparks)
 
-        // Beam: drawn from its left edge (the muzzle) along +x, then rotated to the barrel direction.
-        beam.anchorPoint = CGPoint(x: 0, y: 0.5)
-        beam.opacity = 0
-        beamGlow.colors = [Hud.beam.copy(alpha: 0) ?? Hud.beam, Hud.beam, Hud.beam.copy(alpha: 0) ?? Hud.beam]
-        beamGlow.startPoint = CGPoint(x: 0.5, y: 0)
-        beamGlow.endPoint = CGPoint(x: 0.5, y: 1)
-        beam.addSublayer(beamGlow)
-        beamCore.backgroundColor = CGColor(gray: 1, alpha: 0.95)
-        beam.addSublayer(beamCore)
-        beam.shadowColor = Hud.beam
-        beam.shadowOpacity = 0.9
-        beam.shadowRadius = 4
-        beam.shadowOffset = .zero
-        if let img = unit.fx["beam"] {
-            // The sheet's own beam sprite replaces the drawn glow + core.
-            beam.contents = img
-            beam.contentsGravity = .resize
-            beamGlow.isHidden = true
-            beamCore.isHidden = true
-            beam.shadowOpacity = 0
-        }
-        root.addSublayer(beam)
 
-        let pieces: [(CALayer, CGImage?, CGSize)] = [
-            (flash, unit.fx["flash"], CGSize(width: 40, height: 27)),
-            (impact, unit.fx["orb"], CGSize(width: 24, height: 23)),
-            (halo, unit.fx["halo"], CGSize(width: 34, height: 34)),
-        ]
-        for (l, img, size) in pieces {
-            l.contents = img ?? Fx.dot(Hud.beamHot)
-            l.bounds = CGRect(origin: .zero, size: size)
-            l.opacity = 0
-            root.addSublayer(l)
-        }
+        // the smoke ring a hit opens over the body
+        halo.contents = unit.fx["halo"] ?? Fx.dot(Hud.beamHot)
+        halo.bounds = CGRect(x: 0, y: 0, width: 34, height: 34)
+        halo.opacity = 0
+        root.addSublayer(halo)
 
-        reticle.path = Hud.reticle(radius: 9)
-        reticle.fillColor = nil
-        reticle.lineWidth = 1.2
-        reticle.strokeColor = Hud.green
-        reticle.shadowColor = Hud.green
-        reticle.shadowOpacity = 0.6
-        reticle.shadowRadius = 2
-        reticle.shadowOffset = .zero
-        reticle.opacity = 0
-        root.addSublayer(reticle)
 
         let box = CGRect(x: -unitHeight * 0.6, y: 4, width: unitHeight * 1.2, height: unitHeight * 1.08)
         brackets.path = Hud.brackets(box, arm: 12)
@@ -532,17 +473,6 @@ final class PetNode {
 
         let burst = plan.burst && st < 1.2 && leavingSince == nil
         gn.birthRate = trail ? 1 : (burst ? 3 : 0)
-        let calm = plan.gnIdle && age >= enterTime && leavingSince == nil
-        let target = calm && plan.jet ? dashTarget(now: now) : 0
-        dashLevel += (target - dashLevel) * 0.3
-        let fidgeting = fidget.map { now >= $0.from && now < $0.to } ?? false
-        // Opens slowly into the full circle, closes quickly once the pose ends, so leftward
-        // particles stay confined to 低頭.
-        fidgetLevel += ((fidgeting ? 1 : 0) - fidgetLevel) * (fidgeting ? 0.15 : 0.35)
-        // 面向左邊 (resting) → 低頭 / other fidget poses → 前衝, each phase with its own particle look.
-        let look = DriftLook.facingLeft.mixed(with: .aura, fidgetLevel).mixed(with: .dash, dashLevel)
-        Fx.apply(look, to: gnIdle, active: calm)
-        jet.birthRate = calm ? Float(dashLevel) : 0
         updateHit(now: now, st: st)
         updateHud(now: now)
         // the character's acts: the ones that play this tick update, the others hide
@@ -691,22 +621,9 @@ final class PetNode {
 
     func updateHud(now: CFTimeInterval) {
         let active = leavingSince == nil && now - born > enterTime
-        do {
-            if active && plan.hud == "scan" {
-                // Sweeps an area ahead of the unit, as if looking for a target.
-                let base = CGPoint(x: -unitHeight * 0.72, y: unitHeight * 0.5)
-                reticle.position = CGPoint(x: base.x + CGFloat(sin(now * 0.9)) * 10,
-                                           y: base.y + CGFloat(sin(now * 1.7 + 1)) * 10)
-                reticle.strokeColor = Hud.green
-                reticle.shadowColor = Hud.green
-                reticle.transform = CATransform3DMakeRotation(CGFloat(now * 0.8), 0, 0, 1)
-                reticle.opacity = 0.9
-            } else {
-                reticle.opacity = 0
-            }
-        }
         brackets.opacity = active && plan.hud == "alert" ? (Int(now * 2.5) % 2 == 0 ? 1 : 0.25) : 0
     }
+
 
     // MARK: helpers (for every act)
 
@@ -811,6 +728,12 @@ final class PetNode {
 
 /// How the waiting-state GN particles look in one phase of the pose. The phases are blended value by
 /// value, so the particles change shape smoothly instead of switching.
+/// A trail's look (character.json "trail": a picture and a colour).
+struct TrailLook {
+    var image: CGImage?
+    var color: CGColor
+}
+
 struct DriftLook {
     /// Spread (radians) and direction of the drift cell; 0 = +x = behind the unit (it faces left).
     var range: CGFloat
@@ -825,16 +748,6 @@ struct DriftLook {
     /// Faint full-circle halo cell, 0…1 (10/s at 1, times `rate`).
     var halo: CGFloat
 
-    /// 面向左邊: a slow fan trailing back and to the right; nothing goes left (only 低頭 may).
-    static let facingLeft = DriftLook(range: 2.6, longitude: 0.1, velocity: 40, yAccel: 2, xAccel: 14,
-                                      rate: 2.4, speed: 1, halo: 0)
-    /// 低頭: an even circle around the body, the only phase whose particles reach the left.
-    static let aura = DriftLook(range: .pi * 2, longitude: 0, velocity: 60, yAccel: 0, xAccel: 0,
-                                rate: 2.6, speed: 1, halo: 0)
-    /// 前衝: a fast stream backwards and a little upwards, kept to the right; still much wider than the
-    /// converging jet so the two read as separate layers.
-    static let dash = DriftLook(range: 0.65, longitude: 0.28, velocity: 24, yAccel: 6, xAccel: 0,
-                                rate: 2.5, speed: 6, halo: 0)
 
     func mixed(with o: DriftLook, _ t: CGFloat) -> DriftLook {
         func m(_ a: CGFloat, _ b: CGFloat) -> CGFloat { a + (b - a) * t }
@@ -864,28 +777,31 @@ enum Fx {
     static let white = dot(CGColor(gray: 1, alpha: 0.6))
 
     /// Green GN particles drifting off the unit (trail when flying, burst when done).
-    static func configureGN(_ e: CAEmitterLayer, unitHeight: CGFloat, image: CGImage?) {
+    /// Trail particles (coming in, going out, moving, a state's burst): a puff around the body, in the character's
+    /// own look (character.json "trail"); no look, no particles.
+    static func configureTrail(_ e: CAEmitterLayer, unitHeight: CGFloat, look: TrailLook?) {
+        e.birthRate = 0
+        guard let look else { return }
         let cell = CAEmitterCell()
-        cell.contents = image ?? white
+        cell.contents = look.image ?? white
         cell.birthRate = 30
         cell.lifetime = 1.2
         cell.velocity = 28
         cell.velocityRange = 18
         cell.emissionRange = .pi * 2
         cell.yAcceleration = -20
-        cell.scale = image == nil ? 0.22 : 0.45
+        cell.scale = look.image == nil ? 0.22 : 0.45
         cell.scaleRange = 0.12
         cell.spin = 1.5
         cell.spinRange = 3
         cell.scaleSpeed = -0.12
         cell.alphaSpeed = -0.8
-        cell.color = Hud.green
+        cell.color = look.color
         e.emitterCells = [cell]
         e.emitterPosition = CGPoint(x: 0, y: unitHeight * 0.05)
         e.emitterShape = .circle
         e.emitterSize = CGSize(width: unitHeight * 0.35, height: unitHeight * 0.35)
         e.renderMode = .additive
-        e.birthRate = 0
     }
 
     /// GN particles from the drive at the body's centre: a "drift" cell whose spread, direction and speed
@@ -927,103 +843,10 @@ enum Fx {
         e.birthRate = active ? Float(look.rate) : 0
     }
 
-    static func configureIdle(_ e: CAEmitterLayer, at p: CGPoint, image: CGImage?) {
-        let drift = CAEmitterCell()
-        drift.name = "drift"
-        drift.contents = image ?? white
-        drift.birthRate = 30
-        drift.lifetime = 2.0
-        drift.lifetimeRange = 0.5
-        drift.velocityRange = 8
-        drift.scale = image == nil ? 0.2 : 0.42
-        drift.scaleRange = 0.14
-        drift.scaleSpeed = -0.12
-        drift.alphaRange = 0.3
-        drift.alphaSpeed = -0.45
-        drift.spin = 1
-        drift.spinRange = 2
-        drift.color = Hud.gnParticle
-
-        let halo = CAEmitterCell()
-        halo.name = "halo"
-        halo.contents = image ?? white
-        halo.lifetime = 1.6
-        halo.lifetimeRange = 0.4
-        halo.velocity = 38
-        halo.velocityRange = 8
-        halo.emissionRange = .pi * 2
-        halo.scale = image == nil ? 0.18 : 0.36
-        halo.scaleRange = 0.1
-        halo.scaleSpeed = -0.1
-        halo.alphaRange = 0.3
-        halo.alphaSpeed = -0.55
-        halo.spin = 1
-        halo.spinRange = 2
-        halo.color = Hud.gnParticle
-
-        e.emitterCells = [drift, halo]
-        e.emitterPosition = p
-        e.emitterShape = .circle
-        e.emitterSize = CGSize(width: 12, height: 12)
-        e.renderMode = .additive
-        apply(.facingLeft, to: e, active: false)
-    }
-
-    static func apply(_ look: DriftLook, to e: CAEmitterLayer, active: Bool) {
-        e.setValue(look.range, forKeyPath: "emitterCells.drift.emissionRange")
-        e.setValue(look.longitude, forKeyPath: "emitterCells.drift.emissionLongitude")
-        e.setValue(look.velocity, forKeyPath: "emitterCells.drift.velocity")
-        e.setValue(look.yAccel, forKeyPath: "emitterCells.drift.yAcceleration")
-        e.setValue(look.xAccel, forKeyPath: "emitterCells.drift.xAcceleration")
-        e.setValue(look.xAccel * 0.8, forKeyPath: "emitterCells.halo.xAcceleration")
-        e.setValue(10 * look.halo, forKeyPath: "emitterCells.halo.birthRate")
-        e.velocity = Float(look.speed)
-        e.birthRate = active ? Float(look.rate) : 0
-    }
 
 
-    /// A dense jet from the drive straight back; every particle shrinks to nothing on the way,
-    /// so the stream narrows to a point behind the unit.
-    static func configureJet(_ e: CAEmitterLayer, at p: CGPoint, image: CGImage?) {
-        let cell = CAEmitterCell()
-        cell.contents = image ?? white
-        cell.birthRate = 110
-        cell.lifetime = 0.7
-        cell.velocity = 150
-        cell.velocityRange = 10
-        cell.emissionLongitude = 0.15
-        cell.emissionRange = 0.07
-        cell.scale = image == nil ? 0.4 : 0.8
-        cell.scaleSpeed = -1.1
-        cell.alphaSpeed = -1.0
-        cell.color = CGColor(red: 0.5, green: 1, blue: 0.6, alpha: 1)
-        e.emitterCells = [cell]
-        e.emitterPosition = p
-        e.emitterShape = .point
-        e.renderMode = .additive
-        e.birthRate = 0
-    }
 
-    /// Small glints gathering at the muzzle before a shot.
-    static func configureCharge(_ e: CAEmitterLayer, image: CGImage?) {
-        let cell = CAEmitterCell()
-        cell.contents = image ?? white
-        cell.birthRate = 45
-        cell.lifetime = 0.35
-        cell.velocity = 8
-        cell.emissionRange = .pi * 2
-        cell.scale = image == nil ? 0.16 : 0.35
-        cell.scaleSpeed = -0.3
-        cell.alphaSpeed = -2
-        cell.color = image == nil ? Hud.green : CGColor(gray: 1, alpha: 1)
-        cell.spin = 2
-        cell.spinRange = 4
-        e.emitterCells = [cell]
-        e.emitterShape = .circle
-        e.emitterSize = CGSize(width: 14, height: 14)
-        e.renderMode = .additive
-        e.birthRate = 0
-    }
+
 
     /// Shards thrown off when hit: the sheet's shard pieces if there are any, orange dots otherwise.
     static func configureSparks(_ e: CAEmitterLayer, images: [CGImage]) {
@@ -1098,6 +921,18 @@ final class Stage {
     private var rng = SystemRandomNumberGenerator()
     private var slotWidth: CGFloat { CGFloat(units.keys.map { characters.profile($0).height }.max() ?? 110) * 1.7 }
     private func height(of unit: UnitDef) -> CGFloat { CGFloat(characters.profile(unit.id).height) }
+
+    /// The character's trail look, from its character file.
+    private func trail(of unit: UnitDef) -> TrailLook? {
+        guard let t = characters.profile(unit.id).trail else { return nil }
+        let img = t.image.flatMap { name -> CGImage? in
+            let parts = name.split(separator: "/", maxSplits: 1).map(String.init)
+            return parts.count == 2 ? unit.pictures[parts[0]]?[parts[1]] : nil
+        }
+        let c = t.color
+        return TrailLook(image: img, color: CGColor(red: c.first ?? 1, green: c.count > 1 ? c[1] : 1,
+                                                     blue: c.count > 2 ? c[2] : 1, alpha: 1))
+    }
     /// --offscreen: the strip is rendered into a texture instead of a window (for snapshots with particles).
     private var offscreen: OffscreenRenderer?
 
@@ -1366,7 +1201,7 @@ final class Stage {
     private func makeNode(id: String, unit: UnitDef, at: CGPoint, showLabel: Bool, now: CFTimeInterval,
                           entering: Bool = true) -> PetNode {
         let n = PetNode(sessionId: id, unit: unit, at: at, unitHeight: height(of: unit), showLabel: showLabel, now: now,
-                        entering: entering)
+                        entering: entering, trail: trail(of: unit))
         n.arrived = { [weak self] node, now in self?.rest(node, now: now) }
         n.world = world
         return n

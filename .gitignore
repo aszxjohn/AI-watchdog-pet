@@ -13,3 +13,5 @@
 .DS_Store
 __pycache__/
 *.pyc
+# a character package's assets are made from game sprite rips: local only
+/characters/*/assets/

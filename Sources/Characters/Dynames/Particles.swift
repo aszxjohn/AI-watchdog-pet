@@ -30,6 +30,99 @@ enum SnipeGN {
 }
 
 extension Fx {
+    static func configureIdle(_ e: CAEmitterLayer, at p: CGPoint, image: CGImage?) {
+        let drift = CAEmitterCell()
+        drift.name = "drift"
+        drift.contents = image ?? white
+        drift.birthRate = 30
+        drift.lifetime = 2.0
+        drift.lifetimeRange = 0.5
+        drift.velocityRange = 8
+        drift.scale = image == nil ? 0.2 : 0.42
+        drift.scaleRange = 0.14
+        drift.scaleSpeed = -0.12
+        drift.alphaRange = 0.3
+        drift.alphaSpeed = -0.45
+        drift.spin = 1
+        drift.spinRange = 2
+        drift.color = Hud.gnParticle
+
+        let halo = CAEmitterCell()
+        halo.name = "halo"
+        halo.contents = image ?? white
+        halo.lifetime = 1.6
+        halo.lifetimeRange = 0.4
+        halo.velocity = 38
+        halo.velocityRange = 8
+        halo.emissionRange = .pi * 2
+        halo.scale = image == nil ? 0.18 : 0.36
+        halo.scaleRange = 0.1
+        halo.scaleSpeed = -0.1
+        halo.alphaRange = 0.3
+        halo.alphaSpeed = -0.55
+        halo.spin = 1
+        halo.spinRange = 2
+        halo.color = Hud.gnParticle
+
+        e.emitterCells = [drift, halo]
+        e.emitterPosition = p
+        e.emitterShape = .circle
+        e.emitterSize = CGSize(width: 12, height: 12)
+        e.renderMode = .additive
+        apply(.facingLeft, to: e, active: false)
+    }
+    static func apply(_ look: DriftLook, to e: CAEmitterLayer, active: Bool) {
+        e.setValue(look.range, forKeyPath: "emitterCells.drift.emissionRange")
+        e.setValue(look.longitude, forKeyPath: "emitterCells.drift.emissionLongitude")
+        e.setValue(look.velocity, forKeyPath: "emitterCells.drift.velocity")
+        e.setValue(look.yAccel, forKeyPath: "emitterCells.drift.yAcceleration")
+        e.setValue(look.xAccel, forKeyPath: "emitterCells.drift.xAcceleration")
+        e.setValue(look.xAccel * 0.8, forKeyPath: "emitterCells.halo.xAcceleration")
+        e.setValue(10 * look.halo, forKeyPath: "emitterCells.halo.birthRate")
+        e.velocity = Float(look.speed)
+        e.birthRate = active ? Float(look.rate) : 0
+    }
+    /// A dense jet from the drive straight back; every particle shrinks to nothing on the way,
+    /// so the stream narrows to a point behind the unit.
+    static func configureJet(_ e: CAEmitterLayer, at p: CGPoint, image: CGImage?) {
+        let cell = CAEmitterCell()
+        cell.contents = image ?? white
+        cell.birthRate = 110
+        cell.lifetime = 0.7
+        cell.velocity = 150
+        cell.velocityRange = 10
+        cell.emissionLongitude = 0.15
+        cell.emissionRange = 0.07
+        cell.scale = image == nil ? 0.4 : 0.8
+        cell.scaleSpeed = -1.1
+        cell.alphaSpeed = -1.0
+        cell.color = CGColor(red: 0.5, green: 1, blue: 0.6, alpha: 1)
+        e.emitterCells = [cell]
+        e.emitterPosition = p
+        e.emitterShape = .point
+        e.renderMode = .additive
+        e.birthRate = 0
+    }
+    /// Small glints gathering at the muzzle before a shot.
+    static func configureCharge(_ e: CAEmitterLayer, image: CGImage?) {
+        let cell = CAEmitterCell()
+        cell.contents = image ?? white
+        cell.birthRate = 45
+        cell.lifetime = 0.35
+        cell.velocity = 8
+        cell.emissionRange = .pi * 2
+        cell.scale = image == nil ? 0.16 : 0.35
+        cell.scaleSpeed = -0.3
+        cell.alphaSpeed = -2
+        cell.color = image == nil ? Hud.green : CGColor(gray: 1, alpha: 1)
+        cell.spin = 2
+        cell.spinRange = 4
+        e.emitterCells = [cell]
+        e.emitterShape = .circle
+        e.emitterSize = CGSize(width: 14, height: 14)
+        e.renderMode = .additive
+        e.birthRate = 0
+    }
     /// Thinking state's GN particles: same kind of drift cell as the waiting state's, on its own layer.
     static func configureSnipeGN(_ e: CAEmitterLayer, at p: CGPoint, image: CGImage?) {
         let drift = CAEmitterCell()

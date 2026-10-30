@@ -55,18 +55,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let config = Config.load()
         let demoMode = CommandLine.arguments.contains("--demo")
-        let unitsDir = Bundle.main.resourceURL!.appendingPathComponent("units")
-        let units = UnitDef.loadAll(from: unitsDir)
-        if units.isEmpty {
-            let alert = NSAlert()
-            alert.messageText = "找不到任何鋼彈素材"
-            alert.informativeText = unitsDir.path
-            alert.runModal()
-            NSApp.terminate(nil)
-            return
-        }
+        // Every character package found (the app's own and the user's): its assets, character file and scripts.
+        let packages = UnitDef.packages()
+        let units = UnitDef.loadPackages(packages)
+        // No characters is fine: the stage runs empty (sessions are still followed, the menus and windows work);
+        // there is just nobody to act them out.
+        if units.isEmpty { NSLog("GundamPet: no character packages found") }
         // Each character's size and wandering: its character file, with the settings panel's changes over it.
-        let characters = CharacterStore(ids: units.map(\.id))
+        let characters = CharacterStore(packages: packages.filter { id, _ in units.contains { $0.id == id } })
         stage = Stage(units: units, pool: Pool(unitIds: units.map(\.id), persist: !demoMode && !offscreen),
                       config: config, characters: characters, offscreen: offscreen)
         characters.onChange = { [weak self] id in self?.stage.characterChanged(id) }
@@ -170,15 +166,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// The menu bar icon: the app's own, small.
+    private static var menuIcon: NSImage {
+        let img = (NSApp.applicationIconImage.copy() as? NSImage) ?? NSImage()
+        img.size = NSSize(width: 18, height: 18)
+        return img
+    }
+
     private func setUpStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "GN"
+        statusItem.button?.image = Self.menuIcon
+        statusItem.button?.imagePosition = .imageLeft
         let menu = NSMenu()
         let header = NSMenuItem(title: "鋼彈桌寵", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(.separator())
-        visibleItem = NSMenuItem(title: "顯示鋼彈", action: #selector(toggleVisible), keyEquivalent: "")
+        visibleItem = NSMenuItem(title: "顯示寵物", action: #selector(toggleVisible), keyEquivalent: "")
         visibleItem.state = .on
         labelsItem = NSMenuItem(title: "顯示名牌", action: #selector(toggleLabels), keyEquivalent: "")
         labelsItem.state = stage.showLabels ? .on : .off
@@ -189,7 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let sessions = NSMenuItem(title: "管理 session…", action: #selector(openSessionsMenu), keyEquivalent: "")
         lockItem = NSMenuItem(title: "鎖定展示（只顯示勾選的 session）", action: #selector(toggleLock), keyEquivalent: "")
         lockItem?.state = picks.lockOn ? .on : .off
-        statusItem.button?.title = picks.lockOn ? "GN・鎖" : "GN"
+        statusItem.button?.title = picks.lockOn ? " 鎖" : ""
         let folder = NSMenuItem(title: "打開設定資料夾", action: #selector(openFolder), keyEquivalent: "")
         let quit = NSMenuItem(title: "結束", action: #selector(quit), keyEquivalent: "q")
         for item in [visibleItem!, labelsItem!, normalItem!, showcaseItem!, settings, sessions, lockItem!, folder, quit] {
@@ -265,7 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         normal.state = stage.isShowcase ? .off : .on
         let showcase = MenuAction.item("展示模式（Debug）") { [weak self] in self?.setShowcase(true) }
         showcase.state = stage.isShowcase ? .on : .off
-        let visible = MenuAction.item("顯示鋼彈") { [weak self] in self?.toggleVisible() }
+        let visible = MenuAction.item("顯示寵物") { [weak self] in self?.toggleVisible() }
         visible.state = stage.isVisible ? .on : .off
         let labels = MenuAction.item("顯示名牌") { [weak self] in self?.toggleLabels() }
         labels.state = stage.showLabels ? .on : .off
@@ -365,7 +369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 鎖定展示 on: the watcher reads only the ticked sessions; off: all recent ones again. Also the menu bar title.
     private func applyLock() {
         watcher?.watchOnly(picks.lockOn ? Set(picks.lockedIds) : nil)
-        statusItem?.button?.title = picks.lockOn ? "GN・鎖" : "GN"
+        statusItem?.button?.title = picks.lockOn ? " 鎖" : ""
         lockItem?.state = picks.lockOn ? .on : .off
         refreshSessions()
     }
@@ -404,11 +408,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func quit() {
         NSApp.terminate(nil)
     }
-}
-
-/// The characters' modules (each registers its acts with the system).
-enum CharacterModules {
-    static func registerAll() { Dynames.register() }
 }
 
 CharacterModules.registerAll()

@@ -87,6 +87,8 @@ struct CharacterProfile {
     var values: [PetState: [String: Any]] = [:]
     /// Each state's script ("script" in its state file), played by the system instead of the character's own act.
     var scripts: [PetState: [String: Any]] = [:]
+    /// Its trail particles (character.json "trail": {"image": "group/name", "color": [r, g, b]}); nil: none.
+    var trail: (image: String?, color: [Double])?
 
     func pref(_ s: PetState) -> WanderPref { states[s] ?? WanderPref(wander: false) }
 }
@@ -102,14 +104,14 @@ final class CharacterStore {
     private let userDir = Config.dir.appendingPathComponent("characters")
     private static let fallbackHeight = 110.0
 
-    init(ids: [String]) {
-        let shipped = Bundle.main.resourceURL?.appendingPathComponent("characters")
-        for id in ids {
-            var base = shipped.flatMap { Self.read($0.appendingPathComponent("\(id)/character.json")) } ?? [:]
+    /// `packages`: each character's package folder (character.json, states/), by id.
+    init(packages: [String: URL]) {
+        for (id, pkg) in packages {
+            var base = Self.read(pkg.appendingPathComponent("character.json")) ?? [:]
             // states/<state>.json: a state's wandering ("wander", over character.json's), settings and script
             var states = base["states"] as? [String: Any] ?? [:]
-            let dir = shipped?.appendingPathComponent("\(id)/states")
-            for f in (dir.flatMap { try? FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) } ?? [])
+            let dir = pkg.appendingPathComponent("states")
+            for f in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
             where f.pathExtension == "json" {
                 let name = f.deletingPathExtension().lastPathComponent
                 guard PetState(rawValue: name) != nil, let file = Self.read(f) else { continue }
@@ -231,6 +233,9 @@ final class CharacterStore {
             }
         }
         var profile = CharacterProfile(id: id, height: obj["height"] as? Double ?? fallbackHeight, states: states)
+        if let t = obj["trail"] as? [String: Any] {
+            profile.trail = (t["image"] as? String, t["color"] as? [Double] ?? [1, 1, 1])
+        }
         for (k, v) in obj["states"] as? [String: Any] ?? [:] {
             guard let s = PetState(rawValue: k), let st = v as? [String: Any] else { continue }
             // settings: declared by the state file (an ordered list), valued by the defaults or the user's changes

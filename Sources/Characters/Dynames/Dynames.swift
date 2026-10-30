@@ -13,6 +13,11 @@ enum Dynames {
 
     /// Its layers, once per Gundam, in the order they stack.
     private static func build(_ n: PetNode) {
+        n.buildWaiting()
+        // the charge glow (sniping, TRANS-AM) sits over the body's tint, under the hit sparks
+        Fx.configureCharge(n.charge, image: n.unit.fx["glow_b"])
+        n.body.insertSublayer(n.charge, below: n.sparks)
+        n.buildAttack()
         if !n.unit.cutin.isEmpty { n.buildCutin() }
         if n.unit.cutin["reticle"] != nil {
             let lock = LockHud(images: n.unit.cutin, ring: 26)
@@ -35,6 +40,10 @@ enum Dynames {
 
     /// Its acts, in the order they update each tick.
     private static let acts: [Act] = [
+        // 等你回覆 (locked): the system plays its frames ("flourish"); this is its GN drift and jet
+        Act(mode: .flourish,
+            update: { n, now, _, _ in n.updateWaiting(now: now, playing: true) },
+            hide: { n, now in n.updateWaiting(now: now, playing: false) }),
         // the first sniping loop (no state plays it now)
         Act(mode: .attack,
             update: { n, now, off, acting in n.updateSniping(active: acting, now: now, offset: off, lean: n.attackLean(now)) },
@@ -114,7 +123,16 @@ extension StatePlan.Mode {
     static let float = Self(rawValue: "float")
 }
 
+/// Layers more than one act uses.
+final class DynamesParts: ActParts {
+    required init() {}
+    /// GN particles drawn into the muzzle as a shot charges (sniping, TRANS-AM).
+    var charge = CAEmitterLayer()
+}
+
 extension PetNode {
+    var charge: CAEmitterLayer { parts(DynamesParts.self).charge }
+
     /// The first sniping loop's tilt as it takes aim.
     func attackLean(_ now: CFTimeInterval) -> CGFloat {
         unit.dy.lean * .pi / 180 * CGFloat(min(1, (now - trackStart) / 0.3))

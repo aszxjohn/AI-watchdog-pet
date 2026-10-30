@@ -11,15 +11,15 @@
    | 等你回覆 | 回合結束後 | 分三段，粒子各自一組設定、彼此漸變：**面向左邊**（平常）粒子只往右後方扇形散開、慢慢往後漂，像在緩慢往左前進；**前衝**時收窄成往右後噴的粒子流（比噴射寬），加一道收束的噴射尾流；**低頭**（偶爾，約 4.4 秒）粒子從中心整圈擴散，是唯一會往左邊的一段。參數在 `Sources/Stage.swift` 的 `DriftLook` |
    | 思考中 | 你送出訊息，還沒有工具呼叫 | （10/29 跟工作中交換動畫）雙槍連射：用 World 零件照 G 世代 Wars「GN Beam Pistol」那格以骨架組出來（`tools/rig.py`＋`poses/pistol_rig_v12.json`：#197 整副身體為根，左手 #93→#102、右手 #83→#94→#98、小腿 #200、狙擊槍 #242、兩面盾 #298 都掛在關節上）。`build_units.py` 的 `pistol` 轉關節產生 6 格：0–2 舉槍、3 瞄準、4 右槍後座、5 左槍後座，並量好每格兩把槍的槍口與槍管方向（v12 兩把槍在手腕各轉 4.6°，槍管都朝左下 14.5°，光彈走兩條平行線；v11 兩把差 9.5°，交錯開火時看起來像彎的）。動作：**舉槍** 0.45 秒 → **連射** 兩把槍輪流，每 0.13 秒一發、一輪 12 發，每發那把槍往上翻 4°（後座）、槍口閃光、整台往後震一下，一道粉紅短光彈從那一格的槍口沿槍管直直飛出（兩把槍角度本來就不同，所以是兩條錯開的直線；後座不要翻太大，槍口一偏離彈道，光彈看起來就像在轉彎） → 停 0.9 秒再來。GN 粒子往右後方扇形，開火時噴得更用力。參數在 `Stage.swift` 的 `Burst`、`PistolGN` |
    | 工作中 | 有工具呼叫還沒回結果 | 力天使的 TRANS-AM（10/29；照 Cross Rays「3:02 Trans-Am」的流程，用 G 世代 Wars 遊戲本身的 TRANS-AM 大圖演出：`assets/raw/wars_dynames_transam.png`），一輪 13.15 秒：①② 遊戲本身的開場（10/30 起直接用 Cross Rays 影片 182.10–185.80 秒共 112 格，30 fps 照原速播 3.73 秒：鏡頭往下落到頭部 → 大頭特寫、眼睛發光 → 黑幕 → TRANS-AM 畫面（白底線稿 → 洋紅、字樣打出、SYSTEM / MODE ACT MAX）→ 力天使站姿由暗轉紅；大頭和 TRANS-AM 畫面裁掉右上 HUD 和下方字幕，站姿那段另用大一點的裁切讓全身入鏡；格子總表在 `assets/reference_video/transam/screen/`）→ ③ 白光爆出、紅色站姿登場、GN 粒子噴出 →（④ 握槍特寫 10/30 拿掉）⑤ 第一槍 → ⑥ 高速移動：連換三個位置、身後拖殘影、每停一處開一槍 →（⑦ 紅色頭部特寫、⑧ 槍口特寫 10/30 拿掉）⑨ 洛克昂駕駛艙特寫（原本狙擊動畫那段，一格不改）→ ⑩（10/30 起衝刺最後就停在高處，特寫前後同一高度，看不到上升）槍口充能（光球＋收縮光環）、超粗粉紅光束＋衝擊環、目標大爆炸 → ⑪ 白光一閃（光暈蓋住換姿勢）換回等你回覆的站姿（stand 第 0 格，朝左；10/30 起，開場框打開前也是這個站姿）、降回原位。所有開槍都用 10/30 重做的**全武裝狙擊射擊姿勢** `ta_snipe`（`poses/ta_snipe_v3.json`）：照 Wars TRANS-AM「GN Sniper Rifle」74.4 秒的開火格，用 Wars TRANS-AM 零件表以骨架組成（T#76 正面全身當根、T#23 右肩盾往左下斜伸、T#6 左肩護甲＋左手＋直立左盾、T#164 狙擊槍；開火格換 T#9 發光槍口），槍口取槍膛中心、光束沿槍管往左下約 31°。射擊特效全用 Wars 自己的粉紅光束貼圖（`_0 Effects/DV_efe.png`＝力天使專用、`GN_beamrifule_P.png`）：開槍瞬間機體白閃、槍口光雲爆開＋鏡頭光暈＋十字光＋放射狀槍焰，光束是 DV_efe 的光棒中段拉長（亮芯只占貼圖高度 1/5，所以光束畫成兩倍粗：第一槍 30、移動中 18、最大出力 90）。這個姿勢零件表只有紅色版，⑪ 不能逐像素退色，改成白光蓋住再換回原色站姿。舊的紅色狙擊姿勢 `snipe_ta` 已不用。開場的特寫框跟洛克昂的同大小、同位置。拿掉自製特寫前的版本備份在 `backups/working-transam-2026-10-30/`（含可直接執行的 app）。GN 粒子照狙擊的往右後扇形，一律綠色（10/30：力天使的 GN 粒子不管什麼狀態都是綠的，TRANS-AM 也不變紅）。最大出力光束起點往槍膛裡縮 0.3 倍粗細，光棒圓頭的淡入段藏進槍口，不會跟槍口脫開。10/30 狙擊姿勢 `ta_snipe` 和衝刺用的 `ta_stand` 一起縮到 80%（1.4→1.12、0.9→0.72），左右移動更明顯；同日衝刺重排（停點 ×unitHeight，x＋＝右、y＋＝上：(-1.6, -0.08) 低處往左 → (0.3, 0.08) 往右閃 → (-2.0, 0.2) 最左 → (-0.6, -0.45) 往右下大幅俯衝（降 0.65）→ 往右上拉回原位正上方 (0, 0.45)；橫移 1.6／1.9／2.3／1.4，一開始很低、前幾次閃避逐步升高，倒數第二段大幅下降、最後拉回最大出力的高度，接洛克昂特寫和 ⑩ 不再另外升高；衝刺段 3.0 秒，一輪變 13.15 秒；展示機站在螢幕最右邊，所以往右最多 0.3，主要往左拉開；每段衝刺 0.2 秒）；最後一段衝回原位改用狙擊姿勢滑回去，洛克昂特寫前後全程都是狙擊姿勢，不會閃一下站姿；最大出力光束改成停在鎖定的目標點、爆炸放在光束尾端（開槍那一刻固定位置，降回原位時不跟著跑），不再在半空中爆炸。參數在 `build_units.py` 的 `transam`、`Stage.swift` 的 `TA`、`updateTransAm`、`updateTAPanel` |
-   | 要你批准? | 工具呼叫卡超過 8 秒且紀錄沒動（猜的，所以有問號） | 防禦待命：全盾合起（Cross Rays 11），盾合好後 GN 力場長出來，機體在裡面往上浮 0.55 個機高。力場用 G 世代 Wars 戰鬥動畫本身的 GNF 貼圖（`assets/raw/wars_combat_effects.zip` 的 `_0 Effects/GNF.png`，切成柔光、兩張粒子球、外環、底部亮弧五塊，`units/dynames/field/`，不加色）：柔光和粒子球在機體後面、外環和亮弧在前面；中間幾乎透明、邊緣亮、底部一道亮綠，跟影片 171.95 秒那格一樣。直徑約機高 2 倍。兩張粒子球反向慢轉、輪流變亮。力場長好後每 5.6 秒一輪攻擊（照影片 167～173.8 秒）：機體縮成 0.72 倍、帶著力場在範圍內衝刺換位（衝刺時身體傾斜、身後留下少量淡 GN 粒子，`Fx.configureDashTrail`），前兩波各三發、第三波一發，瞄準牠當下的位置，牠閃開，光彈從剛離開的地方擦過飛走；第四次閃不掉，六發輪流打在機體不同部位（左肩、右上大盾、腿、右下盾尖、又一發肩膀附近，落點是在全盾那格量的），每發火球小、分得出位置，落點跟著被震開的機體走；最後一發在中間大爆炸，白光、火球、黑煙，每發把機體往後震、畫面晃，最後一發大爆炸；煙散後飄回原位。路線和子彈表在 `Field.moves`、`Field.shots`。特效全是 Wars 的貼圖（2PMG 光彈、w04／w05 火球與煙，`units/dynames/attack/`）。「!」閃（10/30 拿掉了閃爍的橘色角框）。參數在 `build_units.py` 的 `field`／`attack`、`Stage.swift` 的 `Field`、`updateAttack` |
+   | 要你批准? | 工具呼叫卡超過 8 秒且紀錄沒動（猜的，所以有問號） | 防禦待命：全盾合起（Cross Rays 11），盾合好後 GN 力場長出來，機體在裡面往上浮 0.55 個機高。力場用 G 世代 Wars 戰鬥動畫本身的 GNF 貼圖（`assets/raw/wars_combat_effects.zip` 的 `_0 Effects/GNF.png`，切成柔光、兩張粒子球、外環、底部亮弧五塊，`characters/dynames/assets/field/`，不加色）：柔光和粒子球在機體後面、外環和亮弧在前面；中間幾乎透明、邊緣亮、底部一道亮綠，跟影片 171.95 秒那格一樣。直徑約機高 2 倍。兩張粒子球反向慢轉、輪流變亮。力場長好後每 5.6 秒一輪攻擊（照影片 167～173.8 秒）：機體縮成 0.72 倍、帶著力場在範圍內衝刺換位（衝刺時身體傾斜、身後留下少量淡 GN 粒子，`Fx.configureDashTrail`），前兩波各三發、第三波一發，瞄準牠當下的位置，牠閃開，光彈從剛離開的地方擦過飛走；第四次閃不掉，六發輪流打在機體不同部位（左肩、右上大盾、腿、右下盾尖、又一發肩膀附近，落點是在全盾那格量的），每發火球小、分得出位置，落點跟著被震開的機體走；最後一發在中間大爆炸，白光、火球、黑煙，每發把機體往後震、畫面晃，最後一發大爆炸；煙散後飄回原位。路線和子彈表在 `Field.moves`、`Field.shots`。特效全是 Wars 的貼圖（2PMG 光彈、w04／w05 火球與煙，`characters/dynames/assets/attack/`）。「!」閃（10/30 拿掉了閃爍的橘色角框）。參數在 `build_units.py` 的 `field`／`attack`、`Stage.swift` 的 `Field`、`updateAttack` |
    | 要你決定 | AskUserQuestion / ExitPlanMode 等你回答 | 支援防禦（照 G 世代 Wars 1:14「Support Defend」），一輪 5.4 秒：站著 → 前傾衝出去、背後 GN 粒子大量往後噴 → 全盾合起撐住；12 發 Wars 的橘色曳光彈（2PMG）從左前方打來，每輪隨機打在機體不同部位（頭、左肩、上方大盾、腿、中間…，同一處不連打），命中處黃光、黃色火花往來的方向噴（hibana_Y）；挨打期間機體一路往後退、每發再頓一下。除了前衝、提速那兩段（改成背後噴射），其餘時間（一開始直立、合盾挨打、收盾、回原位直立）身上都持續放 GN 粒子，照「等你回覆」面向左邊那樣往右後扇形散開（數值另存一份 `GuardGN`，不會往左） → 再提速前衝、噴射 → 收盾 → 回到原位站好，「?」（10/30 拿掉了閃爍的橘色角框）。參數在 `Stage.swift` 的 `Guard`、`GuardGN` |
-   | 做完了 | 回合剛結束（6 秒內） | 轉身露出背後的 GN 太陽爐（Cross Rays p19）：太陽爐一亮、先一大股 GN 粒子噴出，之後一直持續從太陽爐往四周飄散、慢慢往下沉。光暈和粒子都是 Wars 的 GN 特效貼圖（oo_ring_flash 光暈與綠核、小光點；oo_gn_pati 星形閃光、柔霧；`units/dynames/drive/`），太陽爐位置記在 `rig.driveAt`（圓頭中心）。粒子和光暈都蓋在最上層；光暈中間建置時調成半透明（`clearMiddle`），粒子用一般混色（不疊加），發射範圍鋪開在太陽爐上，中間是半透明的綠、看得到底下的太陽爐。光暈貼圖原本是給疊加混色用的（暗＝透明），建置時轉成透明底。參數在 `Stage.swift` 的 `Drive`、`Fx.configureDriveGN` |
+   | 做完了 | 回合剛結束（6 秒內） | 轉身露出背後的 GN 太陽爐（Cross Rays p19）：太陽爐一亮、先一大股 GN 粒子噴出，之後一直持續從太陽爐往四周飄散、慢慢往下沉。光暈和粒子都是 Wars 的 GN 特效貼圖（oo_ring_flash 光暈與綠核、小光點；oo_gn_pati 星形閃光、柔霧；`characters/dynames/assets/drive/`），太陽爐位置記在 `rig.driveAt`（圓頭中心）。粒子和光暈都蓋在最上層；光暈中間建置時調成半透明（`clearMiddle`），粒子用一般混色（不疊加），發射範圍鋪開在太陽爐上，中間是半透明的綠、看得到底下的太陽爐。光暈貼圖原本是給疊加混色用的（暗＝透明），建置時轉成透明底。參數在 `Stage.swift` 的 `Drive`、`Fx.configureDriveGN` |
    | 休息中 | 10 分鐘沒動靜 | 縮在合起的全盾裡、像在無重力的太空中漂流：一輪 10 秒，從左斜慢慢轉到正面、再轉回左斜（`turn` 影格表＝遊戲繭動作的 9–14 格，本來就是「左斜 → 正面」的轉身。試過用鏡像補右半邊，但正面那格本身不對稱，轉過正面時兩面盾一瞬間換邊、接不起來，使用者說只留半邊；素材沒有繭的側面和背面，所以也轉不到背面）；同時左右漂 ±8 pt（17 秒）、上下 ±4 pt（11 秒）、傾斜 ±5°（13 秒），三個週期不同，不會整齊重複。一直緩緩放 GN 粒子，散佈照「等你回覆」朝左直立那樣：從身體中間往右後扇形散開、不往左（方向、範圍、推力直接用 `DriftLook.facingLeft`），但量少、速度慢（每秒最多約 24 顆、速度 22、約 3.6 秒淡掉），量照 5 秒一輪像呼吸起伏（40%～100%）。圖層在機體後面，粒子從盾牌後面飄出來。「z」、名牌灰色；整台不透明（原本 `dim` 0.55 讓整台變半透明，10/29 使用者要求拿掉）。參數在 `build_units.py` 的 `turn`、`Stage.swift` 的 `Sleep`、`SleepGN`、`Fx.configureSleepGN` |
    | 出錯了 | API 錯誤 | 全盾（Cross Rays 11）被一輪輪攻擊到快自爆：一輪 6 秒，小爆炸一發接一發打在機體各部位（每輪隨機、同一處不連打；Wars 的白光、小火球、火花），越打越密、越打越重，機體一直抖、每發再被震一下、偶爾像畫面故障一樣往旁邊跳，紅光越來越深；第 5.2 秒大爆炸（白閃、大火球），之後平靜一下再開始下一輪。畫面前面像隔著螢幕貼了封條：機體中間橫一條 ERROR 封條（高 24 pt，ERROR 字照字形實際範圍放在上下邊條正中間），透明底、黃色斜紋＋紅字（照使用者給的封條參考圖，素材包沒有，`build_units.py` 的 `alarm` 畫的，含淡掃描線），不跟著機體晃、偶爾閃斷或錯位；頭頂原本的 ERROR 牌使用者要求拿掉。這個狀態不顯示「!!」標記。GN 粒子照「等你回覆」朝左直立的扇形（往右後、不往左），一陣一陣斷續噴，中彈和爆炸時噴更多。一開始那下受擊（白光轉紅、火花、煙圈）保留。參數在 `Stage.swift` 的 `Alarm`、`updateAlarm`、`alarmShake`、`Fx.configureAlarmGN` |
 
    進場從上方降落、離場轉身往上飛走，都拖著 GN 粒子。動作切換時會淡入淡出；
    有「進入 / 維持 / 收回」三段的動作，離開狀態前會先播收回段。
-   每個狀態用哪個動作寫在 `tools/build_units.py` 的 `rig`（會帶進 `units/<id>/unit.json`）。
+   每個狀態用哪個動作寫在 `tools/build_units.py` 的 `rig`（會帶進 `characters/<id>/assets/unit.json`）。
 
    工具執行失敗只會讓鋼彈抖一下，不改狀態。session 30 分鐘沒寫入就飛走。
 
@@ -45,8 +45,16 @@
 - `Sources/System/`：系統（引擎），程式裡不出現任何角色的名字。偵測 session（`SessionWatcher`、`SessionPicks`）、舞台與遊走（`Stage.swift` 的 `Stage`、`PetNode` 核心、`Character.swift` 的遊走公式與角色設定）、兩個視窗、選單。系統自己只會三種通用演出：`flourish`（等你回覆那種：停在第 0 格、偶爾演一次整段）、`hold`（播進場段、循環中段）、`still`（停一格）。
 - `Sources/Characters/<角色>/`：角色模組。用 `CharacterKit` 交給系統：`build`（每隻建一次自己的圖層，照自己的疊放順序）和 `acts`（每個 `Act` 對應一個演出名稱，或掛在某個狀態上）。`Act` 有這些掛鉤：`frame`（這一格畫哪張）、`update`／`hide`（每格更新／不演時收起）、`loopEnds`（一輪演完的時機，遊走只在這時出發）、`travel`（移動時顯示哪格）、`bubble`（標記位置）、`react`（身體晃動、傾斜）。角色自己的圖層放在 `ActParts`（每隻一份，`node.parts(…)` 取得）。
 - 力天使（`Sources/Characters/Dynames/`）：`Dynames.swift` 登記 9 個演出（attack、cycle 狙擊、pistols 雙槍、transam、field 力場、defend 支援防禦、drive 做完了、float 休息中、出錯了的封條），還有它自己的骨架數值 `DynamesRig`（槍口、槍管方向…）和圖片組（cutin、field、attack、drive、alarm、transam）。每個演出一個檔案，內容是從舊的 Stage.swift 原樣搬過來的。
-- 加新角色：`Sources/Characters/<id>/` 寫模組、在 `main.swift` 的 `CharacterModules.registerAll()` 登記一行，`characters/<id>/character.json` 放大小與遊走預設，`units/<id>/` 放素材（unit.json 的 `rig.states.<狀態>.mode` 寫演出名稱）。
+- 加新角色：`Sources/Characters/<id>/` 寫模組、在 `main.swift` 的 `CharacterModules.registerAll()` 登記一行，`characters/<id>/character.json` 放大小與遊走預設，`characters/<id>/assets/` 放素材（unit.json 的 `rig.states.<狀態>.mode` 寫演出名稱）。
 - 拆分前備份：`backups/before-arch-2026-10-30/`（含可直接執行的 app）。拆分後 8 個狀態新舊連拍並排比對，差異只有粒子隨機與閃爍時間（變動像素 < 0.4%）。
+
+## 系統是一個舞台（10/30，第 4 階段前三件）
+
+- **沒有角色也能跑**：找不到角色包時照常啟動，舞台是空的，session 偵測、選單、管理 session 視窗都照常；角色設定面板顯示「目前沒有角色」和放角色包的位置。
+- **系統裡沒有鋼彈專屬的東西了**：等你回覆的 GN 粒子與噴射（`Sources/Characters/Dynames/Waiting.swift`，掛在系統的 `flourish` 演出上）、狙擊用的充能粒子、最早期狙擊的光束圖層、粒子的三種預設樣子（面向左邊／低頭／前衝）都搬到力天使；拖尾粒子（進場、離場、移動、做完了的爆散）改看角色檔的 `"trail": {"image", "color"}`，沒寫就沒有；選單列圖示改用 App 圖示（鎖定展示時旁邊顯示「鎖」），文字改成「顯示寵物」等中性說法。
+- **角色包＝一個資料夾，啟動時自動載入**：`characters/<角色>/` 裡有 `character.json`（名字、大小、拖尾、遊走）、`states/<狀態>.json`（腳本與參數）、`assets/`（`tools/build_units.py` 產的素材與 unit.json，遊戲拆圖，不進 git）。程式啟動時掃描 App 內建的 `characters/` 和 `~/Library/Application Support/GundamPet/characters/<角色>/`（同名以使用者的為準），找到幾個載入幾個。用程式寫的演出（腳本做不到的）是選配的原生模組，在 `Sources/Characters/Modules.swift` 登記；只用腳本的角色不需要模組。
+- 這三件做完後 8 個狀態新舊並排比對一致（變動像素 ≤ 0.37%，粒子隨機）；素材建置改輸出到角色包後重跑一次，246 個檔逐一相同。改之前的備份：`backups/before-stage-2026-10-30/`。
+- 還沒做（第 4 件）：補積木（移動或衝刺到相對位置、特寫框、粗光束、圖層疊加、染色、晃動），把力天使其他 7 個狀態一個個改成腳本。
 
 ## 狀態腳本與參數（10/30，第 2、3 階段）
 
@@ -64,7 +72,7 @@
 先把每個狀態拆成各自獨立的動畫表，讓它留在自己那份，再改其他狀態。
 
 它用到的東西（改這些之前要先想清楚）：
-- 素材：`units/dynames/stand/`（站姿 15 格，進入 0–3／維持 4–10／收回 11–14）、`units/dynames/pose_a/`（低頭）、`fx/glow_a.png`、`fx/glow_b.png`
+- 素材：`characters/dynames/assets/stand/`（站姿 15 格，進入 0–3／維持 4–10／收回 11–14）、`characters/dynames/assets/pose_a/`（低頭）、`fx/glow_a.png`、`fx/glow_b.png`
 - rig：`"waiting": {"anim": "stand", "mode": "flourish", "fidget": ["pose_a"], "gnIdle": true, "jet": true}`
 - `Sources/Stage.swift`：`DriftLook`（facingLeft／aura／dash 三組粒子）、`Fx.configureIdle`／`Fx.apply`／`Fx.configureJet`、
   `PetNode` 的 `flourishFrame`（休息 3.5–7 秒、45% 機率低頭、低頭 4.4 秒）、`dashTarget`、`fidgetLevel` 漸變（0.15 展開／0.35 收回）、
@@ -79,7 +87,7 @@
 使用者說「這個先這樣定版了」。之後使用者要求思考中、工作中兩個動畫交換，這套狙擊動畫改給「工作中」；同日又要工作中改成 TRANS-AM、只保留洛克昂特寫，所以現在沒有狀態在播整套狙擊循環（程式還在），定版保護的剩：狙擊姿勢 `snipe`（TRANS-AM 一般色時用）和洛克昂駕駛艙特寫（TRANS-AM 第 ⑨ 段原樣呼叫 `updateCutin`）。之後做其他狀態時，**不能讓這套狙擊動畫有任何變化**；共用的東西要改，先複製一份給新狀態。
 
 它用到的東西：
-- 素材：`poses/snipe_aim_v2.json` → `units/dynames/snipe/`（#286＋#260＋#119、`erase`／`clip` 挖盾補肩甲、`lift` 105）、`units/dynames/cutin/`（駕駛艙特寫與鎖定框）
+- 素材：`poses/snipe_aim_v2.json` → `characters/dynames/assets/snipe/`（#286＋#260＋#119、`erase`／`clip` 挖盾補肩甲、`lift` 105）、`characters/dynames/assets/cutin/`（駕駛艙特寫與鎖定框）
 - rig：`"working": {"anim": "snipe", "mode": "cycle", "fps": 8}`（定版時寫在 `"thinking"`）、`fireAnim`、`snipeMuzzle`／`snipeDir`／`snipeCore`、`cutinPupil`
 - `Sources/Stage.swift`：`Cycle`、`cyclePhase`、`updateCycle`、`firePoint`、`floatAim`、`LockHud`、`SnipeGN`、`Fx.configureSnipeGN`／`applySnipeGN`、
   粉紅光束（`buildPinkBeam`）、駕駛艙特寫（`Cut`、`buildCutin`／`updateCutin`／`closeCutin`）、`bubbleHome` 在狙擊動畫（cycle 模式）時的位置、名牌讓位
@@ -102,7 +110,7 @@
 ```
 Sources/System/     系統：SessionWatcher 偵測、SessionPicks／SessionPanel、Units 素材與池子、Stage 畫面與 PetNode 核心、Character 遊走與角色設定、main 選單
 Sources/Characters/<id>/  角色模組（力天使：Dynames/，每個演出一個檔案）
-units/<id>/         處理好的素材：unit.json（含 rig）+ 每個動作一個資料夾（stand/ aim/ shield/ …）+ fx/ 特效 + cutin/ 瞄準特寫零件
+characters/<id>/assets/         處理好的素材：unit.json（含 rig）+ 每個動作一個資料夾（stand/ aim/ shield/ …）+ fx/ 特效 + cutin/ 瞄準特寫零件
 assets/raw/         下載的原始 zip（spriters-resource.com，SD Gundam G Generation Cross Rays 拆圖）
                     特效包（10/29）：world_common_combat_effects、world_map_effects、wars_combat_effects、crossrays_{common_effects,shield_effects,explosions,rapid_fire,beams_1,beams_2,unique_weapon_effects,beam_sabers,map_weapon_effects}.zip，解壓在 assets/extracted/ 同名資料夾
 assets/extracted/   解壓後的原始 PNG

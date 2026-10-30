@@ -41,10 +41,8 @@ struct StatePlan {
     var dim: CGFloat
     var burst: Bool
     var hit: Bool
-    /// GN particles drifting off the drive for as long as the state lasts.
-    var gnIdle: Bool
-    /// While the move plays (in → hold → out), the drift streams backwards and a tapering jet is added.
-    var jet: Bool
+    /// The whole object, for a character's acts to read their own keys.
+    let raw: [String: Any]
 
     init(_ o: [String: Any]) {
         anim = o["anim"] as? String ?? "stand"
@@ -55,8 +53,7 @@ struct StatePlan {
         dim = CGFloat(o["dim"] as? Double ?? 1)
         burst = o["burst"] as? Bool ?? false
         hit = o["hit"] as? Bool ?? false
-        gnIdle = o["gnIdle"] as? Bool ?? false
-        jet = o["jet"] as? Bool ?? false
+        raw = o
     }
 }
 
@@ -153,6 +150,26 @@ final class UnitDef {
     private static func image(_ url: URL) -> CGImage? {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
         return CGImageSourceCreateImageAtIndex(src, 0, nil)
+    }
+
+    /// Every character package (a folder with assets/unit.json), the app's own (Resources/characters) and the user's
+    /// (~/Library/Application Support/GundamPet/characters/<id>/, which wins for the same id), by id.
+    static func packages() -> [String: URL] {
+        var found: [String: URL] = [:]
+        let fm = FileManager.default
+        for base in [Bundle.main.resourceURL?.appendingPathComponent("characters"), Config.dir.appendingPathComponent("characters")] {
+            guard let base else { continue }
+            for dir in (try? fm.contentsOfDirectory(at: base, includingPropertiesForKeys: nil)) ?? []
+            where fm.fileExists(atPath: dir.appendingPathComponent("assets/unit.json").path) {
+                found[dir.lastPathComponent] = dir
+            }
+        }
+        return found
+    }
+
+    /// The characters of every package (its assets folder).
+    static func loadPackages(_ packages: [String: URL]) -> [UnitDef] {
+        packages.keys.sorted().compactMap { UnitDef(dir: packages[$0]!.appendingPathComponent("assets")) }
     }
 
     static func loadAll(from root: URL) -> [UnitDef] {

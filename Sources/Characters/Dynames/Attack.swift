@@ -1,7 +1,68 @@
 import AppKit
 import QuartzCore
 
+/// The first sniping loop's layers (no state plays it now): beam, flash, impact, lock-on reticle.
+final class AttackParts: ActParts {
+    required init() {}
+    var beam = CALayer()
+    var beamGlow = CAGradientLayer()
+    var beamCore = CALayer()
+    var flash = CALayer()
+    var impact = CALayer()
+    var reticle = CAShapeLayer()
+}
+
 extension PetNode {
+    var attackParts: AttackParts { parts(AttackParts.self) }
+    var beam: CALayer { attackParts.beam }
+    var beamGlow: CAGradientLayer { attackParts.beamGlow }
+    var beamCore: CALayer { attackParts.beamCore }
+    var flash: CALayer { attackParts.flash }
+    var impact: CALayer { attackParts.impact }
+    var reticle: CAShapeLayer { attackParts.reticle }
+
+    func buildAttack() {
+        // Beam: drawn from its left edge (the muzzle) along +x, then rotated to the barrel direction.
+        beam.anchorPoint = CGPoint(x: 0, y: 0.5)
+        beam.opacity = 0
+        beamGlow.colors = [Hud.beam.copy(alpha: 0) ?? Hud.beam, Hud.beam, Hud.beam.copy(alpha: 0) ?? Hud.beam]
+        beamGlow.startPoint = CGPoint(x: 0.5, y: 0)
+        beamGlow.endPoint = CGPoint(x: 0.5, y: 1)
+        beam.addSublayer(beamGlow)
+        beamCore.backgroundColor = CGColor(gray: 1, alpha: 0.95)
+        beam.addSublayer(beamCore)
+        beam.shadowColor = Hud.beam
+        beam.shadowOpacity = 0.9
+        beam.shadowRadius = 4
+        beam.shadowOffset = .zero
+        if let img = unit.fx["beam"] {
+            // The sheet's own beam sprite replaces the drawn glow + core.
+            beam.contents = img
+            beam.contentsGravity = .resize
+            beamGlow.isHidden = true
+            beamCore.isHidden = true
+            beam.shadowOpacity = 0
+        }
+        root.addSublayer(beam)
+        for (l, img, size) in [(flash, unit.fx["flash"], CGSize(width: 40, height: 27)),
+                               (impact, unit.fx["orb"], CGSize(width: 24, height: 23))] {
+            l.contents = img ?? Fx.dot(Hud.beamHot)
+            l.bounds = CGRect(origin: .zero, size: size)
+            l.opacity = 0
+            root.addSublayer(l)
+        }
+        reticle.path = Hud.reticle(radius: 9)
+        reticle.fillColor = nil
+        reticle.lineWidth = 1.2
+        reticle.strokeColor = Hud.green
+        reticle.shadowColor = Hud.green
+        reticle.shadowOpacity = 0.6
+        reticle.shadowRadius = 2
+        reticle.shadowOffset = .zero
+        reticle.opacity = 0
+        root.addSublayer(reticle)
+    }
+
     // MARK: effects
 
 

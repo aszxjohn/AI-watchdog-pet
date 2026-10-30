@@ -116,7 +116,7 @@ private struct SessionView: View {
             }
             Divider()
             HStack {
-                Text("被釋放的 session，你下次在裡面回話時鋼彈會自己出現。")
+                Text("被釋放的 session，你下次在裡面回話時寵物會自己出現。")
                     .font(.caption).foregroundColor(.secondary)
                 Spacer()
                 if !model.lockOn {
@@ -142,7 +142,7 @@ private struct SessionView: View {
         } else {
             VStack(alignment: .leading, spacing: 4) {
                 Text("最近的 session").font(.headline)
-                Text("從某一隻鋼彈右鍵打開，可以指定它要監控哪一個。").font(.caption).foregroundColor(.secondary)
+                Text("從某一隻寵物右鍵打開，可以指定它要監控哪一個。").font(.caption).foregroundColor(.secondary)
             }
         }
     }
@@ -180,7 +180,7 @@ private struct SessionRow: View {
         switch row.status {
         case .shown(let name): Text(isThis ? "\(name)（這隻）" : name).foregroundColor(.green)
         case .released: Text("已釋放").foregroundColor(.orange)
-        case .none: Text("沒有鋼彈").foregroundColor(.secondary)
+        case .none: Text("沒有寵物").foregroundColor(.secondary)
         }
     }
 

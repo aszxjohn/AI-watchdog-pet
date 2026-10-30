@@ -20,7 +20,7 @@ from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parent.parent
 ZIP = ROOT / "assets" / "raw" / "dynames.zip"
-GLOW = ROOT / "units" / "dynames" / "fx" / "glow_a.png"
+GLOW = ROOT / "characters" / "dynames" / "assets" / "fx" / "glow_a.png"
 OUT = ROOT / "assets" / "icon"
 SIZE = 1024
 MARGIN, RADIUS = 100, 185            # Apple's icon grid: an 824 px plate on a 1024 px canvas

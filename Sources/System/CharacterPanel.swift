@@ -129,6 +129,20 @@ private struct PanelView: View {
     @ObservedObject var model: PanelModel
 
     var body: some View {
+        if model.units.isEmpty {
+            VStack(spacing: 8) {
+                Text("目前沒有角色").font(.title3).bold()
+                Text("把角色包（character.json、states/、assets/）放進 ~/Library/Application Support/GundamPet/characters/<角色>/，重開程式就會載入。")
+                    .font(.caption).foregroundColor(.secondary).multilineTextAlignment(.center)
+            }
+            .padding(40)
+            .frame(minWidth: 900, minHeight: 560)
+        } else {
+            editor
+        }
+    }
+
+    private var editor: some View {
         HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("角色").font(.headline)

@@ -4,8 +4,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 root = Path(__file__).resolve().parent.parent
 uid, anim = sys.argv[1], sys.argv[2]
-m = json.loads((root / "units" / uid / "unit.json").read_text())["animations"][anim]
-frames = [Image.open(root / "units" / uid / f).convert("RGBA") for f in m["frames"]]
+m = json.loads((root / "characters" / uid / "assets" / "unit.json").read_text())["animations"][anim]
+frames = [Image.open(root / "characters" / uid / "assets" / f).convert("RGBA") for f in m["frames"]]
 w, h = m["size"]; ax, ay = m["anchor"]
 cols = int(sys.argv[3]) if len(sys.argv) > 3 else 8
 rows = (len(frames) + cols - 1) // cols

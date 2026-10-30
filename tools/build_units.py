@@ -5,8 +5,8 @@ consecutive frames are not registered. We re-register every sequence by
 cross-correlating each frame against the previous one, put all frames on one
 shared canvas, scale the unit to a common height, and write:
 
-    units/<id>/unit.json
-    units/<id>/<anim>/NN.png
+    characters/<id>/assets/unit.json
+    characters/<id>/assets/<anim>/NN.png
 
 usage: python3 tools/build_units.py [unit_id ...]
 """
@@ -19,7 +19,8 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "assets" / "extracted"
-OUT = ROOT / "units"
+# each character's package: characters/<id>/ (character.json, states/ — written by hand) and assets/ (made here)
+OUT = ROOT / "characters"
 PREVIEW = ROOT / "preview"
 
 # Height (px) of the idle pose after scaling. The app draws at @2x, so this is 2x
@@ -411,7 +412,7 @@ def build(unit_id):
     # found by overlaying its first frame on the base pose, so switching animations does not jump.
     base_pin = centroid(base_f0)
 
-    out_dir = OUT / unit_id
+    out_dir = OUT / unit_id / "assets"
     if out_dir.exists():
         for old in out_dir.rglob("*.png"):
             old.unlink()

@@ -3,6 +3,7 @@
   "name": "力天使",
   "code": "GN-002",
   "height": 110,
+  "trail": {"image": "fx/glow_a", "color": [0.36, 1, 0.69]},
   "states": {
     "waiting":    {"wander": false, "cells": [7, 8], "strength": 0.5, "step": "medium", "stay": [4, 8], "speed": 240},
     "thinking":   {"wander": true, "cells": [3, 4, 5], "strength": 0.4, "step": "medium", "stay": [3, 6], "speed": 260,
