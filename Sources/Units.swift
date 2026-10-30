@@ -294,6 +294,11 @@ final class Pool {
         }
     }
 
+    /// A Gundam switched from one session to another by hand keeps being the same Gundam.
+    func hand(from old: String, to new: String) {
+        if let u = live.removeValue(forKey: old) { live[new] = u }
+    }
+
     /// `sessions` in on-screen order (oldest first). Returns session → unit id.
     func assign(_ sessions: [String]) -> [String: String] {
         guard !unitIds.isEmpty else { return [:] }

@@ -62,7 +62,8 @@ private enum Hud {
 /// One Gundam on screen, bound to one session. Each state is acted out with the unit's own
 /// animations (unit.json rig); code only adds one-off reactions and HUD / GN-particle effects.
 final class PetNode {
-    let sessionId: String
+    /// The session it follows (changed by hand from its right-click menu).
+    var sessionId: String
     let unit: UnitDef
     let root = CALayer()
     private let body = CALayer()
@@ -3228,6 +3229,15 @@ final class Stage {
     var unitList: [UnitDef] { units.values.sorted { $0.id < $1.id } }
     /// The lowest a Gundam stands (its name tag below it).
     var floorY: CGFloat { labelBand }
+    /// Every recent session (the watcher's list), for picking one for a Gundam by hand.
+    var sessionList: [SessionInfo] = []
+    /// "管理 session…" from a Gundam's right-click menu: called with the session it follows.
+    var onManageSessions: ((String) -> Void)?
+    /// Session → the Gundam following it ("GN-002 力天使"), for the session window.
+    var shownSessions: [String: String] {
+        Dictionary(uniqueKeysWithValues: nodes.values.filter { $0.sessionId != showcaseId }
+            .map { ($0.sessionId, "\($0.unit.code) \($0.unit.name)") })
+    }
 
     private var labelBand: CGFloat { config.showLabels ? 34 : 6 }
     /// Each character's size and wandering (character file + the user's changes from the settings panel).
@@ -3390,7 +3400,10 @@ final class Stage {
     private func trackMouse() {
         let m = NSEvent.mouseLocation
         let p = CGPoint(x: m.x - window.frame.minX, y: m.y - window.frame.minY)
-        let over = window.isVisible && nodes.values.contains { $0.hitRect.contains(p) }
+        // Over one of the app's own windows (角色設定, 管理 session) the Gundams never take the click, even when one
+        // has wandered on top of it — else that window cannot be used there (10/30).
+        let overPanel = NSApp.windows.contains { $0 !== window && $0.isVisible && $0.frame.contains(m) }
+        let over = window.isVisible && !overPanel && nodes.values.contains { $0.hitRect.contains(p) }
         if window.ignoresMouseEvents == over { window.ignoresMouseEvents = !over }
     }
 
@@ -3408,11 +3421,26 @@ final class Stage {
             menu.addItem(title)
         }
         menu.addItem(.separator())
+        let sid = n.sessionId
+        menu.addItem(MenuAction.item("管理 session…（換監控、釋放）") { [weak self] in self?.onManageSessions?(sid) })
+        menu.addItem(.separator())
         addModeItems(to: menu)
         menu.addItem(.separator())
         menu.addItem(MenuAction.item("角色設定…") { [weak self] in self?.onOpenSettings?() })
         if NSScreen.screens.count > 1 { menu.addItem(screenMenu()) }
         return menu
+    }
+
+    /// Switches a Gundam from one session to another in place (same Gundam, no exit / entrance).
+    func retarget(from old: String, to new: String) {
+        guard let n = nodes.removeValue(forKey: old), nodes[new] == nil else { return }
+        n.sessionId = new
+        nodes[new] = n
+        pool.hand(from: old, to: new)
+        order = order.map { $0 == old ? new : $0 }
+        if let s = sessionList.first(where: { $0.id == new }) {
+            n.set(state: s.state, title: s.title, toolErrorAt: s.toolErrorAt, now: CACurrentMediaTime())
+        }
     }
 
     /// "一般模式" / "展示模式（Debug）", the current one ticked.

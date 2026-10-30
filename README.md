@@ -27,6 +27,8 @@
 
 3. **畫面**：一個透明、置頂的長條視窗，貼在螢幕底部（Dock 上方），最舊的 session 在最右邊。平常滑鼠穿透，只有游標移到某台鋼彈身上時才接收點擊（所以點在鋼彈身上的左鍵會被它吃掉）。選單列的「GN」可以隱藏鋼彈、關名牌、切模式、結束。
    **切模式（10/30）**：右鍵（或 control+點）任何一台鋼彈，選單裡有「一般模式」「展示模式（Debug）」，目前的模式打勾；一般模式的右鍵選單最上面列出這台是哪個 session、什麼狀態。同樣的切換也在 Dock 圖示的右鍵選單、App 選單列（程式在最前面時）和「GN」選單裡。
+   **管理 session（10/30）**：右鍵鋼彈選「管理 session…」（「GN」選單、Dock 右鍵、App 選單也有）打開視窗：最近 24 小時內的 session 一行一個（新的在上：狀態、標題、多久前更新、活躍或閒置、由哪隻監控／已釋放／沒有鋼彈），每行有「釋放」或「叫回」；從某隻鋼彈打開時，多一個「給這隻監控」，那隻會原地改跟那個 session（同一隻、不重新進場），原本的 session 被釋放。底部「全部釋放」一次釋放畫面上所有的。被釋放的 session，你下次在裡面回話（transcript 出現新的使用者訊息）後鋼彈會自己再生成；手動叫回或指定監控的，閒置超過 30 分鐘也會留著，直到被釋放。記在 `~/Library/Application Support/GundamPet/sessions.json`，程式在 `Sources/SessionPicks.swift`（規則）、`Sources/SessionPanel.swift`（視窗）；列多少由 config.json 的 `listHours`、`listCount` 決定。無頭檢查：`--offscreen --sessions-snapshot <png>`。
+   **鎖定展示（10/30）**：在「管理 session」視窗每行最前面勾要的 session，打開上方「鎖定展示」開關（「GN」選單、Dock 右鍵也有「鎖定展示」可以切）：偵測程式不再掃 ~/.claude/projects，只讀勾選的那幾個 transcript，鋼彈也只為它們生成（閒置的也有，釋放不影響）；選單列顯示「GN・鎖」。鎖定中視窗只看得到勾選的；要加別的先關掉鎖定再勾。取消最後一個勾會自動關掉鎖定。勾選和開關記在 sessions.json（`locked`、`lockOn`），重開還在。
    **遊走與角色設定（10/30）**：畫布改成整個螢幕（扣掉選單列和 Dock）的透明視窗，鋼彈會在整個畫面遊走。每台在底部一排有自己的「位置」：從那裡進場，不遊走的狀態就回去待著。
    - 角色檔 `characters/<id>/character.json`（跟著專案、打包進 app）：大小 `height`（pt，所有狀態一樣大，取代以前 config.json 的 `unitHeight`）＋每個狀態的遊走設定：`wander`（會不會遊走）、`cells`（偏好的九宮格，0～8 由左上往右下，可不連續）、`strength`（偏好強度）、`step`（一次走多遠 small/medium/large＝1～2.5／1.5～4／2.5～6 倍機高）、`stay`（每次停留秒數 [最少, 最多]）、`speed`（pt/秒）、`room`（這個狀態的動作需要的空間，倍機高，只寫在角色檔）。
    - 你的修改：右鍵鋼彈／Dock／「GN」選單的「角色設定…」打開面板，改了立刻存到 `~/Library/Application Support/GundamPet/characters/<id>.json`（只存跟角色檔不一樣的欄位）並立刻生效；面板可恢復預設、可「在畫面上預覽」該狀態（切到展示模式）。

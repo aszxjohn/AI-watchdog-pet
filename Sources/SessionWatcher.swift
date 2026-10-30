@@ -23,6 +23,12 @@ struct SessionInfo: Codable {
     let state: PetState
     let toolErrorAt: Date?
     let firstSeen: Date
+    /// Written to within `activeMinutes` (only these get a Gundam by themselves; older ones only when picked by hand).
+    var active = true
+    /// When the user last wrote in it (a released session comes back once this is after the release).
+    var lastPromptAt: Date?
+    /// When its transcript last changed.
+    var updatedAt = Date()
 }
 
 /// Follows one transcript (~/.claude/projects/<project>/<session>.jsonl) and keeps just enough
@@ -74,8 +80,18 @@ final class SessionWatcher {
     }()
 
     var onUpdate: (([SessionInfo]) -> Void)?
+    /// 鎖定展示: only these transcripts (paths) are read; nil = every recent one.
+    private var only: Set<String>?
 
     init(config: Config) { self.config = config }
+
+    /// 鎖定展示: from now on read only these sessions (nil: all of them again), and rescan straight away.
+    func watchOnly(_ paths: Set<String>?) {
+        queue.async { [weak self] in
+            self?.only = paths
+            self?.scan()
+        }
+    }
 
     func start() {
         let t = DispatchSource.makeTimerSource(queue: queue)
@@ -91,26 +107,45 @@ final class SessionWatcher {
         let keys: [URLResourceKey] = [.contentModificationDateKey, .creationDateKey, .fileSizeKey]
         let now = Date()
         var seen = Set<String>()
-        let dirs = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        // Every session written to within activeMinutes, plus the most recent others within listHours (for picking
+        // one by hand from a Gundam's right-click menu).
+        var found: [(file: URL, rv: URLResourceValues, mtime: Date)] = []
+        // 鎖定展示: just those files, however old, and no scan of the projects folder at all
+        if let only {
+            for path in only {
+                let file = URL(fileURLWithPath: path)
+                guard let rv = try? file.resourceValues(forKeys: Set(keys)), let mtime = rv.contentModificationDate else { continue }
+                found.append((file, rv, mtime))
+            }
+        }
+        let dirs = only != nil ? [] : (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
         for dir in dirs {
             let files = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys)) ?? []
             for file in files where file.pathExtension == "jsonl" && !file.lastPathComponent.hasPrefix("agent-") {
                 guard let rv = try? file.resourceValues(forKeys: Set(keys)),
                       let mtime = rv.contentModificationDate,
-                      now.timeIntervalSince(mtime) < config.activeMinutes * 60 else { continue }
-                let key = file.path
-                seen.insert(key)
-                let tracker: Tracker
-                if let existing = trackers[key] {
-                    tracker = existing
-                } else {
-                    tracker = Tracker(url: file)
-                    tracker.created = rv.creationDate ?? mtime
-                    trackers[key] = tracker
-                }
-                tracker.mtime = mtime
-                read(tracker, size: UInt64(rv.fileSize ?? 0))
+                      now.timeIntervalSince(mtime) < max(config.activeMinutes * 60, config.listHours * 3600) else { continue }
+                found.append((file, rv, mtime))
             }
+        }
+        found.sort { $0.mtime > $1.mtime }
+        let activeAge = config.activeMinutes * 60
+        let listed = found.enumerated().filter {
+            only != nil || $0.offset < config.listCount || now.timeIntervalSince($0.element.mtime) < activeAge
+        }
+        for (_, f) in listed {
+            let key = f.file.path
+            seen.insert(key)
+            let tracker: Tracker
+            if let existing = trackers[key] {
+                tracker = existing
+            } else {
+                tracker = Tracker(url: f.file)
+                tracker.created = f.rv.creationDate ?? f.mtime
+                trackers[key] = tracker
+            }
+            tracker.mtime = f.mtime
+            read(tracker, size: UInt64(f.rv.fileSize ?? 0))
         }
         trackers = trackers.filter { seen.contains($0.key) }
 
@@ -119,7 +154,9 @@ final class SessionWatcher {
             .sorted { $0.firstSeen < $1.firstSeen }
             .map { t in
                 SessionInfo(id: t.url.path, title: t.displayTitle, state: state(of: t, now: now),
-                            toolErrorAt: t.toolErrorAt, firstSeen: t.firstSeen)
+                            toolErrorAt: t.toolErrorAt, firstSeen: t.firstSeen,
+                            active: now.timeIntervalSince(t.mtime) < activeAge, lastPromptAt: t.lastPromptAt,
+                            updatedAt: t.mtime)
             }
         DispatchQueue.main.async { [weak self] in self?.onUpdate?(infos) }
     }

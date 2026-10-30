@@ -6,6 +6,10 @@ struct Config: Codable {
     var projectsDir = "~/.claude/projects"
     /// A session stays on screen while its transcript was written within this many minutes.
     var activeMinutes = 30.0
+    /// A Gundam's right-click menu lists sessions written to within this many hours (at most `listCount` besides the
+    /// active ones), to pick one for it by hand.
+    var listHours = 24.0
+    var listCount = 15
     /// No activity for this long → 休息中.
     var sleepMinutes = 10.0
     /// A tool call pending this long with no new transcript lines → 要你批准?
@@ -28,6 +32,8 @@ struct Config: Codable {
         projectsDir = try c.decodeIfPresent(String.self, forKey: .projectsDir) ?? d.projectsDir
         activeMinutes = try c.decodeIfPresent(Double.self, forKey: .activeMinutes) ?? d.activeMinutes
         sleepMinutes = try c.decodeIfPresent(Double.self, forKey: .sleepMinutes) ?? d.sleepMinutes
+        listHours = try c.decodeIfPresent(Double.self, forKey: .listHours) ?? d.listHours
+        listCount = try c.decodeIfPresent(Int.self, forKey: .listCount) ?? d.listCount
         permissionSeconds = try c.decodeIfPresent(Double.self, forKey: .permissionSeconds) ?? d.permissionSeconds
         showLabels = try c.decodeIfPresent(Bool.self, forKey: .showLabels) ?? d.showLabels
         debug = try c.decodeIfPresent(Bool.self, forKey: .debug) ?? d.debug

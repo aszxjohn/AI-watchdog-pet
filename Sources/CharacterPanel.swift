@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// 角色設定 (10/30): pick a character, set its size, and for each state how it wanders — whether it does, which of the
-/// screen's nine cells it prefers (drag to box-select, click to toggle one, ⌘-drag to add; any shape), how strongly,
+/// screen's nine cells it prefers (click a cell to toggle it; any shape), how strongly,
 /// how far a move goes, how long it rests, how fast it moves. Every change is saved at once (only what differs from
 /// the character file) and shows on screen straight away; 「在畫面上預覽」 switches to showcase mode in that state.
 final class CharacterPanel {
@@ -180,7 +180,7 @@ private struct StateEditor: View {
                 Text("不遊走：會回到螢幕底部自己的位置待著。").font(.caption).foregroundColor(.secondary)
             }
             Group {
-                Text("偏好的區域（拖曳框選；點一下切換單格；按住 ⌘ 拖曳是加選；可以不連續）")
+                Text("偏好的區域（點格子選取或取消，可以不連續）")
                     .font(.caption).foregroundColor(.secondary)
                 GridPicker(cells: bind(\.cells))
                     .frame(width: 360, height: 360 / model.stageAspect)
@@ -207,8 +207,6 @@ private struct StateEditor: View {
                     Text("～")
                     Stepper("\(Int(model.pref.stay.last ?? 0)) 秒", value: stayBound(1), in: 0...60)
                 }
-                Text("TRANS-AM、雙槍這類一輪一輪的動作，會等一輪演完才移動（停留 0 秒＝每輪都換位置）。")
-                    .font(.caption).foregroundColor(.secondary)
                 HStack {
                     Text("移動速度")
                     Slider(value: bind(\.speed), in: 60...600)
@@ -244,73 +242,38 @@ private struct StateEditor: View {
     }
 }
 
-/// The screen as nine cells. Drag to box-select (replacing the selection, or adding to it with ⌘), click a cell to
-/// toggle it.
+/// The screen as nine cells: click one to select it or not (10/30: the user wanted plain clicks, no dragging).
 private struct GridPicker: View {
     @Binding var cells: [Int]
-    @State private var from: CGPoint?
-    @State private var to: CGPoint?
     private let names = ["上左", "上中", "上右", "中左", "中中", "中右", "下左", "下中", "下右"]
 
     var body: some View {
-        GeometryReader { g in
-            ZStack(alignment: .topLeading) {
-                ForEach(0..<9, id: \.self) { i in
-                    cell(i, size: g.size)
-                }
-                if let r = dragRect, r.width > 4 || r.height > 4 {
-                    Rectangle()
-                        .fill(Color.accentColor.opacity(0.15))
-                        .overlay(Rectangle().stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [5])))
-                        .frame(width: r.width, height: r.height)
-                        .offset(x: r.minX, y: r.minY)
+        VStack(spacing: 2) {
+            ForEach(0..<3, id: \.self) { r in
+                HStack(spacing: 2) {
+                    ForEach(0..<3, id: \.self) { c in
+                        cell(r * 3 + c)
+                    }
                 }
             }
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0)
-                .onChanged { v in
-                    from = v.startLocation
-                    to = v.location
-                }
-                .onEnded { v in
-                    finish(v.startLocation, v.location, size: g.size)
-                    from = nil
-                    to = nil
-                })
         }
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary, lineWidth: 1))
+        .padding(2)
+        .background(Color.secondary.opacity(0.35))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 
-    private var dragRect: CGRect? {
-        guard let a = from, let b = to else { return nil }
-        return CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
-    }
-
-    private func frame(_ i: Int, size: CGSize) -> CGRect {
-        let w = size.width / 3, h = size.height / 3
-        return CGRect(x: CGFloat(i % 3) * w, y: CGFloat(i / 3) * h, width: w, height: h)
-    }
-
-    private func cell(_ i: Int, size: CGSize) -> some View {
-        let f = frame(i, size: size)
+    private func cell(_ i: Int) -> some View {
         let on = cells.contains(i)
-        return Rectangle()
-            .fill(on ? Color.green.opacity(0.55) : Color.gray.opacity(0.12))
-            .overlay(Rectangle().stroke(Color.secondary.opacity(0.5), lineWidth: 1))
-            .overlay(Text(names[i]).font(.caption).foregroundColor(on ? .primary : .secondary))
-            .frame(width: f.width, height: f.height)
-            .offset(x: f.minX, y: f.minY)
-    }
-
-    private func finish(_ a: CGPoint, _ b: CGPoint, size: CGSize) {
-        if hypot(b.x - a.x, b.y - a.y) < 4 {
-            guard let i = (0..<9).first(where: { frame($0, size: size).contains(a) }) else { return }
-            cells = cells.contains(i) ? cells.filter { $0 != i } : (cells + [i]).sorted()
-            return
+        return Button {
+            cells = on ? cells.filter { $0 != i } : (cells + [i]).sorted()
+        } label: {
+            Text(names[i])
+                .font(.caption)
+                .foregroundColor(on ? .white : .secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(on ? Color.green.opacity(0.7) : Color(nsColor: .controlBackgroundColor))
+                .contentShape(Rectangle())
         }
-        let box = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
-        let hit = (0..<9).filter { frame($0, size: size).intersects(box) }
-        let add = NSEvent.modifierFlags.contains(.command)
-        cells = add ? Array(Set(cells).union(hit)).sorted() : hit
+        .buttonStyle(.plain)
     }
 }

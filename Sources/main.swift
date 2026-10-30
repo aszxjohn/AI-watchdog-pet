@@ -29,6 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var stage: Stage!
     private var watcher: SessionWatcher?
     private var panel: CharacterPanel?
+    private var sessionPanel: SessionPanel?
+    /// Which sessions have a Gundam (released ones, ones picked by hand).
+    private var picks: SessionPicks!
     private var demo: Demo?
     private var statusItem: NSStatusItem!
     private var labelsItem: NSMenuItem!
@@ -36,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var normalItem: NSMenuItem!
     private var showcaseItem: NSMenuItem!
     private var screenItem: NSMenuItem?
+    private var lockItem: NSMenuItem?
     /// The watcher's latest sessions, kept while showcase mode hides them.
     private var latest: [SessionInfo] = []
 
@@ -66,6 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         stage = Stage(units: units, pool: Pool(unitIds: units.map(\.id), persist: !demoMode && !offscreen),
                       config: config, characters: characters, offscreen: offscreen)
         characters.onChange = { [weak self] id in self?.stage.characterChanged(id) }
+        picks = SessionPicks(persist: !demoMode && !offscreen)
+        stage.onManageSessions = { [weak self] sid in self?.openSessions(for: sid) }
         stage.onOpenSettings = { [weak self] in self?.openSettings() }
 
         if demoMode {
@@ -76,10 +82,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let w = SessionWatcher(config: config)
             w.onUpdate = { [weak self] sessions in
                 self?.latest = sessions
-                self?.stage.apply(sessions)
+                self?.refreshSessions()
             }
             w.start()
             watcher = w
+            if picks.lockOn { w.watchOnly(Set(picks.lockedIds)) }
+        }
+
+        // --sessions-snapshot <path>: draws the 管理 session window (real sessions) into a PNG and quits.
+        if let i = CommandLine.arguments.firstIndex(of: "--sessions-snapshot"),
+           let path = CommandLine.arguments.dropFirst(i + 1).first {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self else { return }
+                self.openSessions(for: self.stage.shownSessions.keys.sorted().first, show: false)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.sessionPanel?.snapshot(to: URL(fileURLWithPath: path))
+                    NSApp.terminate(nil)
+                }
+            }
+            return
         }
 
         // --panel-snapshot <path>: draws the 角色設定 panel into a PNG and quits (headless check).
@@ -165,9 +186,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         showcaseItem = NSMenuItem(title: "展示模式（Debug，單獨一隻、右鍵切狀態）", action: #selector(pickShowcase),
                                   keyEquivalent: "")
         let settings = NSMenuItem(title: "角色設定…", action: #selector(openSettings), keyEquivalent: ",")
+        let sessions = NSMenuItem(title: "管理 session…", action: #selector(openSessionsMenu), keyEquivalent: "")
+        lockItem = NSMenuItem(title: "鎖定展示（只顯示勾選的 session）", action: #selector(toggleLock), keyEquivalent: "")
+        lockItem?.state = picks.lockOn ? .on : .off
+        statusItem.button?.title = picks.lockOn ? "GN・鎖" : "GN"
         let folder = NSMenuItem(title: "打開設定資料夾", action: #selector(openFolder), keyEquivalent: "")
         let quit = NSMenuItem(title: "結束", action: #selector(quit), keyEquivalent: "q")
-        for item in [visibleItem!, labelsItem!, normalItem!, showcaseItem!, settings, folder, quit] {
+        for item in [visibleItem!, labelsItem!, normalItem!, showcaseItem!, settings, sessions, lockItem!, folder, quit] {
             item.target = self
             if item === normalItem || item === settings || item === quit { menu.addItem(.separator()) }
             menu.addItem(item)
@@ -220,6 +245,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let settings = NSMenuItem(title: "角色設定…", action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
         appMenu.addItem(settings)
+        let sessions = NSMenuItem(title: "管理 session…", action: #selector(openSessionsMenu), keyEquivalent: "")
+        sessions.target = self
+        appMenu.addItem(sessions)
         appMenu.addItem(.separator())
         let quit = NSMenuItem(title: "結束鋼彈桌寵", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -242,7 +270,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let labels = MenuAction.item("顯示名牌") { [weak self] in self?.toggleLabels() }
         labels.state = stage.showLabels ? .on : .off
         let settings = MenuAction.item("角色設定…") { [weak self] in self?.openSettings() }
-        for item in [normal, showcase, NSMenuItem.separator(), visible, labels, NSMenuItem.separator(), settings] {
+        let sessions = MenuAction.item("管理 session…") { [weak self] in self?.openSessions(for: nil) }
+        let lock = MenuAction.item("鎖定展示（只顯示勾選的 session）") { [weak self] in self?.toggleLock() }
+        lock.state = picks.lockOn ? .on : .off
+        for item in [normal, showcase, NSMenuItem.separator(), visible, labels, NSMenuItem.separator(), sessions, lock,
+                     settings] {
             menu.addItem(item)
         }
         return menu
@@ -267,9 +299,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             stage.enterShowcase(state: showcaseStart)
         } else {
             stage.exitShowcase()
-            stage.apply(latest)
+            refreshSessions()
         }
         refreshModeItems()
+    }
+
+    /// Hands the watcher's sessions to the stage: all of them for the right-click menu, the ones with a Gundam to show.
+    private func refreshSessions() {
+        stage.sessionList = latest
+        stage.apply(picks.visible(latest))
+        refreshSessionPanel()
+    }
+
+    @objc private func openSessionsMenu() { openSessions(for: nil) }
+
+    /// The 管理 session window; `sid`: the session of the Gundam it was opened from (its rows get 「給這隻監控」).
+    private func openSessions(for sid: String?, show: Bool = true) {
+        if sessionPanel == nil {
+            sessionPanel = SessionPanel(actions: .init(
+                release: { [weak self] id in
+                    self?.picks.release(id)
+                    self?.refreshSessions()
+                },
+                recall: { [weak self] id in
+                    self?.picks.pin(id)
+                    self?.refreshSessions()
+                },
+                monitor: { [weak self] old, new in
+                    guard let self else { return }
+                    self.picks.release(old)
+                    self.picks.pin(new)
+                    self.stage.retarget(from: old, to: new)
+                    self.sessionPanel?.model.petSession = new
+                    self.refreshSessions()
+                },
+                releaseAll: { [weak self] in
+                    guard let self else { return }
+                    for s in self.picks.visible(self.latest) { self.picks.release(s.id) }
+                    self.refreshSessions()
+                },
+                setLocked: { [weak self] id, on in
+                    self?.picks.setLocked(id, on)
+                    self?.applyLock()
+                },
+                setLockOn: { [weak self] on in
+                    self?.picks.setLockOn(on)
+                    self?.applyLock()
+                }))
+        }
+        let model = sessionPanel!.model
+        model.petSession = sid
+        if let sid { model.petName = stage.shownSessions[sid] ?? "" }
+        refreshSessionPanel()
+        if show { sessionPanel?.show() }
+    }
+
+    private func refreshSessionPanel() {
+        guard let p = sessionPanel else { return }
+        p.model.update(sessions: latest, shown: stage.shownSessions, released: { [weak self] in
+            self?.picks.isReleased($0) ?? false
+        }, locked: { [weak self] in self?.picks.isLocked($0) ?? false }, lockOn: picks.lockOn,
+           lockedCount: picks.lockedIds.count)
+    }
+
+    /// 鎖定展示 on: the watcher reads only the ticked sessions; off: all recent ones again. Also the menu bar title.
+    private func applyLock() {
+        watcher?.watchOnly(picks.lockOn ? Set(picks.lockedIds) : nil)
+        statusItem?.button?.title = picks.lockOn ? "GN・鎖" : "GN"
+        lockItem?.state = picks.lockOn ? .on : .off
+        refreshSessions()
+    }
+
+    /// The menus' 鎖定展示 switch: turns it on or off (with nothing ticked yet, opens the window to tick some).
+    @objc private func toggleLock() {
+        if picks.lockedIds.isEmpty {
+            openSessions(for: nil)
+            return
+        }
+        picks.setLockOn(!picks.lockOn)
+        applyLock()
     }
 
     private func refreshModeItems() {
