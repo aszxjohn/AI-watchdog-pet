@@ -1,0 +1,28 @@
+{
+  "note": "等你回覆（10/27 定案、鎖住；10/30 改成腳本＋程式，數值照搬，不改樣子）。畫格是系統的 flourish 播放（站姿，偶爾整套前衝、偶爾低頭）；這裡只管 GN 粒子：從身體中間的 GN 引擎飄出的粒子（面向左邊 → 低頭 → 前衝 各有自己的樣子），前衝時再加一道收束的噴流。每格怎麼動在 waiting.js。",
+  "params": [
+    {"name": "gnIdle", "type": "bool", "default": true, "user": false, "label": "站著時放 GN 粒子"},
+    {"name": "jet", "type": "bool", "default": true, "user": false, "label": "前衝時加收束噴流"}
+  ],
+  "script": {
+    "program": "waiting.js",
+    "runWhileIdle": true,
+    "emitters": [
+      {"name": "jet", "back": true, "shape": "point", "at": [0.2, 0.1], "size": 0, "render": "additive",
+       "cells": [
+         {"image": "fx/glow_b", "rate": 110, "life": 0.7, "velocity": 150, "velocityRange": 10, "longitude": 0.15,
+          "range": 0.07, "scale": 0.8, "scaleSpeed": -1.1, "alphaSpeed": -1.0, "color": [0.5, 1, 0.6]}
+       ]},
+      {"name": "gnIdle", "back": true, "at": [0.02, 0.06], "size": "12pt", "render": "additive",
+       "cells": [
+         {"name": "drift", "image": "fx/glow_a", "rate": 30, "life": 2.0, "lifeRange": 0.5, "velocityRange": 8,
+          "range": 2.6, "longitude": 0.1, "velocity": 40, "yAccel": 2, "xAccel": 14,
+          "scale": 0.42, "scaleRange": 0.14, "scaleSpeed": -0.12, "alphaRange": 0.3, "alphaSpeed": -0.45, "spin": 1,
+          "spinRange": 2, "color": [0.25, 1, 0.4]},
+         {"name": "halo", "image": "fx/glow_a", "rate": 0, "life": 1.6, "lifeRange": 0.4, "velocity": 38,
+          "velocityRange": 8, "range": "2*pi", "xAccel": 11.2, "scale": 0.36, "scaleRange": 0.1, "scaleSpeed": -0.1,
+          "alphaRange": 0.3, "alphaSpeed": -0.55, "spin": 1, "spinRange": 2, "color": [0.25, 1, 0.4]}
+       ]}
+    ]
+  }
+}

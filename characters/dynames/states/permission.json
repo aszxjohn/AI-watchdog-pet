@@ -1,0 +1,38 @@
+{
+  "note": "要你批准：防禦待命（10/30 改成腳本＋程式；原本是力天使模組的 field 演出，數值照搬）。全盾闔上，GN 力場升起把它包住，「!」閃爍；之後縮小、帶著力場左右閃躲，砲彈從左下飛來，前幾發從剛離開的位置穿過，最後幾發在力場正前方炸開、把它擊退，最大一發爆完煙散了再飄回原位，循環。力場是 Wars 的 GN フィールド 素材（glow、兩顆 sphere 在機體後面，ring、arc 在前面）。每格怎麼動在 permission.js。",
+  "params": [],
+  "script": {
+    "program": "permission.js",
+    "layers": [
+      {"name": "fieldBack", "in": "root", "back": true, "size": "1/max(0.1, rig.fieldRim)", "children": [
+        {"name": "glow", "image": "field/glow", "opacity": 0.04},
+        {"name": "sphereB", "image": "field/sphereB", "opacity": 0.12},
+        {"name": "sphereA", "image": "field/sphereA", "opacity": 0.15}
+      ]},
+      {"name": "fieldFront", "in": "root", "z": "aboveBody", "size": "1/max(0.1, rig.fieldRim)", "children": [
+        {"name": "ring", "image": "field/ring", "opacity": 0.45},
+        {"name": "arc", "image": "field/arc", "opacity": 1},
+        {"name": "arc2", "image": "field/arc", "opacity": 0.8}
+      ]},
+      {"repeat": 13, "layers": [
+        {"name": "smokeA", "image": "attack/smokeA", "size": 0.95, "in": "root"},
+        {"name": "smokeB", "image": "attack/smokeB", "size": 0.9, "in": "root"},
+        {"name": "fireA", "image": "attack/fireA", "size": 0.82, "in": "root"},
+        {"name": "fireB", "image": "attack/fireB", "size": 0.7, "in": "root"},
+        {"name": "fireC", "image": "attack/fireC", "size": 0.55, "in": "root"},
+        {"name": "embers", "image": "attack/embers", "size": 0.6, "in": "root"},
+        {"name": "flash", "image": "attack/flash", "size": 0.75, "in": "root"},
+        {"name": "shellGlow", "image": "attack/shellGlow", "size": 0.36, "in": "root"},
+        {"name": "shell", "image": "attack/shell", "size": 0.26, "in": "root"}
+      ]}
+    ],
+    "emitters": [
+      {"name": "dashTrail", "in": "root", "below": "fieldBack", "size": 0.144, "render": "additive",
+       "cells": [
+         {"image": "fx/glow_a", "rate": 14, "life": 0.55, "lifeRange": 0.15, "velocity": 8, "velocityRange": 6,
+          "range": "2*pi", "scale": 0.3, "scaleRange": 0.08, "scaleSpeed": -0.3, "alphaSpeed": -1.4,
+          "color": [0.36, 1, 0.69, 0.6]}
+       ]}
+    ]
+  }
+}

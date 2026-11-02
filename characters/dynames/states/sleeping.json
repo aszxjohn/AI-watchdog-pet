@@ -1,0 +1,26 @@
+{
+  "note": "休息中：縮在閉合的盾裡，無重力漂浮，慢慢放出 GN 粒子（10/30 改成腳本；原本是力天使模組的 float 演出，數值照搬）。turn 是遊戲自己的繭轉身（左 3/4 → 正面），10 秒轉過去再轉回來；左右、上下、傾斜各用自己的慢週期（17／11／13 秒），漂浮永遠不太重複；粒子像等你回覆朝左時往後右方散，量少、速度慢，0.5 秒後開始放，強弱每 5 秒呼吸一次。",
+  "params": [],
+  "script": {
+    "moveWhileActing": true,
+    "timeline": [{"do": "frames", "anim": "turn", "index": "(0.5 - 0.5*cos(t*2*pi/10))*(count - 1)", "for": 10}],
+    "vars": {
+      "on": "min(1, t/2)",
+      "gn": "t - 0.5"
+    },
+    "body": {
+      "dx": "8*sin(t*2*pi/17)*on",
+      "dy": "1 + 4*sin(t*2*pi/11 + 1)*on",
+      "lean": "5*sin(t*2*pi/13 + 2)*on"
+    },
+    "emitters": [
+      {"at": [0.02, 0.06], "size": "12pt", "render": "additive", "back": true,
+       "birthRate": "clamp(gn/1.5, 0, 1)*(0.4 + 0.6*(0.5 - 0.5*cos(gn*2*pi/5)))",
+       "cells": [
+         {"image": "fx/glow_a", "rate": 24, "life": 3.6, "lifeRange": 0.6, "velocity": 22, "velocityRange": 8,
+          "range": 2.6, "longitude": 0.1, "yAccel": 2, "xAccel": 14, "scale": 0.42, "scaleRange": 0.14, "scaleSpeed": -0.06,
+          "alphaRange": 0.3, "alphaSpeed": -0.26, "spin": 0.6, "spinRange": 1.2, "color": [0.25, 1, 0.4]}
+       ]}
+    ]
+  }
+}

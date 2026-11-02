@@ -1,0 +1,30 @@
+{
+  "note": "要你決定：支援防禦（10/30 改成腳本＋程式；原本是力天使模組的 defend 演出，數值照搬）。站著 → 前衝、身體前傾、噴一陣 GN 粒子 → 舉起全盾擋住；一輪曳光彈打在盾上四處濺火花，每發都把它往後推；之後再往前推進、打開盾、滑回原位站好，循環。畫格是共用的 shield；每格怎麼動在 question.js。",
+  "params": [],
+  "script": {
+    "program": "question.js",
+    "layers": [
+      {"repeat": 12, "layers": [
+        {"name": "shellGlow", "image": "attack/shellGlow", "size": 0.22, "in": "root"},
+        {"name": "shell", "image": "attack/shell", "size": 0.15, "in": "root"},
+        {"name": "hitGlow", "image": "attack/hitGlow", "size": 0.32, "in": "root"},
+        {"name": "sparkBig", "image": "attack/sparkBig", "size": 0.42, "in": "root"},
+        {"name": "spark", "image": "attack/spark", "size": 0.36, "in": "root"}
+      ]}
+    ],
+    "emitters": [
+      {"name": "jet", "in": "root", "back": true, "size": 0.14, "render": "additive",
+       "cells": [
+         {"name": "jet", "image": "fx/glow_a", "rate": 0, "life": 0.55, "lifeRange": 0.15, "velocity": 170,
+          "velocityRange": 40, "range": 0.32, "scale": 0.62, "scaleRange": 0.18, "scaleSpeed": -0.9, "alphaSpeed": -1.4,
+          "color": [0.45, 1, 0.62]}
+       ]},
+      {"name": "aura", "back": true, "at": [0.02, 0.06], "size": "12pt", "render": "additive",
+       "cells": [
+         {"name": "drift", "image": "fx/glow_a", "rate": 30, "life": 2.0, "lifeRange": 0.5, "velocityRange": 8,
+          "scale": 0.42, "scaleRange": 0.14, "scaleSpeed": -0.12, "alphaRange": 0.3, "alphaSpeed": -0.45, "spin": 1,
+          "spinRange": 2, "color": [0.25, 1, 0.4]}
+       ]}
+    ]
+  }
+}

@@ -28,7 +28,7 @@ final class SessionPicks {
 
     init(persist: Bool) {
         self.persist = persist
-        if persist, let data = try? Data(contentsOf: url),
+        if persist, let data = SettingsFile.read(url, usable: { (try? JSONDecoder.withDates.decode(Saved.self, from: $0)) != nil }),
            let s = try? JSONDecoder.withDates.decode(Saved.self, from: data) {
             saved = s
         }
@@ -36,6 +36,8 @@ final class SessionPicks {
 
     func isReleased(_ id: String) -> Bool { saved.released[id] != nil }
     func isPinned(_ id: String) -> Bool { saved.pinned.contains(id) }
+    /// Sessions given a Gundam by hand (the watcher reads them however old they are).
+    var pinnedIds: [String] { saved.pinned }
     var releasedIds: [String] { Array(saved.released.keys) }
 
     // MARK: 鎖定展示
@@ -91,6 +93,6 @@ final class SessionPicks {
 
     private func save() {
         guard persist, let data = try? JSONEncoder.withDates.encode(saved) else { return }
-        try? data.write(to: url)
+        SettingsFile.write(data, to: url)
     }
 }

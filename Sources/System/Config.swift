@@ -26,31 +26,42 @@ struct Config: Codable {
 
     init() {}
 
+    /// Each key on its own (10/30): one of the wrong type falls back to its default, and the others are still read.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = Config()
-        projectsDir = try c.decodeIfPresent(String.self, forKey: .projectsDir) ?? d.projectsDir
-        activeMinutes = try c.decodeIfPresent(Double.self, forKey: .activeMinutes) ?? d.activeMinutes
-        sleepMinutes = try c.decodeIfPresent(Double.self, forKey: .sleepMinutes) ?? d.sleepMinutes
-        listHours = try c.decodeIfPresent(Double.self, forKey: .listHours) ?? d.listHours
-        listCount = try c.decodeIfPresent(Int.self, forKey: .listCount) ?? d.listCount
-        permissionSeconds = try c.decodeIfPresent(Double.self, forKey: .permissionSeconds) ?? d.permissionSeconds
-        showLabels = try c.decodeIfPresent(Bool.self, forKey: .showLabels) ?? d.showLabels
-        debug = try c.decodeIfPresent(Bool.self, forKey: .debug) ?? d.debug
-        screen = try c.decodeIfPresent(String.self, forKey: .screen) ?? d.screen
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            do {
+                return try c.decodeIfPresent(T.self, forKey: key) ?? fallback
+            } catch {
+                Config.badKeys.append(key.stringValue)
+                return fallback
+            }
+        }
+        projectsDir = value(.projectsDir, d.projectsDir)
+        activeMinutes = value(.activeMinutes, d.activeMinutes)
+        sleepMinutes = value(.sleepMinutes, d.sleepMinutes)
+        listHours = value(.listHours, d.listHours)
+        listCount = value(.listCount, d.listCount)
+        permissionSeconds = value(.permissionSeconds, d.permissionSeconds)
+        showLabels = value(.showLabels, d.showLabels)
+        debug = value(.debug, d.debug)
+        screen = value(.screen, d.screen)
     }
 
+    /// The keys the last decode could not read (main thread, while loading).
+    private static var badKeys: [String] = []
+
     static func load() -> Config {
-        let fm = FileManager.default
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("config.json")
         var config = Config()
-        if let data = try? Data(contentsOf: url) {
-            do {
-                config = try JSONDecoder().decode(Config.self, from: data)
-            } catch {
-                NSLog("GundamPet: config.json unreadable, using defaults: \(error)")
-                return config
+        // not even a JSON object: set aside, defaults this time; some keys of the wrong type: a copy is kept, those
+        // keys take their defaults
+        if let data = SettingsFile.readObject(url).flatMap({ try? JSONSerialization.data(withJSONObject: $0) }) {
+            badKeys = []
+            config = (try? JSONDecoder().decode(Config.self, from: data)) ?? Config()
+            if !badKeys.isEmpty {
+                SettingsFile.setAside(url, keepOriginal: true, why: "的 \(badKeys.joined(separator: "、")) 型別不對（改用預設值）")
             }
         }
         config.save()
@@ -60,6 +71,7 @@ struct Config: Codable {
     func save() {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try? enc.encode(self).write(to: Config.dir.appendingPathComponent("config.json"))
+        guard let data = try? enc.encode(self) else { return }
+        SettingsFile.write(data, to: Config.dir.appendingPathComponent("config.json"))
     }
 }

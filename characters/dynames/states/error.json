@@ -1,0 +1,28 @@
+{
+  "note": "出錯了：被 ERROR 封條封住，一發接一發被打得發抖，直到大爆炸（10/30 改成腳本＋程式；原本是力天使模組的 alarm 演出，數值照搬）。畫格照 unit.json 的 shield hold 播（系統的 hold 模式，含一開始那一下受擊）；封條貼在「玻璃」上，不跟著機體抖；每 6 秒一輪，命中部位每輪隨機。每格怎麼動在 error.js。",
+  "params": [],
+  "script": {
+    "program": "error.js",
+    "layers": [
+      {"name": "tape", "image": "alarm/tape", "size": "520/220", "in": "root"},
+      {"repeat": 6, "layers": [
+        {"name": "hitGlow", "image": "attack/hitGlow", "size": 0.3},
+        {"name": "fireA", "image": "attack/fireA", "size": 0.26},
+        {"name": "fireB", "image": "attack/fireB", "size": 0.26},
+        {"name": "fireC", "image": "attack/fireC", "size": 0.26},
+        {"name": "spark", "image": "attack/spark", "size": 0.32}
+      ]},
+      {"name": "blastFlash", "image": "attack/flash", "size": 0.9},
+      {"name": "blastFire", "image": "attack/fireC", "size": 0.7},
+      {"name": "blastSpark", "image": "attack/sparkBig", "size": 0.7}
+    ],
+    "emitters": [
+      {"name": "gn", "back": true, "at": [0.02, 0.06], "size": "12pt", "render": "additive",
+       "cells": [
+         {"image": "fx/glow_a", "rate": 72, "life": 2.0, "lifeRange": 0.5, "velocity": 40, "velocityRange": 8,
+          "range": 2.6, "longitude": 0.1, "yAccel": 2, "xAccel": 14, "scale": 0.42, "scaleRange": 0.14,
+          "scaleSpeed": -0.12, "alphaRange": 0.3, "alphaSpeed": -0.45, "spin": 1, "spinRange": 2, "color": [0.25, 1, 0.4]}
+       ]}
+    ]
+  }
+}

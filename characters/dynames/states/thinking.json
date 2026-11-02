@@ -10,7 +10,7 @@
     "moveWhileActing": "$fireWhileMoving",
     "marker": [0.36, 0.98],
     "particles": {
-      "image": "fx/glow_a", "core": "pistolCore", "size": 34,
+      "image": "fx/glow_a", "core": "pistolCore", "size": 34, "color": [0.25, 1, 0.4],
       "cell": {"lifetime": 2.2, "lifetimeRange": 0.6, "velocityRange": 18, "scale": 0.42, "scaleRange": 0.14,
                "scaleSpeed": -0.12, "alphaRange": 0.3, "alphaSpeed": -0.4, "spin": 1, "spinRange": 2},
       "looks": {

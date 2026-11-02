@@ -179,8 +179,9 @@ final class PetNode {
     /// plain one the system plays itself).
     private var currentAct: Act? { scriptAct ?? kit.acts.first { $0.mode == plan.mode } }
 
-    /// A character's act plays when it is the mode's (and no script replaces it) or is tied to the state.
-    private func plays(_ a: Act) -> Bool { a.mode.map { scriptAct == nil && $0 == plan.mode } ?? (a.state == state) }
+    /// A character's act plays when it is the mode's or is tied to the state, and no script replaces it (a state's
+    /// script is the whole of how it is acted out).
+    private func plays(_ a: Act) -> Bool { scriptAct == nil && (a.mode.map { $0 == plan.mode } ?? (a.state == state)) }
 
     // MARK: the state's settings and script (characters/<id>/states/<state>.json)
 
@@ -197,9 +198,13 @@ final class PetNode {
     /// Takes the state's settings and script (the stage calls this when the state or the settings change).
     func bind(params: [String: Any], script raw: [String: Any]?, version: Int) {
         self.params = params
-        script = raw.map { ScriptPlan($0, params: params, unit: unit) }
+        // the same script and settings again (e.g. another character's settings changed): the plan is kept, so its
+        // program keeps its state
+        script = raw.map { ScriptPlan.make($0, params: params, unit: unit, key: state.rawValue, reusing: script) }
         scriptAct = script?.act()
         bound = (version, state)
+        // the marker goes where this state's act puts it (it was placed before the act was known)
+        refreshBubble()
     }
 
     /// One of the state's settings, for a character's act.
@@ -410,10 +415,9 @@ final class PetNode {
     /// Called on arrival (the stage starts the rest).
     var arrived: ((PetNode, CFTimeInterval) -> Void)?
 
-    /// Shifts it (and its place) up or down, e.g. when the name tags are switched on or off.
+    /// Shifts it up or down, e.g. when the name tags are switched on or off (its place is set by the stage's layout).
     func shift(dy: CGFloat) {
         pos.y += dy
-        slot.y += dy
         if let m = move { move = (CGPoint(x: m.from.x, y: m.from.y + dy), CGPoint(x: m.to.x, y: m.to.y + dy), m.start, m.time) }
     }
 
@@ -448,6 +452,7 @@ final class PetNode {
             break
         }
         for a in kit.acts where plays(a) { a.react?(self, now, st, &dx, &dy, &lean) }
+        scriptAct?.react?(self, now, st, &dx, &dy, &lean)
         if now - flashAt < 0.6 { dx += sin(now * 52) * 2.5 }
 
         if age < enterTime {
@@ -530,7 +535,10 @@ final class PetNode {
 
     /// Plays the "in" segment once, then ping-pongs inside "hold" for as long as the state lasts.
     func holdFrame(_ a: Anim, t: Double, fps: Double) -> Int {
-        let k = Int(t * fps)
+        // a script may pass anything here: no frame from a time or speed that is not a (reasonable) number
+        let x = t * fps
+        guard x.isFinite, abs(x) < 1e12 else { return 0 }
+        let k = max(0, Int(x))
         guard let seg = a.segments else {
             guard a.count > 1 else { return 0 }
             let cycle = 2 * (a.count - 1)
@@ -589,7 +597,7 @@ final class PetNode {
             shownAnim = name
             shownFrame = -1
         }
-        let i = min(idx, anim.count - 1)
+        let i = max(0, min(idx, anim.count - 1))
         if i != shownFrame {
             sprite.contents = anim.frames[i]
             tintMask.contents = anim.frames[i]
@@ -713,17 +721,7 @@ final class PetNode {
         tagText.frame = CGRect(x: 10, y: 1, width: rect.width - 12, height: h - 3)
     }
 
-    var stateColor: NSColor {
-        switch state {
-        case .working: return NSColor(red: 0.45, green: 1, blue: 0.6, alpha: 1)
-        case .thinking: return NSColor(red: 0.5, green: 0.85, blue: 1, alpha: 1)
-        case .permission, .question: return NSColor(red: 1, green: 0.72, blue: 0.3, alpha: 1)
-        case .done: return NSColor(red: 0.6, green: 1, blue: 0.5, alpha: 1)
-        case .waiting: return NSColor(white: 0.85, alpha: 1)
-        case .sleeping: return NSColor(white: 0.6, alpha: 1)
-        case .error: return NSColor(red: 1, green: 0.45, blue: 0.4, alpha: 1)
-        }
-    }
+    var stateColor: NSColor { state.color }
 }
 
 /// How the waiting-state GN particles look in one phase of the pose. The phases are blended value by
@@ -888,6 +886,8 @@ final class Stage {
     private var config: Config
     private var timer: Timer?
     private var lastDebugWrite: CFTimeInterval = 0
+    /// The ticks added up for the run log's health line.
+    private let health = RunLog.Health()
     private(set) var lastSessions: [SessionInfo] = []
 
     /// Showcase mode: one Gundam whose state is picked from its right-click menu.
@@ -897,8 +897,8 @@ final class Stage {
     /// Called when a mode is picked from a Gundam's right-click menu (true = showcase / debug, false = normal), so
     /// the app switches modes (and puts the live sessions back when leaving showcase).
     var onPickMode: ((Bool) -> Void)?
-    /// Called when "角色設定…" is picked from a Gundam's right-click menu.
-    var onOpenSettings: (() -> Void)?
+    /// Called when 「調整這隻…」 is picked from a Gundam's right-click menu: opens 角色設定 on that character and state.
+    var onAdjust: ((String, PetState) -> Void)?
     /// The characters, for the settings panel.
     var unitList: [UnitDef] { units.values.sorted { $0.id < $1.id } }
     /// The lowest a Gundam stands (its name tag below it).
@@ -938,7 +938,7 @@ final class Stage {
 
     init(units: [UnitDef], pool: Pool, config: Config, characters: CharacterStore, offscreen: Bool = false) {
         self.characters = characters
-        self.units = Dictionary(uniqueKeysWithValues: units.map { ($0.id, $0) })
+        self.units = Dictionary(units.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         self.pool = pool
         self.config = config
         window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
@@ -985,6 +985,7 @@ final class Stage {
         config.screen = screen.localizedName
         config.save()
         layoutWindow()
+        RunLog.write(.mode, "顯示在：\(screen.localizedName)")
     }
 
     /// "顯示在" submenu: one item per connected screen, the current one ticked.
@@ -1021,6 +1022,7 @@ final class Stage {
         set {
             let before = labelBand
             config.showLabels = newValue
+            config.save()
             for n in nodes.values { n.showLabel = newValue }
             layoutWindow()
             for n in nodes.values { n.shift(dy: labelBand - before) }
@@ -1033,20 +1035,24 @@ final class Stage {
         let ids = sessions.map(\.id)
         let assignment = pool.assign(ids)
         let now = CACurrentMediaTime()
+        // the row as it will be, so a new Gundam comes in at its own place
+        let row = ids.filter { nodes[$0] != nil || assignment[$0].flatMap { units[$0] } != nil }
         for s in sessions {
             if let n = nodes[s.id] {
                 n.set(state: s.state, title: s.title, toolErrorAt: s.toolErrorAt, now: now)
                 continue
             }
             guard let uid = assignment[s.id], let unit = units[uid] else { continue }
-            let n = makeNode(id: s.id, unit: unit, at: CGPoint(x: window.frame.width - slotWidth, y: labelBand),
+            let n = makeNode(id: s.id, unit: unit, at: slotPoint(row.firstIndex(of: s.id) ?? 0),
                              showLabel: config.showLabels, now: now)
             n.set(state: s.state, title: s.title, toolErrorAt: s.toolErrorAt, now: now)
             nodes[s.id] = n
             host.addSublayer(n.root)
+            RunLog.write(.pet, "生成：\(RunLog.name(s.id, s.title))，角色 \(label(of: unit).title)")
         }
         let live = Set(ids)
         for (id, n) in nodes where !live.contains(id) {
+            RunLog.write(.pet, "離場：\(RunLog.name(id, n.title))")
             n.leave(now: now)
             leaving.append(n)
             nodes[id] = nil
@@ -1106,33 +1112,51 @@ final class Stage {
         if window.ignoresMouseEvents == over { window.ignoresMouseEvents = !over }
     }
 
-    /// A Gundam's right-click menu: the showcase one, or (normal mode) which session it is, then the mode switch.
+    /// How the panel and menus name a character (its character file's name, number and tags).
+    func label(of unit: UnitDef) -> CharacterLabel { CharacterLabel(unit, characters.profile(unit.id)) }
+
+    /// A Gundam's details at the top of its right-click menu: who it is and in what state, where it comes from (its
+    /// tags), and (normal mode) its session's title.
+    private func addHeader(_ n: PetNode, _ what: String, to menu: NSMenu) {
+        let l = label(of: n.unit)
+        menu.addItem(Menus.header("\(l.title)・\(what)"))
+        if !l.tags.isEmpty { menu.addItem(Menus.header(l.tags.path.joined(separator: " › "))) }
+        if !isShowcase, !n.title.isEmpty { menu.addItem(Menus.header("session：\(n.title)")) }
+        menu.addItem(.separator())
+    }
+
+    /// A Gundam's right-click menu (10/30 redo): the showcase one, or (normal mode) who it is, adjusting it straight
+    /// away, its session, then the mode switch.
     private func menu(at p: CGPoint) -> NSMenu? {
         if isShowcase { return showcaseMenu(at: p) }
         guard let n = nodes.values.first(where: { $0.hitRect.contains(p) }) else { return nil }
         let menu = NSMenu()
-        let header = NSMenuItem(title: "\(n.unit.code) \(n.unit.name)・\(n.state.label)", action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        menu.addItem(header)
-        if !n.title.isEmpty {
-            let title = NSMenuItem(title: n.title, action: nil, keyEquivalent: "")
-            title.isEnabled = false
-            menu.addItem(title)
-        }
-        menu.addItem(.separator())
-        let sid = n.sessionId
+        addHeader(n, n.state.label, to: menu)
+        let uid = n.unit.id, st = n.state, sid = n.sessionId
+        menu.addItem(MenuAction.item("調整這隻（\(st.label)）…") { [weak self] in self?.onAdjust?(uid, st) })
+        menu.addItem(MenuAction.item("匯出這個角色（\(label(of: n.unit).name)）…") { CharacterPackage.runExport(id: uid) })
         menu.addItem(MenuAction.item("管理 session…（換監控、釋放）") { [weak self] in self?.onManageSessions?(sid) })
         menu.addItem(.separator())
-        addModeItems(to: menu)
-        menu.addItem(.separator())
-        menu.addItem(MenuAction.item("角色設定…") { [weak self] in self?.onOpenSettings?() })
+        menu.addItem(MenuAction.item("切到展示模式（Debug）") { [weak self] in self?.onPickMode?(true) })
         if NSScreen.screens.count > 1 { menu.addItem(screenMenu()) }
         return menu
     }
 
+    /// One Gundam's right-click menu (the showcase one in showcase mode), for `--menus-dump`.
+    func someMenu() -> NSMenu? {
+        guard let n = nodes.values.min(by: { $0.sessionId < $1.sessionId }) else { return nil }
+        return menu(at: CGPoint(x: n.hitRect.midX, y: n.hitRect.midY))
+    }
+
     /// Switches a Gundam from one session to another in place (same Gundam, no exit / entrance).
     func retarget(from old: String, to new: String) {
-        guard let n = nodes.removeValue(forKey: old), nodes[new] == nil else { return }
+        // a session that already has a Gundam keeps it (taking this one out first would leave it frozen on screen)
+        guard nodes[new] == nil else {
+            RunLog.write(.pet, "換監控取消：\(RunLog.name(new, sessionList.first { $0.id == new }?.title ?? ""))已經有鋼彈")
+            return
+        }
+        guard let n = nodes.removeValue(forKey: old) else { return }
+        let from = RunLog.name(old, n.title)
         n.sessionId = new
         nodes[new] = n
         pool.hand(from: old, to: new)
@@ -1140,43 +1164,34 @@ final class Stage {
         if let s = sessionList.first(where: { $0.id == new }) {
             n.set(state: s.state, title: s.title, toolErrorAt: s.toolErrorAt, now: CACurrentMediaTime())
         }
+        RunLog.write(.pet, "換監控：\(from) → \(RunLog.name(new, n.title))")
     }
 
-    /// "一般模式" / "展示模式（Debug）", the current one ticked.
-    private func addModeItems(to menu: NSMenu) {
-        let normal = MenuAction.item("一般模式") { [weak self] in self?.onPickMode?(false) }
-        normal.state = isShowcase ? .off : .on
-        let showcase = MenuAction.item("展示模式（Debug）") { [weak self] in self?.onPickMode?(true) }
-        showcase.state = isShowcase ? .on : .off
-        menu.addItem(normal)
-        menu.addItem(showcase)
-    }
-
+    /// The showcase Gundam's menu: its states (the current one ticked), another character (by its tags), replaying
+    /// its entrance or a failed tool call, adjusting the state shown, and back to normal.
     private func showcaseMenu(at p: CGPoint) -> NSMenu? {
         guard isShowcase, let n = nodes[showcaseId], n.hitRect.contains(p) else { return nil }
         let menu = NSMenu()
-        let header = NSMenuItem(title: "\(n.unit.code) \(n.unit.name)・展示模式", action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        menu.addItem(header)
-        menu.addItem(.separator())
+        addHeader(n, "展示模式", to: menu)
         let id = showcaseId
         let states: [PetState] = [.waiting, .thinking, .working, .permission, .question, .done, .sleeping, .error]
         for st in states {
-            let item = MenuAction.item(st.label) { [weak self] in
-                self?.nodes[id]?.force(state: st, now: CACurrentMediaTime())
-            }
-            item.state = n.state == st ? .on : .off
-            menu.addItem(item)
+            menu.addItem(Menus.checked(st.label, n.state == st) { [weak self] in self?.forceShowcase(st) })
         }
         menu.addItem(.separator())
+        if let pick = Menus.characterPicker(unitList.map(label(of:)), current: n.unit.id,
+                                            pick: { [weak self] uid in self?.showcase(unit: uid) }) {
+            menu.addItem(pick)
+        }
         menu.addItem(MenuAction.item("重播進場") { [weak self] in self?.replayShowcaseEntrance() })
-        menu.addItem(MenuAction.item("工具出錯(抖一下)") { [weak self] in
+        menu.addItem(MenuAction.item("工具出錯（抖一下）") { [weak self] in
             self?.nodes[id]?.flashToolError(now: CACurrentMediaTime())
         })
         menu.addItem(.separator())
-        addModeItems(to: menu)
-        menu.addItem(.separator())
-        menu.addItem(MenuAction.item("角色設定…") { [weak self] in self?.onOpenSettings?() })
+        let uid = n.unit.id, st = n.state
+        menu.addItem(MenuAction.item("調整這個狀態（\(st.label)）…") { [weak self] in self?.onAdjust?(uid, st) })
+        menu.addItem(MenuAction.item("匯出這個角色（\(label(of: n.unit).name)）…") { CharacterPackage.runExport(id: uid) })
+        menu.addItem(MenuAction.item("回到一般模式") { [weak self] in self?.onPickMode?(false) })
         if NSScreen.screens.count > 1 { menu.addItem(screenMenu()) }
         return menu
     }
@@ -1184,14 +1199,23 @@ final class Stage {
     /// Showcase: switch the Gundam to a state, as the right-click menu does.
     func forceShowcase(_ st: PetState) {
         nodes[showcaseId]?.force(state: st, now: CACurrentMediaTime())
+        RunLog.write(.mode, "展示：切到\(st.label)")
     }
 
-    private func replayShowcaseEntrance() {
+    /// Showcase: another character in its place, in the same state, coming in.
+    func showcase(unit id: String) {
+        guard isShowcase, let unit = units[id], nodes[showcaseId]?.unit.id != id else { return }
+        replayShowcaseEntrance(unit: unit)
+        RunLog.write(.mode, "展示：換角色 \(label(of: unit).title)")
+    }
+
+    /// The showcase Gundam comes in again (as `unit`, if given), in the state it was in.
+    private func replayShowcaseEntrance(unit: UnitDef? = nil) {
         guard let old = nodes[showcaseId] else { return }
         let now = CACurrentMediaTime()
         let state = old.state
         old.root.removeFromSuperlayer()
-        let n = makeNode(id: showcaseId, unit: old.unit, at: old.slot, showLabel: true, now: now)
+        let n = makeNode(id: showcaseId, unit: unit ?? old.unit, at: old.slot, showLabel: true, now: now)
         n.set(state: state, title: "展示・右鍵切換狀態", toolErrorAt: nil, now: now)
         nodes[showcaseId] = n
         host.addSublayer(n.root)
@@ -1210,10 +1234,12 @@ final class Stage {
     /// Places in the row along the bottom: oldest session at the right edge, newer ones to its left. A Gundam comes
     /// in at its place, and goes back to it in a state that does not wander.
     private func relayout() {
-        let right = window.frame.width - 24
-        for (i, id) in order.enumerated() {
-            nodes[id]?.slot = CGPoint(x: right - slotWidth * (CGFloat(i) + 0.5), y: labelBand)
-        }
+        for (i, id) in order.enumerated() { nodes[id]?.slot = slotPoint(i) }
+    }
+
+    /// The i-th place in the row (0 = the right end).
+    private func slotPoint(_ i: Int) -> CGPoint {
+        CGPoint(x: window.frame.width - 24 - slotWidth * (CGFloat(i) + 0.5), y: labelBand)
     }
 
     // MARK: wandering (10/30)
@@ -1266,8 +1292,9 @@ final class Stage {
     }
 
     /// Settings panel's 預覽: showcase mode with the given character and state.
-    func preview(_ st: PetState) {
+    func preview(_ st: PetState, unit id: String) {
         if !isShowcase { onPickMode?(true) }
+        showcase(unit: id)
         forceShowcase(st)
     }
 
@@ -1275,12 +1302,13 @@ final class Stage {
         let now = CACurrentMediaTime()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        wander(now: now)
-        // each Gundam takes its state's settings and script when the state or the settings change
+        // each Gundam takes its state's settings and script when the state or the settings change — before it decides
+        // whether to set off, which depends on the act
         for n in nodes.values where n.bound?.version != characters.version || n.bound?.state != n.state {
             let prof = characters.profile(n.unit.id)
             n.bind(params: prof.values[n.state] ?? [:], script: prof.scripts[n.state], version: characters.version)
         }
+        wander(now: now)
         for n in nodes.values { _ = n.update(now: now) }
         leaving = leaving.filter { n in
             if n.update(now: now) { return true }
@@ -1290,6 +1318,7 @@ final class Stage {
         world.update(now: now, pets: Array(nodes.values))
         CATransaction.commit()
         offscreen?.render()
+        health.tick(took: CACurrentMediaTime() - now, pets: nodes.count, sessions: sessionList.count)
         if config.debug, now - lastDebugWrite > 2 {
             lastDebugWrite = now
             writeDebug()

@@ -25,20 +25,24 @@
 
 2. **抽機體**（目前池子只有力天使，另外三台的原始檔在 `assets/shelved/`）：新 session 從池子裡抽「目前畫面上沒人用的」機體；全部都在畫面上才會重複（挑出場次數最少的）。畫面上的鋼彈不會中途換人。同一個 session 重開 app 會沿用原本的機體（`assignments.json`，7 天沒出現就清掉）。
 
-3. **畫面**：一個透明、置頂的長條視窗，貼在螢幕底部（Dock 上方），最舊的 session 在最右邊。平常滑鼠穿透，只有游標移到某台鋼彈身上時才接收點擊（所以點在鋼彈身上的左鍵會被它吃掉）。選單列的「GN」可以隱藏鋼彈、關名牌、切模式、結束。
-   **切模式（10/30）**：右鍵（或 control+點）任何一台鋼彈，選單裡有「一般模式」「展示模式（Debug）」，目前的模式打勾；一般模式的右鍵選單最上面列出這台是哪個 session、什麼狀態。同樣的切換也在 Dock 圖示的右鍵選單、App 選單列（程式在最前面時）和「GN」選單裡。
-   **管理 session（10/30）**：右鍵鋼彈選「管理 session…」（「GN」選單、Dock 右鍵、App 選單也有）打開視窗：最近 24 小時內的 session 一行一個（新的在上：狀態、標題、多久前更新、活躍或閒置、由哪隻監控／已釋放／沒有鋼彈），每行有「釋放」或「叫回」；從某隻鋼彈打開時，多一個「給這隻監控」，那隻會原地改跟那個 session（同一隻、不重新進場），原本的 session 被釋放。底部「全部釋放」一次釋放畫面上所有的。被釋放的 session，你下次在裡面回話（transcript 出現新的使用者訊息）後鋼彈會自己再生成；手動叫回或指定監控的，閒置超過 30 分鐘也會留著，直到被釋放。記在 `~/Library/Application Support/GundamPet/sessions.json`，程式在 `Sources/SessionPicks.swift`（規則）、`Sources/SessionPanel.swift`（視窗）；列多少由 config.json 的 `listHours`、`listCount` 決定。無頭檢查：`--offscreen --sessions-snapshot <png>`。
+3. **畫面**：一個透明、置頂的長條視窗，貼在螢幕底部（Dock 上方），最舊的 session 在最右邊。平常滑鼠穿透，只有游標移到某台鋼彈身上時才接收點擊（所以點在鋼彈身上的左鍵會被它吃掉）。選單列圖示可以隱藏鋼彈、關名牌、切模式、結束。
+   **選單（10/30 改版）**：選單列圖示、App 選單列（程式在最前面時）、Dock 圖示右鍵三處是同一份（`Sources/System/Menus.swift` 的 `Menus.appItems`），由上而下：顯示寵物／顯示名牌 → 角色設定…（⌘,）／匯入角色…／匯出角色（只有一個角色時直接是「匯出角色（力天使）…」，多個時依標籤選）→ 管理 session…／鎖定展示 → 切到展示模式（展示中顯示「回到一般模式」）／顯示在 → 打開設定資料夾／結束（Dock 用系統自己的結束）。每次打開都重新產生，勾選永遠是現況。
+   **鋼彈的右鍵選單**：最上面灰字是這台是誰（型號＋名字・狀態）、角色標籤（作品 › 系列 › 代數）、監控的 session；接著「調整這隻（目前狀態）…」直接打開角色設定、跳到這個角色這個狀態，「匯出這個角色…」，「管理 session…」，最後「切到展示模式」。展示模式的右鍵：八個狀態（目前的打勾）、「換角色 ▸」（依標籤一層層選，所有角色都一樣的那層自動跳過，沒填的歸「未分類」；只有一個角色時不出現）、重播進場、工具出錯（抖一下）、「調整這個狀態…」、「匯出這個角色…」、「回到一般模式」。角色檔（.gpet）在 Finder 雙擊或拖到 Dock 圖示上也會走匯入；角色設定左欄清單下方有「匯入角色…」「匯出這個角色…」，沒有任何角色時面板也有「匯入角色…」。匯出匯入本身在 `Sources/System/CharacterPackage.swift`。無頭檢查：`--offscreen --menus-dump <txt>` 把三種 App 選單、一般與展示的右鍵選單寫成文字。
+   **管理 session（10/30）**：右鍵鋼彈選「管理 session…」（「GN」選單、Dock 右鍵、App 選單也有）打開視窗：最近 24 小時內的 session 一行一個（新的在上：狀態、標題、多久前更新、活躍或閒置、由哪隻監控／已釋放／沒有鋼彈），每行有「釋放」或「叫回」；從某隻鋼彈打開時，多一個「給這隻監控」，那隻會原地改跟那個 session（同一隻、不重新進場），原本的 session 被釋放。底部「全部釋放」一次釋放畫面上所有的。被釋放的 session，你下次在裡面回話（transcript 出現新的使用者訊息）後鋼彈會自己再生成；手動叫回或指定監控的，閒置超過 30 分鐘也會留著，直到被釋放。記在 `~/Library/Application Support/GundamPet/sessions.json`，程式在 `Sources/SessionPicks.swift`（規則）、`Sources/SessionPanel.swift`（視窗）；列多少由 config.json 的 `listHours`、`listCount` 決定。無頭檢查：`--offscreen --sessions-snapshot <png>`。 **（11/02 人性化）** 清單分成「有鋼彈」「沒有鋼彈」兩段，狀態是跟畫面標記同色的小標籤，上方有欄位標題（「鎖定」那欄就是鎖定展示的勾選框）；「全部釋放」先確認；「釋放」「叫回」「給這隻監控」滑鼠停留有一句說明。
    **鎖定展示（10/30）**：在「管理 session」視窗每行最前面勾要的 session，打開上方「鎖定展示」開關（「GN」選單、Dock 右鍵也有「鎖定展示」可以切）：偵測程式不再掃 ~/.claude/projects，只讀勾選的那幾個 transcript，鋼彈也只為它們生成（閒置的也有，釋放不影響）；選單列顯示「GN・鎖」。鎖定中視窗只看得到勾選的；要加別的先關掉鎖定再勾。取消最後一個勾會自動關掉鎖定。勾選和開關記在 sessions.json（`locked`、`lockOn`），重開還在。
    **遊走與角色設定（10/30）**：畫布改成整個螢幕（扣掉選單列和 Dock）的透明視窗，鋼彈會在整個畫面遊走。每台在底部一排有自己的「位置」：從那裡進場，不遊走的狀態就回去待著。
    - 角色檔 `characters/<id>/character.json`（跟著專案、打包進 app）：大小 `height`（pt，所有狀態一樣大，取代以前 config.json 的 `unitHeight`）＋每個狀態的遊走設定：`wander`（會不會遊走）、`cells`（偏好的九宮格，0～8 由左上往右下，可不連續）、`strength`（偏好強度）、`step`（一次走多遠 small/medium/large＝1～2.5／1.5～4／2.5～6 倍機高）、`stay`（每次停留秒數 [最少, 最多]）、`speed`（pt/秒）、`room`（這個狀態的動作需要的空間，倍機高，只寫在角色檔）。
-   - 你的修改：右鍵鋼彈／Dock／「GN」選單的「角色設定…」打開面板，改了立刻存到 `~/Library/Application Support/GundamPet/characters/<id>.json`（只存跟角色檔不一樣的欄位）並立刻生效；面板可恢復預設、可「在畫面上預覽」該狀態（切到展示模式）。
+   - 角色標籤（10/30）：character.json 可寫 `"tags": {"work": 作品, "series": 系列, "generation": 代數}`（都可省略），第四層「角色名稱」就是 `name`，`code` 是型號。面板左欄用它們找角色：搜尋框（名字、型號、標籤）、作品／系列／代數下拉（只出現有角色填的那層，上層選了下層只剩對應的選項），清單依「作品 › 系列」分組、右邊小標籤是代數，沒填的在「未分類」；右側最上面一行是目前位置（作品 › 系列 › 代數 › 角色・狀態）。力天使填的是 鋼彈／機動戰士鋼彈00／第三世代。
+   - 角色設定（11/02 人性化）：只有一個角色時不顯示搜尋與篩選；有角色包沒載入時角色清單上方出現「有 N 個角色包沒載入」，點開看原因；搜尋或篩選把正在編輯的角色藏起來時，改選第一個看得到的；狀態清單每列有跟畫面標記同色的圓點、副標用白話寫偏好（「偏好 右下」「偏好 上排」「到處走」「不遊走（待在自己的位置）」）；滑桿放開才存檔，「預計待在格子裡的時間」放開後在背景算、同樣設定永遠同一個數字；兩個「恢復預設」先確認；按「在畫面上預覽」後上方出現「預覽中」提示與「結束預覽」；視窗可以拉大；底部寫「改動會自動儲存，畫面上的鋼彈立刻套用」。`--offscreen --panel-snapshot <png> [--panel-state <狀態>] [--showcase]` 可無頭截圖（加 `--showcase` 看預覽中的樣子）。
+   - 選單列圖示的選單第一行是現況（幾隻鋼彈、模式、鎖定展示）。
+   - 你的修改：選單的「角色設定…」或鋼彈右鍵的「調整這隻…」打開面板，改了立刻存到 `~/Library/Application Support/GundamPet/characters/<id>.json`（只存跟角色檔不一樣的欄位）並立刻生效；面板可恢復預設、可「在畫面上預覽」該狀態（切到展示模式）。
    - 遊走公式（`Sources/Character.swift` 的 `Wander.next`，方向輪盤）：每次從現在位置往 16 個方向各走一步得到候選點（會讓動作跑出螢幕的丟掉）；有 `strength` 機率是「偏好步」，候選點權重 exp(−4d/σ)，d＝到最近勾選格子的距離（格子內為 0）、σ＝半格高，所以往格子走或留在格子裡；其餘是「自由步」，每個方向機會一樣，所以不喜歡的區域也會去。離別台兩倍機高內的點權重壓很低（個人空間）。面板上的「預計待在選的格子裡的時間」是用同一個公式模擬 3000 步算的。
    - 一輪一輪的動作（TRANS-AM、雙槍、兩個盾牌狀態）只在一輪演完時才出發，移動時暫停（TRANS-AM 換回原色站姿），到了重新開始一輪，所以光束、衝刺不會被拖著走。
    **大小一致（10/30）**：所有狀態的機體都畫成跟「等你回覆」一樣大，用頭盔頂到眼睛的高度量（約 52 px）：思考中的雙槍原本是 1.38 倍（scale 1.1 → 0.8）、TRANS-AM 衝刺用的紅色站姿原本 1.2 倍（0.72 → 0.6）；其他狀態都是 Cross Rays 同一套縮放，本來就一樣。新做的姿勢也要照這個大小。
    **Dock 圖示（10/30）**：程式會出現在 Dock（`Info.plist` 拿掉 `LSUIElement`、改 `CFBundleIconFile`，啟動時設成一般 App；`--offscreen` 連拍不進 Dock）。圖示是 `tools/make_icon.py` 用 Cross Rays 原圖做的（A 全身展翼／B 全身收盾／C 胸像特寫，現用 C），產出 `assets/icon/AppIcon.icns`，`build.sh` 會打包進去；換版本：`python3 tools/make_icon.py A && ./build.sh`。點 Dock 圖示時鋼彈若被隱藏會重新顯示。
 
-4. **展示模式（Debug）**：畫面上只留一隻，右鍵選單可以切到任一狀態（再選同一個會重播）、重播進場、觸發「工具出錯」抖一下；選「一般模式」恢復顯示真實 session。
-5. **選螢幕**：接兩個以上螢幕時，鋼彈的右鍵選單（兩種模式都有）和選單列「GN」都有「顯示在」，選哪個螢幕鋼彈就搬到那個螢幕底部，記在 config.json 的 `screen`（螢幕名稱）；那個螢幕拔掉時自動回到主螢幕。
+4. **展示模式（Debug）**：畫面上只留一隻，右鍵選單可以切到任一狀態（再選同一個會重播）、換角色、重播進場、觸發「工具出錯」抖一下；選「回到一般模式」恢復顯示真實 session。
+5. **選螢幕**：接兩個以上螢幕時，鋼彈的右鍵選單（兩種模式都有）和 App 選單（選單列圖示、Dock、App 選單列）都有「顯示在」，選哪個螢幕鋼彈就搬到那個螢幕底部，記在 config.json 的 `screen`（螢幕名稱）；那個螢幕拔掉時自動回到主螢幕。
 
 ## 程式架構：系統／角色（10/30 起，第 1 階段）
 
@@ -52,9 +56,9 @@
 
 - **沒有角色也能跑**：找不到角色包時照常啟動，舞台是空的，session 偵測、選單、管理 session 視窗都照常；角色設定面板顯示「目前沒有角色」和放角色包的位置。
 - **系統裡沒有鋼彈專屬的東西了**：等你回覆的 GN 粒子與噴射（`Sources/Characters/Dynames/Waiting.swift`，掛在系統的 `flourish` 演出上）、狙擊用的充能粒子、最早期狙擊的光束圖層、粒子的三種預設樣子（面向左邊／低頭／前衝）都搬到力天使；拖尾粒子（進場、離場、移動、做完了的爆散）改看角色檔的 `"trail": {"image", "color"}`，沒寫就沒有；選單列圖示改用 App 圖示（鎖定展示時旁邊顯示「鎖」），文字改成「顯示寵物」等中性說法。
-- **角色包＝一個資料夾，啟動時自動載入**：`characters/<角色>/` 裡有 `character.json`（名字、大小、拖尾、遊走）、`states/<狀態>.json`（腳本與參數）、`assets/`（`tools/build_units.py` 產的素材與 unit.json，遊戲拆圖，不進 git）。程式啟動時掃描 App 內建的 `characters/` 和 `~/Library/Application Support/GundamPet/characters/<角色>/`（同名以使用者的為準），找到幾個載入幾個。用程式寫的演出（腳本做不到的）是選配的原生模組，在 `Sources/Characters/Modules.swift` 登記；只用腳本的角色不需要模組。
+- **角色包＝一個資料夾，啟動時自動載入**：`characters/<角色>/` 裡有 `character.json`（名字、大小、拖尾、遊走）、`states/<狀態>.json`（腳本與參數）、`assets/`（`tools/build_units.py` 產的素材與 unit.json，遊戲拆圖，不進 git）。程式啟動時掃描 App 內建的 `characters/` 和 `~/Library/Application Support/GundamPet/characters/<角色>/`（同名以使用者的為準），找到幾個載入幾個。**寫錯的角色包不會讓 App 當掉（10/30）**：資料夾名跟 unit.json 的 id 不同、缺圖、找不到等你回覆用的動畫 → 那個角色不載入；size／anchor／segments／fps 不合法 → 改用安全的值；狀態檔的參數宣告不合法（min 大於 max、step 不大於 0、預設值型別不對或超出可表示範圍）→ 那個參數不採用，數值一律夾在 min～max；每一項都在運行紀錄寫一行 `error` 說是哪個檔、哪裡錯。用程式寫的演出（腳本做不到的）是選配的原生模組，在 `Sources/Characters/Modules.swift` 登記；只用腳本的角色不需要模組。
 - 這三件做完後 8 個狀態新舊並排比對一致（變動像素 ≤ 0.37%，粒子隨機）；素材建置改輸出到角色包後重跑一次，246 個檔逐一相同。改之前的備份：`backups/before-stage-2026-10-30/`。
-- 還沒做（第 4 件）：補積木（移動或衝刺到相對位置、特寫框、粗光束、圖層疊加、染色、晃動），把力天使其他 7 個狀態一個個改成腳本。
+- **第 4 件（10/30）完成**：力天使 8 個狀態全部是腳本（思考中、做完了、休息中只用 JSON；要你決定、出錯了、要你批准、等你回覆、工作中 TRANS-AM 是 JSON＋JavaScript），每個都跟舊版並排比對一致（變動像素平均 ≤ 0.09%，是粒子隨機和依時鐘的閃爍；TRANS-AM 開場影片有一格差異，是快照剛好抓到前一個 tick，把快照時間挪 0.03 秒就完全相同）。**拿掉整個力天使模組（`Sources/Characters/Dynames/`）重新編譯，8 個狀態照樣跟舊版一致**：力天使現在是純資料角色，角色檔不需要任何內建程式。舊的 Swift 演出還在、會建圖層但不會播（腳本優先），要刪先列清單確認。
 
 ## 狀態腳本與參數（10/30，第 2、3 階段）
 
@@ -64,7 +68,17 @@
   - `wander`：這個狀態的遊走預設（蓋過 character.json 的）。
 - 子彈與特效由系統統一管理（`World`，畫在所有鋼彈上面）：子彈發射後在舞台上直線飛，不會被移動中的機體拖著走；`hit.pets` 開著時打到別隻鋼彈會在它身上爆炸、它會晃一下。
 - 第一個用腳本的是**思考中**（`states/thinking.json`，數值照原本的雙槍演出搬過來，新舊並排比對一致）。使用者可調：邊移動邊射擊（預設關）、每輪連射數（4～24，預設 12）、子彈打到其他寵物會爆炸（預設開）；子彈圖片（預設畫粉紅光彈）只給作者改。力天使模組裡原本的 `pistols` 演出還在，刪掉腳本檔就會用回它。
-- 程式：`Sources/System/Script.swift`（`World`、`ScriptPlan`、播放）；參數讀寫在 `Character.swift`（`ParamSpec`、`CharacterStore.setValue`）；面板「演出」區在 `CharacterPanel.swift`（`ParamRow` 依型別長控制項）。測試用：`--test-target` 在展示模式多放一隻靶在射擊方向。
+- **格式說明只有一份：[`docs/character-format.md`](docs/character-format.md)**（資料夾結構、character.json、unit.json、狀態檔、時間軸積木、運算式與單位、圖層、粒子、JavaScript 程式 API、角色檔 .gpet）。重點：數字欄位都能寫運算式（`t`、`st`、`h`、`$參數`、`rig.<鍵>`…，寫錯會記進運行紀錄）；要「算」的演出（每輪隨機命中、瞄準當下位置）寫成 `states/<狀態>.js`，跑在 macOS 內建的 JavaScriptCore（不能讀檔、上網，逾時會停）；換狀態時系統會還原程式動過的機體透明度、標記、名牌；不合法的數字不會讓 App 當掉。
+- 程式：`Sources/System/Script.swift`（`World`、`Expr`、`ScriptPlan`、播放）、`ScriptProgram.swift`（JavaScript）；參數讀寫在 `Character.swift`（`ParamSpec`、`CharacterStore.setValue`）；面板「演出」區在 `CharacterPanel.swift`（`ParamRow` 依型別長控制項）。測試用：`--test-target` 在展示模式多放一隻靶在射擊方向。
+
+## 角色檔（匯出／匯入，10/30）
+
+- 一個角色可以存成一個檔案分享：**`.gpet`**（其實是 zip：裡面一個 `<角色>/` 資料夾，含 `manifest.json`、`character.json`、`states/`、`assets/`，選擇性含 `settings.json`＝匯出者在角色設定裡的調整）。也收一般 `.zip`（同樣結構、沒有 manifest 也行）和角色資料夾本身。
+- `manifest.json` 與匯入時的檢查（代號一致、檔案大小與數量、路徑、捷徑檔）見 [`docs/character-format.md`](docs/character-format.md) 第 7 節。匯入、匯出都在背景做，畫面上有進度視窗；安裝失敗會把舊版放回去，`.replaced/` 每個角色留最近 3 份；套用檔案裡的設定時，裝完一定重新啟動。
+- 測試用角色「測試球 TEST-01」：`python3 tools/make_fixture.py` 產生到 `build/fixtures/blob/`（程式畫的圖，不進 git），8 個狀態用了各種寫法，用來確認角色包不靠任何內建程式也能演、能和力天使並存、能匯出再匯入。
+- 選單「匯出角色…」：選存檔位置，可勾「一併匯出我在角色設定裡的調整」。「匯入角色…」或在 Finder 雙擊 `.gpet`：先檢查（路徑跳出資料夾、捷徑檔、壞 JSON、角色代號不合法、缺 unit.json、解壓超過 2 GB 都會擋下），再列出哪些狀態用腳本、哪些要內建模組、會不會蓋掉已裝的，按「安裝」（或「安裝並套用檔案裡的設定」）後問要不要重新啟動。已裝的同名角色會移到 `~/Library/Application Support/GundamPet/characters/.replaced/`，不刪除。
+- 力天使目前匯出：8 個狀態都是腳本，不需要任何內建模組。**力天使的檔案裡有遊戲拆圖**（Cross Rays／Wars），自己用沒問題，傳給別人就是散布遊戲素材。
+- 程式：`Sources/System/CharacterPackage.swift`（`export`、`inspect`、`install`、選單用的 `runExport(id:)`／`runImport(_:)`）；`.gpet` 在 `Info.plist` 登記成 `local.gundam-pet.character`。
 
 ## 已定案：「等你回覆」（2026-10-27，不要再動）
 
@@ -130,6 +144,12 @@ build.sh            編譯成 build/GundamPet.app
 設定檔：`~/Library/Application Support/GundamPet/config.json`（第一次啟動自動產生，缺的欄位用預設值）。
 改完要重開 app 才生效。`debug: true` 會每 2 秒輸出 `logs/state.json`（各 session 狀態）和 `logs/snapshot.png`（畫面）。
 
+**運行紀錄（10/30）**：`~/Library/Application Support/GundamPet/logs/run/<日期_時>.log`，一小時一個檔，一行一件事（時間、`[類別]`、內容）。只留 24 小時：每次開新檔（啟動、整點）時刪掉開始時間超過 24 小時的檔，`logs/` 底下其他超過 24 小時沒更新的 `.log` 也一起刪（`logs/burst/` 連拍不動）。類別：`app` 啟動與結束（編譯時間、角色、模式、螢幕、鎖定展示）、`session` 清單裡的 session 出現／離開／換狀態（transcript 檔名前 8 碼＋標題前 30 字）、`pet` 鋼彈生成／離場／換監控、`mode` 模式、展示切狀態、鎖定展示、顯示寵物／名牌、換螢幕、`settings` 角色設定變更（同一角色 10 秒內只記一行）、`package` 匯入匯出、`health` 每 5 分鐘一行（鋼彈數、session 數、記憶體、CPU、平均 fps、最慢一個 tick）、`error` 設定檔讀不懂、找不到角色包、角色檔處理失敗。寫檔在背景執行緒，tick 裡只累加計時；`--offscreen` 的測試執行不寫。程式在 `Sources/System/RunLog.swift`。
+
+**設定檔壞掉時（11/02）**：`config.json`、`sessions.json`、`assignments.json`、`characters/<角色>.json` 讀不懂時，原檔改名留一份 `<檔名>.broken-<時間>`、寫一行 `error`、這次用預設值，不會再被下一次存檔默默蓋掉；`config.json` 只有某一欄型別錯時只有那一欄用預設（原檔一樣留一份）。寫檔都是 atomic。角色設定存檔時保留檔案裡它不管的欄位。`assignments.json` 只在誰配哪台改變、或每小時才寫。程式在 `Sources/System/SettingsFile.swift`。
+
+**其他（11/02）**：同時只會有一個正式桌寵，但 `--offscreen` 連拍不算（連拍在跑時也能正常啟動）；手動叫回、指定監控、鎖定展示的 session 不論多舊、排第幾都會被讀到（直到釋放）；App 選單列有「編輯」「視窗」（⌘C／⌘V／⌘A、⌘W）；新鋼彈從自己在底部那一格降落；顯示名牌的開關會記住。
+
 ## 常用指令
 
 ```bash
@@ -142,7 +162,7 @@ open build/GundamPet.app --args --demo             # 示範模式：8 個假 ses
 open -W build/GundamPet.app --args --demo --snap-burst 24   # 示範模式連拍 24 張到 logs/burst/ 後自動結束
 build/GundamPet.app/Contents/MacOS/GundamPet --showcase --offscreen --snap-burst 40 --snap-delay 2
                                                    # 離線連拍（不開視窗、可和正在跑的並存），粒子也拍得到
-pkill -x GundamPet                                 # 關掉
+pkill -f "^$HOME/tools/gundam-pet/build/GundamPet.app/Contents/MacOS/GundamPet$"   # 關掉（只關正式的，不會殺到 --offscreen 連拍）
 ```
 
 ## 加一台機體

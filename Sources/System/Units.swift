@@ -47,7 +47,8 @@ struct StatePlan {
     init(_ o: [String: Any]) {
         anim = o["anim"] as? String ?? "stand"
         mode = (o["mode"] as? String).map(Mode.init(rawValue:)) ?? .still
-        fps = o["fps"] as? Double ?? 12
+        let f = o["fps"] as? Double ?? 12
+        fps = f.isFinite && f > 0 ? f : 12
         hud = o["hud"] as? String
         fidget = o["fidget"] as? [String] ?? []
         dim = CGFloat(o["dim"] as? Double ?? 1)
@@ -100,32 +101,76 @@ final class UnitDef {
     /// The animation every other one falls back to.
     let base: String
 
+    /// `dir`: a package's assets folder. A unit.json that cannot be used is not loaded, and the run log says why; a
+    /// value that is out of range (a size, an anchor, a segment) falls back to a safe one, also logged (10/30).
     init?(dir: URL) {
+        let package = dir.deletingLastPathComponent().lastPathComponent
+        func fail(_ why: String) {
+            RunLog.write(.error, "角色包 \(package)：\(why)，不載入")
+            UnitDef.lastFailure = why
+        }
+        func note(_ why: String) { RunLog.write(.error, "角色包 \(package)：\(why)") }
         guard let data = try? Data(contentsOf: dir.appendingPathComponent("unit.json")),
-              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let id = obj["id"] as? String,
-              let animsObj = obj["animations"] as? [String: [String: Any]] else { return nil }
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            fail("assets/unit.json 讀不到或不是 JSON 物件")
+            return nil
+        }
+        guard let id = obj["id"] as? String, let animsObj = obj["animations"] as? [String: [String: Any]] else {
+            fail("unit.json 缺 id 或 animations")
+            return nil
+        }
         var anims: [String: Anim] = [:]
         for (name, a) in animsObj {
             let paths = a["frames"] as? [String] ?? []
-            let frames = paths.compactMap { UnitDef.image(dir.appendingPathComponent($0)) }
-            guard !frames.isEmpty, frames.count == paths.count else { return nil }
-            let size = a["size"] as? [Double] ?? [Double(frames[0].width), Double(frames[0].height)]
-            let anchor = a["anchor"] as? [Double] ?? [size[0] / 2, size[1] / 2]
+            var frames: [CGImage] = []
+            for p in paths {
+                guard let img = UnitDef.image(dir.appendingPathComponent(p)) else {
+                    fail("動畫 \(name) 的圖讀不到：\(p)")
+                    return nil
+                }
+                frames.append(img)
+            }
+            guard !frames.isEmpty else {
+                fail("動畫 \(name) 沒有任何格")
+                return nil
+            }
+            func pair(_ key: String) -> (Double, Double)? {
+                guard let v = a[key] as? [Double], v.count >= 2, v[0].isFinite, v[1].isFinite else { return nil }
+                return (v[0], v[1])
+            }
+            var size = (Double(frames[0].width), Double(frames[0].height))
+            if a["size"] != nil {
+                if let s = pair("size"), s.0 > 0, s.1 > 0 { size = s } else { note("動畫 \(name) 的 size 不合法，改用圖片大小") }
+            }
+            var anchor = (size.0 / 2, size.1 / 2)
+            if a["anchor"] != nil {
+                if let p = pair("anchor") { anchor = p } else { note("動畫 \(name) 的 anchor 不合法，改用正中央") }
+            }
             var segments: Anim.Segments?
-            if let seg = a["segments"] as? [String: [Int]],
-               let i = seg["in"], let h = seg["hold"], let o = seg["out"],
-               i.count == 2, h.count == 2, o.count == 2, o[1] < frames.count {
-                segments = Anim.Segments(into: i[0]...i[1], hold: h[0]...h[1], out: o[0]...o[1])
+            if a["segments"] != nil {
+                // each segment [first, last] inside the frames, first ≤ last; otherwise no segments at all
+                func range(_ k: String) -> ClosedRange<Int>? {
+                    guard let seg = a["segments"] as? [String: [Int]], let r = seg[k], r.count == 2,
+                          r[0] >= 0, r[0] <= r[1], r[1] < frames.count else { return nil }
+                    return r[0]...r[1]
+                }
+                if let i = range("in"), let h = range("hold"), let o = range("out") {
+                    segments = Anim.Segments(into: i, hold: h, out: o)
+                } else {
+                    note("動畫 \(name) 的 segments 不合法（要在 0～\(frames.count - 1) 之內、起點不大於終點），改成不分段")
+                }
             }
             anims[name] = Anim(frames: frames,
-                               size: CGSize(width: size[0], height: size[1]),
-                               anchor: CGPoint(x: anchor[0], y: anchor[1]),
+                               size: CGSize(width: size.0, height: size.1),
+                               anchor: CGPoint(x: anchor.0, y: anchor.1),
                                segments: segments)
         }
         let rig = Rig(obj["rig"] as? [String: Any] ?? [:])
         let base = rig.plan(for: .waiting).anim
-        guard anims[base] != nil else { return nil }
+        guard anims[base] != nil else {
+            fail("找不到等你回覆用的動畫 \(base)")
+            return nil
+        }
         self.id = id
         self.name = obj["name"] as? String ?? id
         self.fullName = obj["fullName"] as? String ?? id
@@ -167,10 +212,30 @@ final class UnitDef {
         return found
     }
 
-    /// The characters of every package (its assets folder).
+    /// The characters of every package (its assets folder). A package is known by its folder's name, so its unit.json
+    /// must have that id; one that does not is left out (two packages could otherwise load as the same character).
     static func loadPackages(_ packages: [String: URL]) -> [UnitDef] {
-        packages.keys.sorted().compactMap { UnitDef(dir: packages[$0]!.appendingPathComponent("assets")) }
+        loadProblems = []
+        return packages.keys.sorted().compactMap { key in
+            lastFailure = nil
+            guard let u = UnitDef(dir: packages[key]!.appendingPathComponent("assets")) else {
+                loadProblems.append((key, lastFailure ?? "原因不明"))
+                return nil
+            }
+            guard u.id == key else {
+                let why = "unit.json 的 id 是「\(u.id)」，跟資料夾名不同"
+                RunLog.write(.error, "角色包 \(key)：\(why)，不載入")
+                loadProblems.append((key, why))
+                return nil
+            }
+            return u
+        }
     }
+
+    /// The packages the last `loadPackages` left out, and why (the settings panel lists them).
+    private(set) static var loadProblems: [(package: String, why: String)] = []
+    /// Why the last `UnitDef(dir:)` gave nil.
+    private static var lastFailure: String?
 
     static func loadAll(from root: URL) -> [UnitDef] {
         let dirs = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
@@ -193,11 +258,16 @@ final class Pool {
     private var saved: [String: Entry] = [:]
     /// Sessions currently shown, with their Gundam. Visible sessions never change Gundam.
     private var live: [String: String] = [:]
+    /// What was last written, and when: the file is written when who has which Gundam changes, or hourly (10/30;
+    /// it used to be written every 1.5 seconds).
+    private var written: [String: String]?
+    private var writtenAt = Date.distantPast
 
     init(unitIds: [String], persist: Bool) {
         self.unitIds = unitIds
         self.persist = persist
-        if persist, let data = try? Data(contentsOf: url),
+        if persist,
+           let data = SettingsFile.read(url, usable: { (try? JSONDecoder.withDates.decode([String: Entry].self, from: $0)) != nil }),
            let map = try? JSONDecoder.withDates.decode([String: Entry].self, from: data) {
             saved = map
         }
@@ -235,7 +305,12 @@ final class Pool {
             let now = Date()
             for (s, u) in live { saved[s] = Entry(unit: u, lastSeen: now) }
             saved = saved.filter { now.timeIntervalSince($0.value.lastSeen) < 7 * 86400 }
-            if let data = try? JSONEncoder.withDates.encode(saved) { try? data.write(to: url) }
+            if live != written || now.timeIntervalSince(writtenAt) > 3600,
+               let data = try? JSONEncoder.withDates.encode(saved) {
+                SettingsFile.write(data, to: url)
+                written = live
+                writtenAt = now
+            }
         }
         return live
     }

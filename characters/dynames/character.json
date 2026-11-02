@@ -2,6 +2,7 @@
   "id": "dynames",
   "name": "力天使",
   "code": "GN-002",
+  "tags": {"work": "鋼彈", "series": "機動戰士鋼彈00", "generation": "第三世代"},
   "height": 110,
   "trail": {"image": "fx/glow_a", "color": [0.36, 1, 0.69]},
   "states": {

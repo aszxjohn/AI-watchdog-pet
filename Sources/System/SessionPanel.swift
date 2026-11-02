@@ -88,11 +88,16 @@ final class SessionModel: ObservableObject {
         if let p = petSession { petName = shown[p] ?? petName }
     }
 
-    var shownCount: Int { rows.filter { if case .shown = $0.status { return true } else { return false } }.count }
+    var shownCount: Int { rows.filter(\.hasPet).count }
+}
+
+extension SessionModel.Row {
+    var hasPet: Bool { if case .shown = status { return true } else { return false } }
 }
 
 private struct SessionView: View {
     @ObservedObject var model: SessionModel
+    @State private var confirmReleaseAll = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -105,14 +110,29 @@ private struct SessionView: View {
                     .disabled(model.lockedCount == 0)
                 Spacer()
                 Text(model.lockOn ? "鎖定中：只偵測這 \(model.lockedCount) 個，其他 session 都不看。要加別的，先關掉鎖定再勾。"
-                                  : "已勾 \(model.lockedCount) 個（每行最前面的框）")
+                     : model.lockedCount == 0 ? "先在想固定顯示的 session 前面打勾（「鎖定」那一欄），再打開這個開關。"
+                     : "已勾 \(model.lockedCount) 個，打開開關就只顯示它們。")
                     .font(.caption).foregroundColor(model.lockOn ? .orange : .secondary)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             Divider()
-            List(model.rows) { row in
-                SessionRow(row: row, model: model)
+            columnTitles
+                .padding(.horizontal, 22)
+                .padding(.vertical, 4)
+            // the sessions with a Gundam first, then the others
+            List {
+                let withPet = model.rows.filter(\.hasPet), without = model.rows.filter { !$0.hasPet }
+                if !withPet.isEmpty {
+                    Section("有鋼彈（\(withPet.count)）") {
+                        ForEach(withPet) { SessionRow(row: $0, model: model) }
+                    }
+                }
+                if !without.isEmpty {
+                    Section("沒有鋼彈（\(without.count)）") {
+                        ForEach(without) { SessionRow(row: $0, model: model) }
+                    }
+                }
             }
             Divider()
             HStack {
@@ -120,15 +140,34 @@ private struct SessionView: View {
                     .font(.caption).foregroundColor(.secondary)
                 Spacer()
                 if !model.lockOn {
-                    Button(role: .destructive) { model.actions.releaseAll() } label: {
-                        Text("全部釋放（\(model.shownCount)）")
+                    Button(role: .destructive) { confirmReleaseAll = true } label: {
+                        Text("全部釋放（\(model.shownCount)）…")
                     }
                     .disabled(model.shownCount == 0)
+                    .confirmationDialog("把畫面上 \(model.shownCount) 隻鋼彈全部收起來？", isPresented: $confirmReleaseAll,
+                                        titleVisibility: .visible) {
+                        Button("全部釋放", role: .destructive) { model.actions.releaseAll() }
+                    } message: {
+                        Text("每個 session 你下次在裡面回話時，它的鋼彈會自己回來。")
+                    }
                 }
             }
             .padding(12)
         }
         .frame(minWidth: 640, minHeight: 360)
+    }
+
+    /// What each column is (the tick box's column is 鎖定展示's).
+    private var columnTitles: some View {
+        HStack(spacing: 10) {
+            Text("鎖定").frame(width: 30, alignment: .leading)
+            Text("狀態").frame(width: 76, alignment: .leading)
+            Text("session")
+            Spacer()
+            Text("誰在監控").frame(width: 150, alignment: .trailing)
+            Spacer().frame(width: 200)
+        }
+        .font(.caption2).foregroundColor(.secondary)
     }
 
     @ViewBuilder private var header: some View {
@@ -156,10 +195,17 @@ private struct SessionRow: View {
         HStack(spacing: 10) {
             Toggle("", isOn: Binding(get: { row.locked }, set: { model.actions.setLocked(row.id, $0) }))
                 .labelsHidden()
+                .frame(width: 30, alignment: .leading)
                 .help("勾選：鎖定展示時只顯示勾選的 session")
-            Text(row.state.label)
-                .font(.caption).bold()
-                .frame(width: 64, alignment: .leading)
+            // the state in the colour of its marker on screen
+            HStack(spacing: 4) {
+                Circle().fill(Color(nsColor: row.state.color)).frame(width: 7, height: 7)
+                Text(row.state.label).font(.caption).bold()
+            }
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Color(nsColor: row.state.color).opacity(0.18))
+            .clipShape(Capsule())
+            .frame(width: 76, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.title).lineLimit(1).truncationMode(.tail)
                 Text("\(row.age)・\(row.active ? "活躍" : "閒置")").font(.caption).foregroundColor(.secondary)
@@ -195,10 +241,15 @@ private struct SessionRow: View {
         HStack(spacing: 6) {
             if let p = model.petSession, !isThis, !isShownByOther {
                 Button("給這隻監控") { model.actions.monitor(p, row.id) }
+                    .help("讓你打開這個視窗的那隻鋼彈改跟這個 session（它原本跟的那個會被釋放）。")
             }
             switch row.status {
-            case .shown: Button("釋放") { model.actions.release(row.id) }
-            case .released, .none: Button("叫回") { model.actions.recall(row.id) }
+            case .shown:
+                Button("釋放") { model.actions.release(row.id) }
+                    .help("收起這隻鋼彈。你下次在這個 session 回話時，它會自己回來。")
+            case .released, .none:
+                Button("叫回") { model.actions.recall(row.id) }
+                    .help("現在就給這個 session 一隻鋼彈；閒置也會留著，直到你釋放它。")
             }
         }
     }

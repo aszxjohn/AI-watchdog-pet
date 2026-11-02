@@ -1,7 +1,20 @@
-import Foundation
+import AppKit
 
 enum PetState: String, Codable {
     case thinking, working, permission, question, done, waiting, sleeping, error
+
+    /// The state's colour: its marker and name tag on screen, and its tag in the windows.
+    var color: NSColor {
+        switch self {
+        case .working: return NSColor(red: 0.45, green: 1, blue: 0.6, alpha: 1)
+        case .thinking: return NSColor(red: 0.5, green: 0.85, blue: 1, alpha: 1)
+        case .permission, .question: return NSColor(red: 1, green: 0.72, blue: 0.3, alpha: 1)
+        case .done: return NSColor(red: 0.6, green: 1, blue: 0.5, alpha: 1)
+        case .waiting: return NSColor(white: 0.85, alpha: 1)
+        case .sleeping: return NSColor(white: 0.6, alpha: 1)
+        case .error: return NSColor(red: 1, green: 0.45, blue: 0.4, alpha: 1)
+        }
+    }
 
     var label: String {
         switch self {
@@ -82,6 +95,9 @@ final class SessionWatcher {
     var onUpdate: (([SessionInfo]) -> Void)?
     /// 鎖定展示: only these transcripts (paths) are read; nil = every recent one.
     private var only: Set<String>?
+    /// Sessions picked by hand (recalled, given to a Gundam, ticked for 鎖定展示): listed however old or far down the
+    /// list they are, so their Gundam never vanishes on its own (10/30).
+    private var keep: Set<String> = []
 
     init(config: Config) { self.config = config }
 
@@ -91,6 +107,11 @@ final class SessionWatcher {
             self?.only = paths
             self?.scan()
         }
+    }
+
+    /// The sessions picked by hand (from the next scan on).
+    func alwaysWatch(_ paths: Set<String>) {
+        queue.async { [weak self] in self?.keep = paths }
     }
 
     func start() {
@@ -128,10 +149,19 @@ final class SessionWatcher {
                 found.append((file, rv, mtime))
             }
         }
+        if only == nil {
+            let have = Set(found.map(\.file.path))
+            for path in keep where !have.contains(path) {
+                let file = URL(fileURLWithPath: path)
+                guard let rv = try? file.resourceValues(forKeys: Set(keys)), let mtime = rv.contentModificationDate else { continue }
+                found.append((file, rv, mtime))
+            }
+        }
         found.sort { $0.mtime > $1.mtime }
         let activeAge = config.activeMinutes * 60
         let listed = found.enumerated().filter {
-            only != nil || $0.offset < config.listCount || now.timeIntervalSince($0.element.mtime) < activeAge
+            only != nil || keep.contains($0.element.file.path) || $0.offset < config.listCount
+                || now.timeIntervalSince($0.element.mtime) < activeAge
         }
         for (_, f) in listed {
             let key = f.file.path

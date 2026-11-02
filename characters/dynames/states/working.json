@@ -1,0 +1,76 @@
+{
+  "note": "工作中：TRANS-AM（10/30 改成腳本＋程式；原本是力天使模組的 transam 演出，數值照搬）。①② 遊戲自己的開場（Cross Rays 影片逐格，放在像洛克昂特寫的框裡）→ ③ 紅色站姿白光爆出 → ⑤ 第一發 → ⑥ 高速移動到幾個點、留下殘影、每點開一槍 → ⑨ 洛克昂特寫（跟狙擊循環的同一段）→ ⑩ 全力光束、目標爆炸 → ⑪ 白光中退回一般顏色。每格怎麼動在 working.js。",
+  "params": [],
+  "script": {
+    "program": "working.js",
+    "layers": [
+      {"name": "cutinPanel", "in": "root", "size": [1.6, 0.95], "background": [0, 0, 0, 0.9], "clip": 10, "children": [
+        {"name": "cockpit", "image": "cutin/cockpit", "gravity": "fill", "opacity": 0},
+        {"name": "face", "image": "cutin/face", "gravity": "fill", "opacity": 0},
+        {"name": "eye", "image": "cutin/eye", "gravity": "fill", "opacity": 0},
+        {"name": "cutinTint", "image": "cutin/tint", "blend": "multiply", "opacity": 0},
+        {"name": "scope", "image": "cutin/scope", "frame": [0, 0, "0.95*h*1.3*359/696", "0.95*h*1.3"], "center": true,
+         "opacity": 0},
+        {"name": "cutDiamond", "image": "cutin/diamond", "size": ["0.95*0.62*1.3", "0.95*0.62*1.3"], "trilinear": true,
+         "opacity": 0},
+        {"name": "cutRing", "image": "cutin/reticle", "size": ["0.95*0.62", "0.95*0.62"], "trilinear": true, "opacity": 0},
+        {"name": "cutSquare", "image": "cutin/square", "size": ["0.95*0.62*0.32", "0.95*0.62*0.32"], "trilinear": true,
+         "shadow": {"color": [0.36, 1, 0.69], "opacity": 1, "radius": 1.5}, "opacity": 0},
+        {"name": "cutArc0", "image": "cutin/arc_a", "size": ["0.95*0.62*0.5", "0.95*0.62*0.45"], "trilinear": true, "opacity": 0},
+        {"name": "cutArc1", "image": "cutin/arc_a", "size": ["0.95*0.62*0.5", "0.95*0.62*0.45"], "trilinear": true, "opacity": 0},
+        {"name": "cutArc2", "image": "cutin/arc_a", "size": ["0.95*0.62*0.5", "0.95*0.62*0.45"], "trilinear": true, "opacity": 0},
+        {"name": "cutArc3", "image": "cutin/arc_a", "size": ["0.95*0.62*0.5", "0.95*0.62*0.45"], "trilinear": true, "opacity": 0},
+        {"name": "scanLine", "image": "cutin/line", "frame": [0, 0, "1.6*h", 8], "center": true, "opacity": 0},
+        {"name": "lockLabel", "text": "LOCK ON", "font": {"size": 9, "weight": "bold", "mono": true},
+         "color": [1, 0.62, 0.2], "align": "right", "frame": ["1.6*h - 70", 6, 62, 12], "opacity": 0}
+      ]},
+      {"name": "cutinBorder", "in": "root", "shape": "chamfer", "size": [1.6, 0.95], "inset": 0.75, "cut": 10,
+       "lineWidth": 1.5, "stroke": [0.36, 1, 0.69, 0.85], "shadow": {"color": [0.36, 1, 0.69], "opacity": 0.7, "radius": 3}},
+      {"name": "lockDiamond", "in": "root", "image": "cutin/diamond", "size": ["26*1.3pt", "26*1.3pt"], "trilinear": true},
+      {"name": "lockRing", "in": "root", "image": "cutin/reticle", "size": ["26pt", "26pt"], "trilinear": true},
+      {"name": "lockSquare", "in": "root", "image": "cutin/square", "size": ["26*0.32pt", "26*0.32pt"], "trilinear": true,
+       "shadow": {"color": [0.36, 1, 0.69], "opacity": 1, "radius": 1.5}},
+      {"repeat": 4, "layers": [
+        {"name": "lockArc", "in": "root", "image": "cutin/arc_a", "size": ["26*0.5pt", "26*0.45pt"], "trilinear": true}
+      ]},
+      {"name": "taPanel", "in": "root", "size": [1.6, 0.95], "background": [0, 0, 0, 0.9], "clip": 10, "children": [
+        {"name": "taScreen", "gravity": "fill", "opacity": 0}
+      ]},
+      {"name": "taBorder", "in": "root", "shape": "chamfer", "size": [1.6, 0.95], "inset": 0.75, "cut": 10,
+       "lineWidth": 1.5, "shadow": {"opacity": 0.7, "radius": 3}},
+      {"repeat": 5, "layers": [{"name": "ghost", "in": "root", "back": true}]},
+      {"repeat": 3, "layers": [
+        {"name": "bolt", "in": "root", "image": "transam/fx_beam", "stretch": [0.42, 0, 0.16, 1], "anchor": [0, 0.5]}
+      ]},
+      {"name": "bigBeam", "in": "root", "image": "transam/fx_beam", "stretch": [0.42, 0, 0.16, 1], "anchor": [0, 0.5]},
+      {"name": "fxBurst", "in": "root", "image": "transam/fx_burst", "size": 0.55},
+      {"name": "fxLens", "in": "root", "image": "transam/fx_lens", "size": 0.6},
+      {"name": "fxCross", "in": "root", "image": "transam/fx_cross", "size": 0.08},
+      {"name": "fxSpike", "in": "root", "image": "transam/fx_spike", "size": 0.35},
+      {"name": "fxRing", "in": "root", "image": "transam/fx_ring", "size": 0.5},
+      {"name": "fxOrb", "in": "root", "image": "transam/fx_orb", "size": 0.3},
+      {"name": "fxSpark", "in": "root", "image": "transam/fx_spark", "size": 0.5},
+      {"name": "smokeA", "in": "root", "image": "attack/smokeA", "size": 0.7},
+      {"name": "smokeB", "in": "root", "image": "attack/smokeB", "size": 0.7},
+      {"name": "fireC", "in": "root", "image": "attack/fireC", "size": 0.75},
+      {"name": "fireA", "in": "root", "image": "attack/fireA", "size": 0.5},
+      {"name": "fireB", "in": "root", "image": "attack/fireB", "size": 0.5},
+      {"name": "hitGlow", "in": "root", "image": "attack/hitGlow", "size": 0.8},
+      {"name": "sparkBig", "in": "root", "image": "attack/sparkBig", "size": 0.6},
+      {"name": "flash", "in": "root", "image": "attack/flash", "size": 1.0}
+    ],
+    "emitters": [
+      {"name": "charge", "below": "@sparks", "size": "14pt", "render": "additive",
+       "cells": [
+         {"image": "fx/glow_b", "rate": 45, "life": 0.35, "velocity": 8, "range": "2*pi", "scale": 0.35,
+          "scaleSpeed": -0.3, "alphaSpeed": -2, "color": [1, 1, 1], "spin": 2, "spinRange": 4}
+       ]},
+      {"name": "gn", "back": true, "size": "34pt", "render": "additive",
+       "cells": [
+         {"name": "drift", "image": "fx/glow_a", "rate": 30, "life": 2.4, "lifeRange": 0.6, "velocityRange": 18,
+          "scale": 0.42, "scaleRange": 0.14, "scaleSpeed": -0.12, "alphaRange": 0.3, "alphaSpeed": -0.4, "spin": 1,
+          "spinRange": 2, "color": [0.25, 1, 0.4]}
+       ]}
+    ]
+  }
+}
