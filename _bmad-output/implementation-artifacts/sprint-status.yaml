@@ -1,0 +1,103 @@
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created, ready for development
+#   - in-progress: Developer actively working on implementation
+#   - review: Implementation complete, ready for review
+#   - done: Story completed
+
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+
+# Action Item Status:
+#   - open: Committed during a retrospective, not yet addressed
+#   - in-progress: Actively being worked on
+#   - done: Completed
+
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when its first story starts (via build's sprint sync)
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates the next story after the previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; the status view surfaces open ones
+generated: 11-03-2026 15:49
+last_updated: 11-03-2026 15:49
+project: gundam-pet
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+development_status:
+  epic-1: backlog
+  1-1-用-forge-模板建立專案骨架: backlog
+  1-2-沙盒原型驗證-ad-7-閘門: backlog
+  1-3-共用契約-ipc-骨架與-ci: backlog
+  1-4-可靠的設定-stageview-與運行紀錄: backlog
+  1-5-選單列-系統匣入口與面板視窗: backlog
+  1-6-透明置頂穿透畫布: backlog
+  epic-1-retrospective: optional
+
+  epic-2: backlog
+  2-1-偵測事件契約與-8-狀態判斷器: backlog
+  2-2-session-生命週期-啟動補讀與推測: backlog
+  2-3-示範轉接器-session-面板與轉接器健康: backlog
+  2-4-claude-code-轉接器: backlog
+  2-5-codex-cli-轉接器: backlog
+  2-6-gemini-cli-轉接器: backlog
+  2-7-cursor-轉接器: backlog
+  2-8-顯示與釋放-session: backlog
+  2-9-調整計時值: backlog
+  epic-2-retrospective: optional
+
+  epic-3: backlog
+  3-1-角色包-api-v1-契約與契約測試包: backlog
+  3-2-匯入與安裝-awpet: backlog
+  3-3-角色包管理頁: backlog
+  3-4-池子與-session-分配: backlog
+  3-5-角色包沙盒與載入鏈: backlog
+  3-6-世界節拍與統一繪圖: backlog
+  3-7-依狀態演出-後備與佔位: backlog
+  3-8-名牌與狀態標記: backlog
+  3-9-角色包當掉與換角色: backlog
+  epic-3-retrospective: optional
+
+  epic-4: backlog
+  4-1-角色遊走: backlog
+  4-2-游標在角色上才接收滑鼠: backlog
+  4-3-右鍵角色選單: backlog
+  4-4-左鍵捏起來拖走: backlog
+  4-5-進場離場-靠近碰撞與狀態廣播: backlog
+  4-6-發射物件與被擊中: backlog
+  4-7-同包角色的特殊互動: backlog
+  4-8-包請角色停下-恢復遊走與轉向: backlog
+  epic-4-retrospective: optional
+
+  epic-5: backlog
+  5-1-角色編輯頁-固定參數: backlog
+  5-2-依角色包宣告自動產生參數欄位: backlog
+  5-3-展示模式與編輯頁預覽: backlog
+  epic-5-retrospective: optional
+
+  epic-6: backlog
+  6-1-copilot-cli-轉接器-需真實-session-驗證: backlog
+  epic-6-retrospective: optional
+
+# 排序規則（自訂欄位；sprint_plan.py 重新產生時會保留）
+sequencing_rules:
+  - id: sandbox-gate
+    gate_story: 1-2-沙盒原型驗證-ad-7-閘門
+    rule: "Story 1.2 在 Story 1.1（專案骨架，是 1.2 的前提）之後立刻做、最先完成；(a)～(d) 四項全部通過，且 sandbox-prototype-report.md 標記閘門通過前，不開始任何沙盒相關 story。"
+    blocks:
+      - "Story 3.5 起的所有沙盒相關 story（3.5～3.9，以及依賴它們的 Epic 4、Epic 5）"
+      - "Story 3.1 角色包 API v1 契約：AD-7 的閘門範圍包含「角色包 API 的實作」，建議一起等閘門"
+    if_failed: "停止上列 story，回頭修訂 AD-7 並請使用者確認；1.3～1.6 與 Epic 2 不依賴沙盒，可以繼續。"
+  - id: copilot-last
+    epic: epic-6
+    rule: "Epic 6 排在最後。Story 6.1 必須用真實 Copilot CLI session 走過 thinking、working、approval、一輪結束與 error（或中止），去識別化紀錄放進 test/fixtures/copilot/ 並通過快照測試，才能標 done；沒有真實 session 可測時維持未完成。"
