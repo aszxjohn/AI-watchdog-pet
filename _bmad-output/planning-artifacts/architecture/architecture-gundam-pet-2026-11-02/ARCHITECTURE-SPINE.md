@@ -100,10 +100,10 @@ graph LR
 | 來源代碼 | 唯讀來源 | 已知抓不到（交給推測，AD-22） |
 | --- | --- | --- |
 | `claude-code` | 狀態檔 `~/.claude/sessions/<pid>.json`＋transcript `~/.claude/projects/<cwd>/<id>.jsonl` | 無；狀態檔格式變動時，批准改用推測 |
-| `codex` | rollout `~/.codex/sessions/YYYY/MM/DD/*.jsonl` | 批准、提問、錯誤 |
+| `codex` | rollout `~/.codex/sessions/YYYY/MM/DD/*.jsonl`＋顯示名稱 `~/.codex/session_index.jsonl` | 批准、提問、錯誤 |
 | `gemini` | `~/.gemini/tmp/<專案>/chats/session-*.jsonl` | 批准 |
-| `cursor` | `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl`（IDE 與 cursor-agent CLI 同格式） | 批准（沒有 tool_result 與權限紀錄，只能推測）；以 step 為單位寫入，延遲數秒到數十秒，2 秒目標不適用 [ADOPTED]；`turn_ended` 的 error 多數是使用者中止，要看錯誤字串；檔案可能整檔重寫 |
-| `copilot` | Copilot CLI `~/.copilot/session-state/<id>/events.jsonl`（第一版只做 CLI；VS Code 版延後） | 等你回覆、提問（`session.idle`、`user_input.requested` 不寫檔，要推測）；本機沒有樣本，排在最後做，用真實 session 驗證過才算完成 [ADOPTED] |
+| `cursor` | `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl`（IDE 與 cursor-agent CLI 同格式）；顯示名稱由 slug 推出候選專案路徑，只檢查路徑是否存在（stat），不讀其內容 | 批准（沒有 tool_result 與權限紀錄，只能推測）；以 step 為單位寫入，延遲數秒到數十秒，2 秒目標不適用 [ADOPTED]；`turn_ended` 的 error 多數是使用者中止，要看錯誤字串；檔案可能整檔重寫 |
+| `copilot` | Copilot CLI `~/.copilot/session-state/<id>/events.jsonl`＋顯示名稱 `workspace.yaml`；根目錄可由 `COPILOT_HOME` 改變（第一版只做 CLI；VS Code 版延後） | 等你回覆、提問（`session.idle`、`user_input.requested` 不寫檔，要推測）；本機沒有樣本，排在最後做，用真實 session 驗證過才算完成 [ADOPTED] |
 
 ### AD-5 — 轉接器只翻譯，判斷器決定狀態 [ADOPTED]
 
@@ -155,6 +155,9 @@ graph LR
 - **Binds:** `main/settings`、`panels/editor`、角色包 manifest
 - **Prevents:** 重新匯入角色包蓋掉使用者調整；每個角色手寫設定畫面
 - **Rule:** 編輯頁上半部是舞台定義的固定參數：大小、加入池子、遊走偏好、名牌與標記顯示。下半部依 manifest 的參數宣告自動產生，型別限 `bool`、`int`、`number`（`min`／`max`／`step`）、`choice`、`asset`（換圖，只能從 manifest `assets` 已宣告的 key 挑）。有效值＝舞台覆蓋值 ?? 包的預設值，以角色為單位（key `<packId>/<characterId>`），同一角色不論在哪個 session 都一樣。覆蓋值只存在舞台設定，不寫進角色包；包更新後已不存在的參數，覆蓋值保留但不套用。有效值的計算與寫入流程見 AD-23。
+  - **固定參數的格式 [ADOPTED]：** 大小 `scale`＝0.5～2.0、每格 0.1、預設 1.0（100%＝角色包的原始大小，hitbox 等比例縮放）；加入池子 `inPool`＝bool、預設開；名牌與標記顯示 `badges`＝bool、預設開；遊走偏好 `wander`＝`enabled`（bool，預設開）、`areas`（九宮格格號 0～8 可多選，預設下排 `[6, 7, 8]`，是軟偏好不是限制）、`activity`（`low`／`medium`／`high`，預設 `medium`，決定停留多久才走）、`speed`（`slow`／`medium`／`fast`，預設 `medium`）。
+  - **固定參數的預設來源 [ADOPTED]：** 舞台覆蓋值 ?? manifest 該角色的 `defaults`（只能給 `scale`、`wander`）?? 舞台預設，與包參數同一套規則。
+  - **推薦原始大小 [ADOPTED]：** 角色身高（腳底到頭頂）推薦 110 基準像素（1 基準像素＝大小 100% 時的 1 個螢幕點；以 Demo 力天使為準）。manifest 每個角色必填實際 `height`；偏離推薦值 ±25%（約 83～138）時，角色包管理頁顯示提示，不擋匯入，也不自動換算。
 
 ### AD-12 — 池子與分配 [ADOPTED]
 
@@ -166,7 +169,7 @@ graph LR
 
 - **Binds:** `main/packs`、manifest schema
 - **Prevents:** 惡意壓縮檔寫出資料夾；安裝失敗留下半套；同 packId 的包靜默互相覆蓋；畫布被超大圖片吃光記憶體
-- **Rule:** `.awpet` 是 zip，根目錄一個 `<packId>/`，內含 `manifest.json`、程式與素材。manifest 必填 `id`、`name`、`version`（semver）、`apiVersion`、`entry`、`assets`（key → 單張圖或 PixiJS spritesheet JSON）、`characters`；選填 `projectiles`（key → `assets` 的 key）。每個角色宣告 `id`、`name`、參數宣告、`states`（已實作的狀態碼）、選填 `fallback`、`hitbox`、`bounds`、`anchor`（名牌與標記的位置，本地座標）、選填 `advancedBitmap`。`packId`、`characterId` 符合 `^[a-z0-9][a-z0-9-]{1,63}$`；`characterId` 是跨版本的穩定身分。匯入時擋 `..`、絕對路徑、捷徑檔，限制解壓總大小、檔案數、每張圖寬高與總像素（上限為 shared 常數），manifest 用 schema 驗證、入口試解析；安裝先解到暫存，成功才替換，失敗回復舊版。匯入的 packId 已存在時，顯示新舊名稱與版本請使用者確認才替換，降版另外警告。匯出只包含角色包本身，不附帶使用者的覆蓋值 [ADOPTED]。
+- **Rule:** `.awpet` 是 zip，根目錄一個 `<packId>/`，內含 `manifest.json`、程式與素材。manifest 必填 `id`、`name`、`version`（semver）、`apiVersion`、`entry`、`assets`（key → 單張圖或 PixiJS spritesheet JSON）、`characters`；選填 `projectiles`（key → `assets` 的 key）。每個角色宣告 `id`、`name`、`height`（身高，基準像素，見 AD-11）、參數宣告、`states`（已實作的狀態碼）、選填 `fallback`、`hitbox`、`bounds`、`anchor`（名牌與標記的位置，本地座標）、選填 `defaults`（固定參數 `scale`、`wander` 的建議預設）、選填 `advancedBitmap`。`packId`、`characterId` 符合 `^[a-z0-9][a-z0-9-]{1,63}$`；`characterId` 是跨版本的穩定身分。匯入時擋 `..`、絕對路徑、捷徑檔，限制解壓總大小、檔案數、每張圖寬高與總像素（上限為 shared 常數），manifest 用 schema 驗證、入口試解析；安裝先解到暫存，成功才替換，失敗回復舊版。匯入的 packId 已存在時，顯示新舊名稱與版本請使用者確認才替換，降版另外警告。匯出只包含角色包本身，不附帶使用者的覆蓋值 [ADOPTED]。
 
 ### AD-14 — 透明置頂穿透畫布 [ADOPTED]
 

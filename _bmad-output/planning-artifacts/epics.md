@@ -153,8 +153,8 @@ So that 之後每個 story 都在同一套技術棧與目錄結構上開發。
 
 **Acceptance Criteria:**
 
-**Given** 空的 `main` 分支（只有 BMAD 與 README）
-**When** 以 `create-electron-app@8.0.1 --template vite --typescript` 建立專案
+**Given** `main` 分支已有 `README.md`、`.claude/`、`_bmad-output/`，根目錄另有 7 個只在本機以 `.git/info/exclude` 排除的 Demo 資料夾（`assets`、`backups`、`build`、`characters`、`locks`、`preview`、`shelved`）
+**When** 在暫存資料夾以 `create-electron-app@8.0.1 --template vite --typescript` 產生專案，再把產物搬進 repo 根目錄（不覆蓋既有檔案）
 **Then** `electron` 鎖在 45.2.1、TypeScript 6.0.3 且 tsconfig `strict: true`、`ses` 鎖確切版本，`.nvmrc` 與 `engines` 寫 Node 24.22.2，`package-lock.json` 已提交
 **And** 保留模板預設：`forge.config.mts`、main／preload 產物 `.cjs`、oxlint＋oxfmt、`typecheck` 指令、FusesPlugin（`RunAsNode` 關、`OnlyLoadAppFromAsar` 與 `EnableEmbeddedAsarIntegrityValidation` 開）
 
@@ -162,6 +162,7 @@ So that 之後每個 story 都在同一套技術棧與目錄結構上開發。
 **When** 檢查目錄
 **Then** 存在 `src/shared`、`src/main`、`src/preload`、`src/overlay`、`src/panels`、`src/sandbox`、`test/` 骨架，與架構規約 Structural Seed 一致
 **And** `npm run typecheck` 與 lint 通過，`npm start` 能開出模板預設視窗
+**And** lint、typecheck、測試與之後的 dependency-cruiser 只掃 `src/`、`test/`、`prototypes/`，不掃 Demo 資料夾與 `_bmad-output/`
 
 ### Story 1.2: 沙盒原型驗證（AD-7 閘門）
 
@@ -205,6 +206,7 @@ So that 之後各模組的邊界、資料格式與依賴方向都有同一套規
 **When** 推送到 GitHub
 **Then** 在 macOS 與 Windows 跑 typecheck、lint、Vitest
 **And** dependency-cruiser 強制 AD-2 的依賴方向，違反時 CI 失敗
+**And** dependency-cruiser 禁止 `src/` 引用 Node 的網路模組（`http`、`https`、`http2`、`net`、`tls`、`dgram`），作為「完全不連網」的靜態檢查〔NFR5〕
 
 ### Story 1.4: 可靠的設定、StageView 與運行紀錄
 
@@ -290,7 +292,7 @@ So that 之後的角色有地方演出，而我照常使用底下的視窗。
 **Given** 畫布 renderer 當掉
 **When** `render-process-gone` 發生
 **Then** `main/windows` 重建畫布視窗，overlay 重拿 StageView 快照〔NFR12〕
-**And** 系統睡眠或鎖定時通知 overlay 暫停節拍，喚醒或解鎖後恢復
+**And** 系統睡眠或鎖定、喚醒或解鎖時，`main` 通知 overlay（此時畫布還沒有節拍，先記入運行紀錄；節拍與心跳的暫停在 Story 3.6 起生效）
 
 ## Epic 2: 看見所有 AI session 的狀態
 
@@ -362,7 +364,7 @@ So that 我能先確認偵測在運作，也能用示範模式看 8 種狀態。
 **Given** 沒有安裝任何角色包
 **When** app 執行
 **Then** 偵測、面板、管理 session 都照常運作，畫布為空〔FR24〕
-**And** 端到端測試以 `demo` 轉接器為事件來源（Playwright `_electron`）
+**And** 端到端測試以 `demo` 轉接器為事件來源（Playwright `_electron`），並斷言測試期間所有 renderer 沒有發出 `app://`、`pack://`（與開發時的 Vite dev server）以外的請求〔NFR5〕
 
 ### Story 2.4: Claude Code 轉接器
 
@@ -504,10 +506,11 @@ So that 我寫的包在任何版本相容的舞台上都能演出。
 
 **Acceptance Criteria:**
 
-**Given** `src/shared/pack-api/`（只依賴 zod）
+**Given** Story 1.2 的沙盒原型閘門已通過（AD-7 的閘門範圍包含角色包 API），契約放在 `src/shared/pack-api/`（只依賴 zod）
 **When** 定義契約
-**Then** 包含 manifest schema（`id`、`name`、`version`、`apiVersion`、`entry`、`assets`、`characters`：`id`、`name`、參數宣告、`states`、`fallback`、`hitbox`、`bounds`、`anchor`、`advancedBitmap`；選填 `projectiles`）、舞台→包訊息（`init`、`spawn`、`despawn`、`params`、`meta`、`frame`）、繪圖指令（`sprite`、`particles`、`bitmap`）、API 版本常數
+**Then** 包含 manifest schema（`id`、`name`、`version`、`apiVersion`、`entry`、`assets`、`characters`：`id`、`name`、`height`、參數宣告、`states`、`fallback`、`hitbox`、`bounds`、`anchor`、選填 `defaults`（`scale`、`wander`）、`advancedBitmap`；選填 `projectiles`）、舞台→包訊息（`init`、`spawn`、`despawn`、`params`、`meta`、`frame`）、繪圖指令（`sprite`、`particles`、`bitmap`）、API 版本常數
 **And** id 格式 `^[a-z0-9][a-z0-9-]{1,63}$`；參數型別 `bool`、`int`、`number`、`choice`、`asset`；每個 schema 有往返與拒絕測試
+**And** 固定參數格式與預設寫在 `src/shared`：`scale` 0.5～2.0（每格 0.1，預設 1.0）、`inPool` 預設開、`badges` 預設開、`wander`（`enabled` 預設開、`areas` 預設 `[6, 7, 8]`、`activity` 預設 `medium`、`speed` 預設 `medium`）；推薦角色身高 110 基準像素
 
 **Given** `test/packs/contract-pack/`
 **When** 檢查內容
@@ -548,6 +551,7 @@ So that 我能決定畫面上會出現哪些角色。
 **When** 打開
 **Then** 列出已安裝的包（名稱、版本、角色清單、是否上場），可以匯入新包
 **And** 每個角色有一個「加入池子」勾選框，是舞台設定的固定參數（不寫進角色包），和之後的角色編輯頁是同一個值〔FR10〕
+**And** 角色宣告的 `height` 偏離推薦值 110 基準像素 ±25%（約 83～138）時，在該角色旁顯示提示，不擋匯入、不自動換算
 
 **Given** 使用者切換某包「上場」或某角色「加入池子」
 **When** 送出
@@ -588,7 +592,7 @@ So that 匯入別人的角色包是安全的。
 
 **Acceptance Criteria:**
 
-**Given** Story 1.2 的沙盒原型閘門已通過
+**Given** Story 1.2 的沙盒原型閘門已通過，且載入前再檢查一次該包的 `apiVersion` 與目前舞台相容（不相容就不載入並在角色包管理頁顯示原因）〔NFR9〕
 **When** 某包有第一個 actor
 **Then** `overlay/pack-host` 為它建一個 `<iframe sandbox="allow-scripts">`（文件由 `pack://_stage/sandbox.html` 提供、CSP 由 `src/sandbox` 唯一模組產生並含 bootstrap 雜湊）；依固定順序把入口原始碼與 MessageChannel 一端交給 iframe，iframe 以 bootstrap＋入口建 classic Worker 並把 port 交給 Worker，之後不轉發任何訊息
 **And** Worker bootstrap 移除 fetch、XHR、WebSocket、EventSource、WebTransport、importScripts、巢狀 Worker、indexedDB、caches，再 SES `lockdown()`，包放進 `Compartment`，只注入舞台 API（`stage.random`、`stage.log` 等）
@@ -629,9 +633,22 @@ So that 我看得到每個 session 的角色。
 **Then** 在單一 PixiJS WebGL 畫布上，以 actor 本地座標（原點為腳底中心）繪製，外層依序套 world 位置、固定參數「大小」、actor 間依 y 排序；超出 manifest `bounds` 的內容裁切〔NFR13〕
 **And** 素材以 manifest key 引用、從 `pack://` 載入並快取；超過指令數、位元組數等上限的 `draw` 整則丟棄並記錄 `packId`
 
+**Given** 包回傳 `particles` 指令
+**When** renderer 處理
+**Then** 同一個 `emitterId` 跨 frame 持續發射，下一則 `draw` 沒出現該 `emitterId` 就停止發射；每包 emitter 數有上限
+
+**Given** manifest 宣告 `advancedBitmap` 的角色
+**When** 包用 `stage.canvas` 取得 OffscreenCanvas 並回傳 `bitmap` 指令
+**Then** 只允許 `2d` context，ImageBitmap 以 transfer 傳送，尺寸與每秒張數超過舞台上限就丟棄；沒宣告的角色拿不到 `stage.canvas`
+
+**Given** 系統睡眠或鎖定
+**When** overlay 收到 Story 1.6 的通知
+**Then** world 節拍與心跳暫停，喚醒或解鎖後恢復；暫停期間不判定心跳逾時
+
 **Given** 角色的有效參數
 **When** 計算
 **Then** 由 `main/settings` 依 manifest 宣告與覆蓋值計算（目前沒有覆蓋值時就是包預設值），包收到完整值；固定參數由舞台套用、不傳給包
+**And** 固定參數依「舞台覆蓋值 ?? manifest `defaults` ?? 舞台預設」取值；「大小」乘在角色宣告的原始尺寸上，hitbox 等比例縮放
 
 ### Story 3.7: 依狀態演出、後備與佔位
 
@@ -680,7 +697,7 @@ So that 不會有角色一直卡住，其他角色也照常演出。
 
 **Acceptance Criteria:**
 
-**Given** 某包心跳逾時（以 tick 計）、超限或未捕捉例外
+**Given** 某包心跳逾時（以 tick 計）、連續 `drawTimeoutMs` 沒有有效 `draw`、超限或未捕捉例外
 **When** pack-host 偵測到
 **Then** 移除該包 iframe（連帶終止 Worker）、該包 actor 改演佔位，經 IPC 回報 `packs:runtime-failed`；其他包照常演出〔NFR4〕
 **And** 自動重建沙盒並保留原 `actorId` 重新 `spawn`，同一包在本次執行最多重啟 3 次；第 4 次失敗時 `main/packs` 標記該版本失敗（視同停用），角色包管理頁顯示原因〔FR19〕
@@ -707,10 +724,10 @@ So that 桌寵看起來是活的，又不會老是待在我不想要的地方。
 
 **Given** 畫布上的角色
 **When** `overlay/world` 推進節拍
-**Then** 角色在所選螢幕範圍內遊走，依固定參數「遊走偏好」決定活動範圍、移動頻率與偏好區域（軟偏好，不是限制在某一格）〔FR5〕
+**Then** 角色在所選螢幕範圍內遊走，依固定參數「遊走偏好」：`areas`（九宮格偏好區域，預設下排 `[6, 7, 8]`，是軟偏好不是限制）、`activity`（停留多久才走，`low`／`medium`／`high`）、`speed`（`slow`／`medium`／`fast`）〔FR5〕
 **And** 包在 `frame.motion` 收到是否移動與面向；actor 之間依 y 排序繪製
 
-**Given** 某角色的遊走偏好設成不遊走
+**Given** 某角色的遊走偏好 `enabled` 為關
 **When** world 推進
 **Then** 該角色一定不動
 
@@ -878,7 +895,8 @@ So that 每個角色在我桌面上的樣子和行為符合我的習慣。
 
 **Given** 從角色包管理頁的角色清單或選單列打開某角色的編輯頁（Epic 4 完成後，右鍵選單的「這個角色的編輯頁」也打開同一頁）
 **When** 頁面載入
-**Then** 上半部顯示四個固定參數：大小、加入池子、遊走偏好（活動範圍、移動頻率、偏好區域）、名牌與標記顯示〔FR9〕
+**Then** 上半部顯示四個固定參數：大小（50%～200%，每格 10%）、加入池子、遊走偏好（是否遊走、九宮格偏好區域可多選、活動量、速度）、名牌與標記顯示〔FR9〕
+**And** 每個欄位顯示目前有效值的來源（我的設定／角色包建議／舞台預設），可「還原預設」
 **And** 「加入池子」和角色包管理頁的勾選框是同一個值，一邊改另一邊同步
 
 **Given** 使用者修改固定參數

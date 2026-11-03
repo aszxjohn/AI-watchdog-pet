@@ -37,3 +37,15 @@ inputs:
 
 1. **沙盒閘門：** 1.1（專案骨架）→ 1.2（沙盒原型驗證）最先完成。四項都通過、原型報告標記閘門通過前，不開始 3.1 與 3.5 起的沙盒相關 story。閘門失敗時，1.3～1.6 與 Epic 2 仍可繼續，沙盒相關 story 停下，回頭修訂 AD-7 並請使用者確認。
 2. **Copilot 最後：** Epic 6 排最後；Story 6.1 要用真實 Copilot CLI session 驗證過才能標 done。
+
+## 處理紀錄（2026-11-03）
+
+5 項 CONCERNS 已全部補進文件，結論可視為 PASS：
+
+| # | 處理方式 |
+| --- | --- |
+| 1 | 使用者決定：大小 50%～200%（每格 10%，預設 100%＝包的原始大小）；遊走偏好四項（是否遊走、九宮格偏好區域預設下排、活動量、速度）；角色包可在 manifest `defaults` 建議 `scale`、`wander`；推薦角色身高 110 基準像素（以 Demo 力天使為準），偏離 ±25% 只提示。寫進 AD-11、AD-13、SPEC 限制、Story 3.1、3.3、3.6、4.1、5.1 |
+| 2 | Story 3.1 的 AC 加上「沙盒原型閘門已通過」；`sequencing_rules` 改為 3.1 必須等閘門 |
+| 3 | 補 AC：particles 與 emitter 持續、advancedBitmap／`stage.canvas`／bitmap（3.6）；`drawTimeoutMs` 視同失敗（3.9）；載入時檢查 `apiVersion`（3.5）；睡眠／鎖定：1.6 只送通知、3.6 暫停節拍與心跳；NFR5 驗證：1.3 禁止引用 Node 網路模組、2.3 端到端斷言沒有對外請求 |
+| 4 | AD-4 來源表補上 Codex `session_index.jsonl`、Cursor 以 slug 推出候選路徑只做存在性檢查、Copilot `workspace.yaml` 與 `COPILOT_HOME` |
+| 5 | Story 1.1 改為在暫存資料夾產生模板再搬進 repo、不覆蓋既有檔案；工具只掃 `src/`、`test/`、`prototypes/` |
