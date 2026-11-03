@@ -174,7 +174,7 @@ graph LR
 - **Prevents:** 畫布擋住使用者操作；各平台行為分歧
 - **Rule:** 畫布視窗透明、無邊框、置頂，預設滑鼠穿透並用 `setIgnoreMouseEvents(true, { forward: true })` 持續收游標位置；`overlay` 判斷游標在角色 hitbox 上才請 `main` 關閉穿透。穿透狀態由 overlay 擁有，只在「在角色上／不在」改變時送帶遞增 `seq` 的請求，main 冪等處理並丟棄過時請求。macOS 用 `type: 'panel'`（已在所有桌面空間可見，不另呼叫 `setVisibleOnAllWorkspaces`）。Linux 降級為整窗穿透，選單改走系統匣。Windows 前景是管理員權限視窗時 forward 會暫停，接受為已知限制。第一版只開一個畫布視窗，放在使用者選的螢幕；世界座標＝該螢幕的 DIP、原點左上，`main/windows` 在邊界或縮放比例改變時通知 overlay。
   - **捏起來拖走 [ADOPTED]：** 左鍵按在角色 hitbox 上並拖曳，`overlay/world` 把該 actor 標為被捏起來：暫停遊走、跟著游標移動、位置限制在畫面內；放開時落在放開的位置，並從那裡直接恢復遊走。拖曳期間 overlay 維持不穿透，直到放開，即使游標移出 hitbox。包只收到 `grab` 事件（AD-18），收不到任何原始滑鼠事件。
-  - **右鍵與入口 [ADOPTED]：** 右鍵角色開選單：這個角色的編輯頁、管理 session、暫停／顯示。app 入口放在 macOS 選單列與 Windows 系統匣，不顯示 Dock／工作列圖示。選單內容由 `main/windows` 一處定義，角色包不能加項目。
+  - **右鍵與入口 [ADOPTED]：** 右鍵角色開選單：這個角色的編輯頁、管理 session、暫停／顯示。app 入口放在 macOS 選單列與 Windows 系統匣；平常不顯示 Dock／工作列圖示，有任何面板視窗開著時才暫時顯示（可 ⌘Tab／Alt+Tab 切回），面板全部關掉就隱藏。app 已在執行時再次啟動（應用程式資料夾、Spotlight、開始選單），不開第二個實例，改打開主面板（AD-26）。選單內容由 `main/windows` 一處定義，角色包不能加項目。
 
 ### AD-15 — 展示與示範走同一條管線 [ADOPTED]
 
@@ -457,7 +457,7 @@ test/
 | `characterId` 改名搬移 | v1 `characterId` 是跨版本穩定身分，改名視同舊角色消失；要支援時在 manifest 加改名宣告並升 minor |
 | 池子用完時挑哪隻重複 | 只在 `main/pool` 一處實作，不會跨單元分歧；預設沿用 Demo（出場次數最少者） |
 | 粒子 preset 清單 | 由 `overlay/renderer` 一處定義、放 `src/shared/pack-api` 常數；內容實作時定 |
-| 門檻與存活秒數的預設值 | 只在 shared 設定 schema 定義一次（AD-22），數值實作時給 |
+| 其餘門檻的預設值（`discoveryWindowMs`、`sessionExpireMs`、`syncTimeoutMs`、`errorHoldMs`） | 只在 shared 設定 schema 定義一次（AD-22），數值實作時給；使用者已定 `doneMs`＝5 秒、`idleMs`＝5 分鐘、`approvalInferMs`＝10 秒 [ADOPTED] |
 | `.awpet` 檔案關聯與雙擊匯入 | 不影響一致性；加入時走 `main/packs` 同一匯入流程（AD-26） |
 | 開機自動啟動、自動更新、簽章、makers 選擇、appId 反向網域前綴 | 不影響模組一致性；appId 以 `ai-watchdog-pet` 結尾；加入自動更新時必須修訂 AD-26 的離線規則 |
 | 角色包製作工具與素材管線 | 不在本次範圍 |
