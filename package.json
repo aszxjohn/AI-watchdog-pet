@@ -19,9 +19,11 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "release": "electron-forge release",
-    "lint": "oxlint --deny-warnings src test prototypes forge.config.mts vite.main.config.mts vite.preload.config.mts vite.renderer.config.mts && oxfmt --check src test prototypes \"*.mts\"",
-    "lint:fix": "oxlint --fix src test prototypes forge.config.mts vite.main.config.mts vite.preload.config.mts vite.renderer.config.mts && oxfmt --write src test prototypes \"*.mts\"",
-    "typecheck": "tsc --noEmit",
+    "lint": "node scripts/lint.mjs",
+    "lint:fix": "node scripts/lint.mjs --fix",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "depcruise": "depcruise src test prototypes --config .dependency-cruiser.cjs",
     "proto:sandbox": "vite build --config prototypes/sandbox/vite.config.mts && node prototypes/sandbox/main.cjs"
   },
   "devDependencies": {
@@ -35,15 +37,19 @@
     "@electron-forge/plugin-vite": "^8.0.1",
     "@electron/fuses": "^2.1.3",
     "@types/electron-squirrel-startup": "^1.0.2",
+    "@types/node": "24.19.2",
+    "dependency-cruiser": "18.7.2",
     "electron": "45.2.1",
     "oxfmt": "^0.41.0",
     "oxlint": "^1.91.0",
     "typescript": "^6.0.3",
-    "vite": "^8.3.5"
+    "vite": "^8.3.5",
+    "vitest": "5.1.0"
   },
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",
     "pixi.js": "8.22.0",
-    "ses": "2.3.0"
+    "ses": "2.3.0",
+    "zod": "4.6.7"
   }
 }

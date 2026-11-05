@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "types": []
+  },
+  "include": [
+    "src/panels/**/*",
+    "src/overlay/**/*",
+    "src/sandbox/**/*",
+    "src/shared/**/*"
+  ]
+}

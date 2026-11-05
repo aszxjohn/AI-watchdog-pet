@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "types": ["node"]
+  },
+  "include": [
+    "src/main/**/*",
+    "src/preload/**/*",
+    "src/shared/**/*",
+    "src/forge-env.d.ts",
+    "scripts/**/*",
+    "test/**/*",
+    "prototypes/**/*",
+    "*.mts"
+  ]
+}

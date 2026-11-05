@@ -1,6 +1,222 @@
+// oxlint reads comments in this file.
+//
+// A later override replaces an earlier override's options for the same rule
+// (it does not merge them), so each file group below lists its full set of
+// no-restricted-imports / no-restricted-globals entries.
+//
+// Known limitation: no-restricted-globals only sees bare identifiers.
+// Member access such as `globalThis.process`, `window.fetch` or
+// `self.WebSocket` is not caught here; review and the sandbox itself are the
+// backstop.
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "categories": {
     "correctness": "warn"
-  }
+  },
+  "overrides": [
+    {
+      // Every src file except the three that own zod / ipcMain / ipcRenderer.
+      "files": ["src/**"],
+      "excludeFiles": [
+        "src/shared/zod-setup.ts",
+        "src/main/ipc/register.ts",
+        "src/preload/invoke.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "electron",
+                "importNames": ["ipcMain"],
+                "message": "Register IPC handlers only through src/main/ipc/register.ts (AD-24)."
+              },
+              {
+                "name": "electron",
+                "importNames": ["ipcRenderer"],
+                "message": "Invoke IPC only through src/preload/invoke.ts (AD-24)."
+              },
+              {
+                "name": "electron",
+                "importNames": ["net"],
+                "message": "The app never makes network requests (AD-26)."
+              }
+            ],
+            "patterns": [
+              {
+                "group": ["zod", "zod/*"],
+                "message": "Import z from src/shared/zod-setup so jitless is set before any schema is built (AD-24)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/shared/zod-setup.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "electron",
+                "importNames": ["ipcMain", "ipcRenderer", "net"],
+                "message": "src/shared depends on no layer and never touches IPC or the network (AD-2, AD-26)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/main/ipc/register.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "electron",
+                "importNames": ["ipcRenderer"],
+                "message": "Invoke IPC only through src/preload/invoke.ts (AD-24)."
+              },
+              {
+                "name": "electron",
+                "importNames": ["net"],
+                "message": "The app never makes network requests (AD-26)."
+              }
+            ],
+            "patterns": [
+              {
+                "group": ["zod", "zod/*"],
+                "message": "Import z from src/shared/zod-setup so jitless is set before any schema is built (AD-24)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/preload/invoke.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "electron",
+                "importNames": ["ipcMain"],
+                "message": "Register IPC handlers only through src/main/ipc/register.ts (AD-24)."
+              },
+              {
+                "name": "electron",
+                "importNames": ["net"],
+                "message": "The app never makes network requests (AD-26)."
+              }
+            ],
+            "patterns": [
+              {
+                "group": ["zod", "zod/*"],
+                "message": "Import z from src/shared/zod-setup so jitless is set before any schema is built (AD-24)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Static half of "no network" for browser-style APIs (AD-26).
+      "files": ["src/**"],
+      "rules": {
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "fetch",
+            "message": "The app never makes network requests (AD-26)."
+          },
+          {
+            "name": "WebSocket",
+            "message": "The app never makes network requests (AD-26)."
+          },
+          {
+            "name": "XMLHttpRequest",
+            "message": "The app never makes network requests (AD-26)."
+          },
+          {
+            "name": "EventSource",
+            "message": "The app never makes network requests (AD-26)."
+          }
+        ]
+      }
+    },
+    {
+      // Sandboxed preloads: the network globals above plus Node globals they
+      // do not have (AD-24). Repeats the network entries because this
+      // override replaces the one above for these files.
+      "files": ["src/preload/**"],
+      "rules": {
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "fetch",
+            "message": "The app never makes network requests (AD-26)."
+          },
+          {
+            "name": "WebSocket",
+            "message": "The app never makes network requests (AD-26)."
+          },
+          {
+            "name": "XMLHttpRequest",
+            "message": "The app never makes network requests (AD-26)."
+          },
+          {
+            "name": "EventSource",
+            "message": "The app never makes network requests (AD-26)."
+          },
+          {
+            "name": "Buffer",
+            "message": "Sandboxed preloads have no Buffer polyfill (AD-24)."
+          },
+          {
+            "name": "process",
+            "message": "Sandboxed preloads must not rely on Node's process (AD-24)."
+          },
+          {
+            "name": "global",
+            "message": "Sandboxed preloads have no Node global object (AD-24)."
+          },
+          {
+            "name": "setImmediate",
+            "message": "Sandboxed preloads have no setImmediate (AD-24)."
+          },
+          {
+            "name": "clearImmediate",
+            "message": "Sandboxed preloads have no clearImmediate (AD-24)."
+          },
+          {
+            "name": "require",
+            "message": "Preloads import only electron and src/shared, with import statements (AD-2)."
+          },
+          {
+            "name": "module",
+            "message": "Preloads are ES modules bundled by Vite; do not use CommonJS module (AD-24)."
+          },
+          {
+            "name": "exports",
+            "message": "Preloads are ES modules bundled by Vite; do not use CommonJS exports (AD-24)."
+          },
+          {
+            "name": "__dirname",
+            "message": "Sandboxed preloads have no __dirname (AD-24)."
+          },
+          {
+            "name": "__filename",
+            "message": "Sandboxed preloads have no __filename (AD-24)."
+          }
+        ]
+      }
+    }
+  ]
 }

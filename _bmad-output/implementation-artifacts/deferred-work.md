@@ -19,3 +19,24 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-forge-project-scaffold.md`
   summary: package.json 宣告 MIT 但 repo 沒有 LICENSE 檔（B17c）
   evidence: LICENSE 需要著作權人名稱，由使用者決定後新增。
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-shared-contracts-ipc-ci.md`
+  summary: preload bundle 名稱與 main 的期待沒有 CI 一致性檢查，CI 也沒有 build 步驟（VG3、B14）
+  evidence: Story 1.5 新增 overlay 視窗時集中 bundle 名稱；Story 2.3 建 Playwright `_electron` 端到端測試時在 CI 一併建置並檢查 preload 產物只 require `electron`。
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-shared-contracts-ipc-ci.md`
+  summary: IPC 只有 invoke，沒有 main→renderer 推送的契約與驗證（B6）
+  evidence: Story 1.4 建 StageView 推送時，以 `src/shared` 同一套 schema 加 main 端 send 與 preload 端 subscribe。
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-shared-contracts-ipc-ci.md`
+  summary: IPC 允許清單不分通道、dev server 來源只認 main_window 且暫放在 register.ts（B7）
+  evidence: Story 1.5／1.6 建立 overlay 視窗時，把來源判斷搬到 `main/windows`，並依視窗限制可呼叫的通道。
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-shared-contracts-ipc-ci.md`
+  summary: preload 以不含 DOM 的 lib 做型別檢查（B18a）
+  evidence: preload 開始使用 DOM API 時，為 preload 開獨立 tsconfig（DOM＋Electron 型別）。
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-shared-contracts-ipc-ci.md`
+  summary: 打包版以 file:// 載入，IPC 一律被拒（E4）
+  evidence: Story 1.5 改用 `app://` 後恢復；在那之前打包版面板顯示錯誤是預期行為。
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-shared-contracts-ipc-ci.md`
+  summary: 第一次 `npm start` 曾出現沒有 renderer 的情況，原因未查明
+  evidence: 之後 3 次都正常；再發生時保留當下的主程式輸出再追查。
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-shared-contracts-ipc-ci.md`
+  summary: CI 尚未實際執行
+  evidence: 使用者推上 GitHub 後確認 macOS 與 Windows 兩個 job 都通過。

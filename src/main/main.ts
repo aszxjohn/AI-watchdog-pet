@@ -1,11 +1,36 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, dialog } from 'electron';
+import fs from 'node:fs';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
+import { appGetVersion } from '../shared/ipc';
+import { registerIpcHandler } from './ipc/register';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
   app.quit();
 }
+
+/**
+ * Path of a preload bundle next to main.cjs. Forge names each bundle after
+ * its entry file (src/preload/panels.ts -> panels.cjs); a wrong name would
+ * otherwise only show up as a missing `window.awp`. When the bundle is
+ * missing, show why and exit, instead of throwing and leaving a windowless
+ * process behind (showErrorBox is safe before `ready`).
+ */
+function preloadPath(fileName: string): string {
+  const file = path.join(__dirname, fileName);
+  if (!fs.existsSync(file)) {
+    const reason = `Preload bundle not found: ${file}. Check the preload entries in forge.config.mts.`;
+    console.error(reason);
+    dialog.showErrorBox('AI Watchdog Pet 無法啟動', reason);
+    app.exit(1);
+  }
+  return file;
+}
+
+const PANELS_PRELOAD = preloadPath('panels.cjs');
+
+registerIpcHandler(appGetVersion, () => app.getVersion());
 
 const createWindow = () => {
   // Create the browser window.
@@ -13,8 +38,7 @@ const createWindow = () => {
     width: 800,
     height: 600,
     webPreferences: {
-      // Forge names the bundle after the entry: src/preload/panels.ts -> panels.cjs
-      preload: path.join(__dirname, 'panels.cjs'),
+      preload: PANELS_PRELOAD,
     },
   });
 
