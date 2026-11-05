@@ -124,7 +124,7 @@ graph LR
 - **Rule:** 演出邏輯由角色包自己寫，但只能在以下沙盒執行，任何一層都不得省略：
   1. 每包一個 `<iframe sandbox="allow-scripts">`，不給 `allow-same-origin`，文件由 `pack://_stage/sandbox.html` 提供，CSP `default-src 'none'; script-src 'sha256-<bootstrap 雜湊>' 'unsafe-eval'; worker-src blob:; connect-src 'none'`。雜湊於建置時產生，CSP 字串只由 `src/sandbox` 一個模組產生。`'unsafe-eval'` 只為 SES 而開、只出現在沙盒 iframe 與其 Worker；隔離靠 Worker＋Compartment＋封網，不靠禁 eval。
   2. 包程式只在 iframe 內的 **classic Worker** 執行，絕不在 window context 執行。
-  3. Worker bootstrap 先移除 fetch、XHR、WebSocket、EventSource、WebTransport、importScripts、巢狀 Worker、indexedDB、caches，再 SES `lockdown()`，包放進 `Compartment`，只注入舞台 API（AD-16）。Compartment 內沒有 `Date.now`／`new Date()`／`Math.random`（SES 預設）、`console`、計時器、`Float32Array`／`Float64Array`，第一版不另注入。
+  3. Worker bootstrap 先移除 fetch、XHR、WebSocket、EventSource、WebTransport、importScripts、巢狀 Worker、indexedDB、caches（沿原型鏈刪除，這些多半在 `WorkerGlobalScope.prototype` 上），再逐條移除「SES 尚未認得的 intrinsics」清單 [ADOPTED]（清單只在 `src/sandbox` 一處逐條列名，架構與 epics 只引用、不列內容；目前內容與來由見 Story 1.2 原型報告），再以**不帶任何選項**的 SES `lockdown()` 鎖定（不得有任何警告；要改 lockdown 選項或升級 Electron、SES，都必須跑完 AD-25 全部測試，出現新警告就更新清單並請使用者確認），包放進 `Compartment`，只注入舞台 API（AD-16）。Compartment 內沒有 `Date.now`／`new Date()`／`Math.random`（SES 預設）、`console`、計時器、`Float32Array`／`Float64Array`，第一版不另注入。
   4. Electron 層的設定見 AD-24。
   5. 舞台與包之間只用 MessageChannel（port 直接交給 Worker，iframe 不轉發），每則訊息用 `shared` 的 schema 驗證、限速；心跳逾時、超限或未捕捉例外時，由 `overlay/pack-host` 移除該包 iframe（連帶終止 Worker），該包角色改演佔位演出，舞台不受影響（AD-19）。
 
@@ -192,6 +192,7 @@ graph LR
 - **Rule:**
   - 契約（型別、zod schema、常數）只在 `src/shared/pack-api/`，除 zod 外不依賴任何東西。
   - 入口：manifest `entry` 指向單一、已自行打包、不含 `import`／`require` 的 classic script，求值結果為工廠函式 `(stage) => handlers`；`handlers` 的鍵是下表的訊息名稱，`frame` 的回傳值就是該 tick 的 `draw`。其他格式在安裝時拒絕。
+  - 包程式所在的 Worker 不是 secure context（`isSecureContext` 為 false，沒有 `crypto.subtle`）；亂數只由 `stage.random` 提供（Story 1.2 原型實測）。
   - `stage` 是包唯一能用的 API：`stage.fire`（AD-18）、`stage.random(actorId)`（每個 actor 一個種子）、`stage.log`（限速，帶 `packId` 寫入運行紀錄）、`stage.canvas`（只限宣告 `advancedBitmap` 的角色，回傳 OffscreenCanvas 的 2d context）、`stage.hold(actorId, on)`（己方角色停在原地／恢復遊走）、`stage.face(actorId, 'left' | 'right')`（轉向）。`hold`／`face` 只對己方 actor 有效，使用者設為不遊走或角色被捏起來時不生效。時間只來自 `frame` 的 `t`。
   - 畫面上每一隻是一個 **actor**。`actorId` 由 `main/pool` 在建立分配時產生（不透明字串，app 執行期間不重用）；一筆分配＝一個 session × 一個角色＝一個 `actorId`，換角色＝舊 actor 結束、新 actor 產生。所有舞台↔包訊息、世界實體、繪圖、發射一律以 `actorId` 定址；同一角色可同時有多個 `actorId`，包的內部狀態以 `actorId` 為 key，`characterId` 只用來選外觀與參數。
   - `overlay/pack-host` 驗證包送出的每則訊息裡的 `actorId` 屬於該包，否則整則丟棄並記錄 `packId`。包看不到 `sessionKey`、`source`、`confidence`，也看不到別包的 `packId`、`characterId`。
@@ -304,8 +305,8 @@ graph LR
 - **Prevents:** 開發模式被放行清單擋死後各自全域放行；renderer CSP 與 PixiJS、zod 衝突；各視窗的 Electron 防護設定不一
 - **Rule:**
   - 打包後所有視窗由 `app://` 載入打包後的 Vite 輸出，不用 `file://`。`!app.isPackaged` 時只對 overlay、panels 額外放行 Vite dev server 的 `http://localhost:<port>` 與 `ws://localhost:<port>`；沙盒 iframe 與 `pack://` 在任何環境都沒有例外。環境判斷與 `webRequest` 放行清單集中在 `main/windows` 一個模組。
-  - `protocol.registerSchemesAsPrivileged` 只在 `main/windows` 於 ready 前呼叫一次：`app`、`pack` 至少設 `standard`、`secure`，都不給 `bypassCSP`；其他權限（如 `supportFetchAPI`、`corsEnabled`）只給原型證實必要的最小集合（`app://` 載入 Vite 輸出、overlay 從 `pack://` 載貼圖），且只在此處設定。`app://` 處理器歸 `main/windows`；`pack://` 處理器歸 `main/packs`，URL 只有兩種形狀：`pack://_stage/…`（舞台沙盒文件）與 `pack://<packId>/<version>/<path>`（只回應 manifest 宣告的素材與入口，拒絕 `..` 與絕對路徑）。
-  - overlay、panels 的 CSP：`script-src 'self'`，不含 `'unsafe-eval'`；只在開發時為 Vite 放寬。overlay 入口第一行 `import 'pixi.js/unsafe-eval'`，PixiJS 以 `preference: 'webgl'`、透明背景初始化；`src/shared` 最先載入的 side-effect 模組設 `z.config({ jitless: true })`。
+  - `protocol.registerSchemesAsPrivileged` 只在 `main/windows` 於 ready 前呼叫一次：`app`、`pack` 至少設 `standard`、`secure`，都不給 `bypassCSP`；其他權限只給原型證實必要的最小集合，且只在此處設定：`pack` 為 `standard`、`secure`、`corsEnabled`（Story 1.2 原型實測；`app` 的最小集合由 Story 1.5 實測）。`app://` 處理器歸 `main/windows`；`pack://` 處理器歸 `main/packs`，URL 只有兩種形狀：`pack://_stage/…`（舞台沙盒文件）與 `pack://<packId>/<version>/<path>`（只回應 manifest 宣告的素材與入口，拒絕 `..` 與絕對路徑）。
+  - overlay、panels 的 CSP：`script-src 'self'`，不含 `'unsafe-eval'`；只在開發時為 Vite 放寬。overlay 入口第一行 `import 'pixi.js/unsafe-eval'`，PixiJS 以 `preference: 'webgl'`、透明背景初始化，並在載入任何貼圖前設 `Assets.setPreferences({ preferCreateImageBitmap: false })`（預設的載入方式會建 blob Worker，被 `script-src 'self'` 擋下後永遠卡住、不報錯；Story 1.2 原型實測）；`src/shared` 最先載入的 side-effect 模組設 `z.config({ jitless: true })`。
   - 所有視窗：`sandbox`、`contextIsolation` 開；`nodeIntegration`、`nodeIntegrationInSubFrames`、`nodeIntegrationInWorker` 關；`setWindowOpenHandler` 一律拒絕；`will-frame-navigate` 只允許 `app://`、`pack://`（開發時加 dev server）；`setPermissionRequestHandler` 一律拒絕。畫布視窗 `backgroundThrottling: false`。
   - preload 每個 renderer 一支，只暴露各自的最小 API；不依賴 Node polyfill（Electron 45 的 sandboxed preload 沒有 `Buffer`、`setImmediate`）。
   - main 收到 `powerMonitor` 的 suspend／lock 時通知 overlay 暫停 world 節拍與心跳，resume／unlock 後恢復。
@@ -318,7 +319,7 @@ graph LR
   - 純邏輯（`src/shared`、`src/main`、`overlay/world`）用 Vitest。
   - 每個轉接器以 `test/fixtures/<source>/` 的去識別化真實紀錄（Claude Code 含狀態檔樣本）做「紀錄 → 共用事件」快照測試；判斷器與推測用「事件序列 → 狀態序列」表格測試，以假時鐘涵蓋優先序、`done`／`idle`、`replay`、推測。
   - 每個 zod schema 做往返與拒絕測試。
-  - 沙盒安全測試在真的 Electron 裡以 Playwright `_electron` 執行：fetch、XHR、WebSocket、EventSource、importScripts、巢狀 Worker、存取 parent／top、indexedDB、`Date.now`、`Math.random`、OffscreenCanvas 的 webgl 全部必須失敗。
+  - 沙盒安全測試在真的 Electron 裡以 Playwright `_electron` 執行，CI 的 macOS 與 Windows 都要跑：fetch、XHR、WebSocket、EventSource、importScripts、巢狀 Worker、存取 parent／top、indexedDB、`Date.now`、`Math.random`、OffscreenCanvas 的 webgl 全部必須失敗；另外必須斷言 (1) 測試包在 Compartment 內成功執行並回報（正向對照，避免沙盒根本沒跑起來時「全部失敗」照樣通過）、(2) Worker 從載入 SES 到 `lockdown()` 結束的 console 輸出為 0 行、(3) `src/sandbox` 清單每一條都回報已移除（不存在的要明確標出）。
   - `test/packs/contract-pack/` 是不含任何角色名稱的契約測試包，作為角色包 API v1 的驗收樣本；端到端測試以 `demo` 轉接器為事件來源。
   - CI 至少跑 macOS 與 Windows；dependency-cruiser 強制 AD-2 的依賴方向；掃描 `src/` 不得出現測試包的 `packId`、`characterId` 字面值（AD-1）。
 
@@ -347,7 +348,7 @@ graph LR
 | 常數與預設 | 運行常數只在 `src/shared/constants`；使用者可調的門檻與秒數預設只在 shared 的設定 schema；各端引用同一份，不得各寫一份。 |
 | 錯誤 | 角色包的任何錯誤只影響那一包，記錄時帶 `packId`；舞台不因角色包失敗而中止。 |
 | 運行紀錄 | 一小時一個檔、一行一件事（時間、類別、內容），只留 24 小時。 |
-| 工具鏈 | npm，lockfile 必須提交；Node 版本寫進 `.nvmrc` 與 `engines`；`ses` 鎖確切版本；升級 Forge、Vite 依 semver，並跑完 AD-25 全部測試。 |
+| 工具鏈 | npm，lockfile 必須提交；Node 版本寫進 `.nvmrc` 與 `engines`；`ses` 鎖確切版本；升級 Forge、Vite 依 semver，並跑完 AD-25 全部測試；升級 Electron、`ses` 或改 `lockdown()` 選項也一樣（AD-7）。 |
 
 ## Stack
 

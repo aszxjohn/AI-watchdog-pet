@@ -510,6 +510,7 @@ So that 我寫的包在任何版本相容的舞台上都能演出。
 **When** 定義契約
 **Then** 包含 manifest schema（`id`、`name`、`version`、`apiVersion`、`entry`、`assets`、`characters`：`id`、`name`、`height`、參數宣告、`states`、`fallback`、`hitbox`、`bounds`、`anchor`、選填 `defaults`（`scale`、`wander`）、`advancedBitmap`；選填 `projectiles`）、舞台→包訊息（`init`、`spawn`、`despawn`、`params`、`meta`、`frame`）、繪圖指令（`sprite`、`particles`、`bitmap`）、API 版本常數
 **And** id 格式 `^[a-z0-9][a-z0-9-]{1,63}$`；參數型別 `bool`、`int`、`number`、`choice`、`asset`；每個 schema 有往返與拒絕測試
+**And** 角色包作者文件列出包程式裡不能用的東西：Compartment 內沒有的全域（`Date`、`Math.random`、計時器等），以及 `src/sandbox` 清單移除的 intrinsics
 **And** 固定參數格式與預設寫在 `src/shared`：`scale` 0.5～2.0（每格 0.1，預設 1.0）、`inPool` 預設開、`badges` 預設開、`wander`（`enabled` 預設開、`areas` 預設 `[6, 7, 8]`、`activity` 預設 `medium`、`speed` 預設 `medium`）；推薦角色身高 110 基準像素
 
 **Given** `test/packs/contract-pack/`
@@ -536,7 +537,7 @@ So that 匯入角色包不會弄壞 app 或我的電腦。
 
 **Given** 已安裝的包
 **When** overlay 或沙盒要讀素材或入口
-**Then** 由 `main/packs` 的 `pack://<packId>/<version>/<path>` 處理器提供，只回應 manifest 宣告的素材與入口，拒絕 `..` 與絕對路徑
+**Then** 由 `main/packs` 的 `pack://<packId>/<version>/<path>` 處理器提供，只回應 manifest 宣告的素材與入口，拒絕 `..` 與絕對路徑；`pack` scheme 權限為 `standard`、`secure`、`corsEnabled`（Story 1.2 原型實測的最小集合）
 **And** 所有匯入入口（面板、第二實例帶來的檔案）走同一個匯入流程〔NFR10〕
 
 ### Story 3.3: 角色包管理頁
@@ -595,7 +596,7 @@ So that 匯入別人的角色包是安全的。
 **Given** Story 1.2 的沙盒原型閘門已通過，且載入前再檢查一次該包的 `apiVersion` 與目前舞台相容（不相容就不載入並在角色包管理頁顯示原因）〔NFR9〕
 **When** 某包有第一個 actor
 **Then** `overlay/pack-host` 為它建一個 `<iframe sandbox="allow-scripts">`（文件由 `pack://_stage/sandbox.html` 提供、CSP 由 `src/sandbox` 唯一模組產生並含 bootstrap 雜湊）；依固定順序把入口原始碼與 MessageChannel 一端交給 iframe，iframe 以 bootstrap＋入口建 classic Worker 並把 port 交給 Worker，之後不轉發任何訊息
-**And** Worker bootstrap 移除 fetch、XHR、WebSocket、EventSource、WebTransport、importScripts、巢狀 Worker、indexedDB、caches，再 SES `lockdown()`，包放進 `Compartment`，只注入舞台 API（`stage.random`、`stage.log` 等）
+**And** Worker bootstrap 移除 fetch、XHR、WebSocket、EventSource、WebTransport、importScripts、巢狀 Worker、indexedDB、caches，再逐條移除 `src/sandbox` 一處列名的「SES 尚未認得的 intrinsics」，再以不帶選項的 SES `lockdown()` 鎖定（不得有任何警告），包放進 `Compartment`，只注入舞台 API（`stage.random`、`stage.log` 等）
 
 **Given** 包送出的每則訊息
 **When** pack-host 收到
@@ -609,6 +610,8 @@ So that 匯入別人的角色包是安全的。
 **Given** Playwright `_electron` 沙盒安全測試
 **When** 在真的 Electron 裡讓測試包嘗試 fetch、XHR、WebSocket、EventSource、importScripts、巢狀 Worker、存取 parent／top、indexedDB、`Date.now`、`Math.random`、OffscreenCanvas webgl
 **Then** 全部失敗〔NFR3〕
+**And** 同一組測試另外斷言：測試包在 Compartment 內成功執行並回報（正向對照）、Worker 從載入 SES 到 `lockdown()` 結束的 console 輸出為 0 行、清單每一條都回報已移除
+**And** 這組測試在 CI 的 macOS 與 Windows 都要通過（Story 1.2 原型只在 macOS arm64 實測）
 **And** 最後一個 actor 離場後 `sandboxIdleMs` 銷毀該沙盒
 
 ### Story 3.6: 世界節拍與統一繪圖
@@ -631,7 +634,7 @@ So that 我看得到每個 session 的角色。
 **Given** 包回傳 `draw`
 **When** renderer 繪製
 **Then** 在單一 PixiJS WebGL 畫布上，以 actor 本地座標（原點為腳底中心）繪製，外層依序套 world 位置、固定參數「大小」、actor 間依 y 排序；超出 manifest `bounds` 的內容裁切〔NFR13〕
-**And** 素材以 manifest key 引用、從 `pack://` 載入並快取；超過指令數、位元組數等上限的 `draw` 整則丟棄並記錄 `packId`
+**And** 素材以 manifest key 引用、從 `pack://` 載入並快取（載入前設 `Assets.setPreferences({ preferCreateImageBitmap: false })`，否則載入會卡住）；超過指令數、位元組數等上限的 `draw` 整則丟棄並記錄 `packId`
 
 **Given** 包回傳 `particles` 指令
 **When** renderer 處理

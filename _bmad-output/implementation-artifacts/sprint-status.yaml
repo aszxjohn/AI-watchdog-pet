@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-03-2026 15:49
-last_updated: 11-04-2026 10:16
+last_updated: 11-05-2026 11:45
 project: gundam-pet
 project_key: NOKEY
 tracking_system: file-system
@@ -37,7 +37,7 @@ story_location: _bmad-output/implementation-artifacts
 development_status:
   epic-1: in-progress
   1-1-用-forge-模板建立專案骨架: review
-  1-2-沙盒原型驗證-ad-7-閘門: backlog
+  1-2-沙盒原型驗證-ad-7-閘門: review
   1-3-共用契約-ipc-骨架與-ci: backlog
   1-4-可靠的設定-stageview-與運行紀錄: backlog
   1-5-選單列-系統匣入口與面板視窗: backlog

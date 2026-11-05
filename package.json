@@ -21,7 +21,8 @@
     "release": "electron-forge release",
     "lint": "oxlint --deny-warnings src test prototypes forge.config.mts vite.main.config.mts vite.preload.config.mts vite.renderer.config.mts && oxfmt --check src test prototypes \"*.mts\"",
     "lint:fix": "oxlint --fix src test prototypes forge.config.mts vite.main.config.mts vite.preload.config.mts vite.renderer.config.mts && oxfmt --write src test prototypes \"*.mts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "proto:sandbox": "vite build --config prototypes/sandbox/vite.config.mts && node prototypes/sandbox/main.cjs"
   },
   "devDependencies": {
     "@electron-forge/cli": "^8.0.1",
@@ -42,6 +43,7 @@
   },
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",
+    "pixi.js": "8.22.0",
     "ses": "2.3.0"
   }
 }
