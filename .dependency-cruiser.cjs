@@ -99,6 +99,20 @@ module.exports = {
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
+    // Resolve package subpaths through their `exports` map, for every layer
+    // alike, matching the first of the `import`, `require`, `node` or
+    // `default` conditions a package lists. dependency-cruiser ignores
+    // `exports` by default, and `pixi.js/unsafe-eval` (the overlay's first
+    // import) exists only there, so it would be reported as unresolvable.
+    // This is not the per-target resolution Vite does (it would pick
+    // `browser` entries for renderers), but the rules below only look at
+    // which package or folder an import lands in, and that is the same
+    // whichever condition matches; `doNotFollow` keeps cruising out of
+    // node_modules.
+    enhancedResolveOptions: {
+      exportsFields: ['exports'],
+      conditionNames: ['import', 'require', 'node', 'default'],
+    },
     // Count `import type` too: a type-only import of src/main from a renderer
     // is still a dependency in the wrong direction.
     tsPreCompilationDeps: true,

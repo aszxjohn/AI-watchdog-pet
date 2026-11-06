@@ -15,6 +15,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -448,6 +449,34 @@ describe('JSX placement', () => {
     expect(tsx.length).toBeGreaterThan(0);
     expect(tsx.filter((file) => !file.startsWith('src/panels/'))).toStrictEqual(
       [],
+    );
+  });
+});
+
+describe('overlay entry', () => {
+  // The overlay CSP has no 'unsafe-eval' (AD-24), so PixiJS must load its
+  // polyfill before any other PixiJS module builds a shader or a parser with
+  // `new Function`; an import above it (formatting, a comment block, a new
+  // import sorted first) would break the canvas only at run time.
+  it("starts src/overlay/main.ts with import 'pixi.js/unsafe-eval'", () => {
+    const source = readFileSync(
+      path.join(REPO_ROOT, 'src/overlay/main.ts'),
+      'utf8',
+    );
+    const [first] = source.split(/\r?\n/);
+    expect(first).toBe("import 'pixi.js/unsafe-eval';");
+  });
+
+  it('sets the texture loader preferences before anything loads', () => {
+    const source = readFileSync(
+      path.join(REPO_ROOT, 'src/overlay/main.ts'),
+      'utf8',
+    );
+    expect(source).toContain(
+      'Assets.setPreferences({ preferCreateImageBitmap: false });',
+    );
+    expect(source.indexOf('Assets.setPreferences(')).toBeLessThan(
+      source.indexOf('new Application('),
     );
   });
 });

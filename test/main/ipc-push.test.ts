@@ -8,6 +8,9 @@ import * as fake from '../helpers/fake-electron';
 vi.mock('electron', () => import('../helpers/fake-electron'));
 
 const DEV_SERVER_URL = 'http://localhost:5173';
+const OVERLAY_DEV_SERVER_URL = 'http://localhost:5174';
+/** stage-view:delta goes to both renderers. */
+const BOTH = ['panels', 'overlay'] as const;
 const DELTA: StageViewDelta = {
   rev: 1,
   sections: { settings: { rev: 1, values: { canvasDisplayId: 7 } } },
@@ -19,6 +22,7 @@ let error: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   fake.resetFakeElectron();
   vi.stubGlobal('PANELS_VITE_DEV_SERVER_URL', DEV_SERVER_URL);
+  vi.stubGlobal('OVERLAY_VITE_DEV_SERVER_URL', OVERLAY_DEV_SERVER_URL);
   vi.spyOn(console, 'info').mockImplementation(() => {});
   warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -37,7 +41,7 @@ describe('pushToRenderer', () => {
   it('sends a valid payload to a live app:// page', () => {
     const contents = target();
 
-    expect(pushToRenderer(contents, stageViewDelta, DELTA)).toBe('sent');
+    expect(pushToRenderer(contents, stageViewDelta, BOTH, DELTA)).toBe('sent');
 
     expect(contents.sent).toStrictEqual([
       { channel: 'stage-view:delta', args: [DELTA] },
@@ -47,19 +51,53 @@ describe('pushToRenderer', () => {
   it('allows the Vite dev server origin while not packaged', () => {
     const contents = target(`${DEV_SERVER_URL}/`);
 
-    expect(pushToRenderer(contents, stageViewDelta, DELTA)).toBe('sent');
+    expect(pushToRenderer(contents, stageViewDelta, BOTH, DELTA)).toBe('sent');
   });
+
+  it.each([
+    ['the overlay page', 'app://overlay/index.html'],
+    ['the overlay dev server', `${OVERLAY_DEV_SERVER_URL}/`],
+  ])('sends to %s too', (_label, url) => {
+    const contents = target(url);
+
+    expect(pushToRenderer(contents, stageViewDelta, BOTH, DELTA)).toBe('sent');
+  });
+
+  it.each([
+    ['the overlay page', 'app://overlay/index.html', ['panels'] as const],
+    [
+      'the overlay dev server',
+      `${OVERLAY_DEV_SERVER_URL}/`,
+      ['panels'] as const,
+    ],
+    ['the panels page', 'app://panels/index.html', ['overlay'] as const],
+    ['the panels dev server', `${DEV_SERVER_URL}/`, ['overlay'] as const],
+  ])(
+    'does not send to %s when the push does not list it',
+    (_label, url, renderers) => {
+      const contents = target(url);
+
+      expect(pushToRenderer(contents, stageViewDelta, renderers, DELTA)).toBe(
+        'rejected',
+      );
+      expect(contents.sent).toStrictEqual([]);
+      expect(warn).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each([
     ['a remote page', 'https://example.com/'],
     ['file://', 'file:///app/index.html'],
-    ['another localhost port', 'http://localhost:5174/'],
+    ['another app:// host', 'app://secret/index.html'],
+    ['another localhost port', 'http://localhost:5175/'],
     ['about:blank', 'about:blank'],
     ['no URL yet', ''],
   ])('does not send to %s', (_label, url) => {
     const contents = target(url);
 
-    expect(pushToRenderer(contents, stageViewDelta, DELTA)).toBe('rejected');
+    expect(pushToRenderer(contents, stageViewDelta, BOTH, DELTA)).toBe(
+      'rejected',
+    );
 
     expect(contents.sent).toStrictEqual([]);
     expect(warn).toHaveBeenCalledOnce();
@@ -69,7 +107,9 @@ describe('pushToRenderer', () => {
     fake.app.isPackaged = true;
     const contents = target(`${DEV_SERVER_URL}/`);
 
-    expect(pushToRenderer(contents, stageViewDelta, DELTA)).toBe('rejected');
+    expect(pushToRenderer(contents, stageViewDelta, BOTH, DELTA)).toBe(
+      'rejected',
+    );
     expect(contents.sent).toStrictEqual([]);
   });
 
@@ -77,7 +117,9 @@ describe('pushToRenderer', () => {
     const contents = target();
     contents.destroyed = true;
 
-    expect(pushToRenderer(contents, stageViewDelta, DELTA)).toBe('destroyed');
+    expect(pushToRenderer(contents, stageViewDelta, BOTH, DELTA)).toBe(
+      'destroyed',
+    );
     expect(contents.sent).toStrictEqual([]);
   });
 
@@ -91,7 +133,9 @@ describe('pushToRenderer', () => {
       send: vi.fn(),
     } as unknown as PushTarget;
 
-    expect(pushToRenderer(contents, stageViewDelta, DELTA)).toBe('destroyed');
+    expect(pushToRenderer(contents, stageViewDelta, BOTH, DELTA)).toBe(
+      'destroyed',
+    );
     expect(contents.send).not.toHaveBeenCalled();
   });
 
@@ -103,7 +147,7 @@ describe('pushToRenderer', () => {
     const contents = target();
 
     expect(
-      pushToRenderer(contents, stageViewDelta, payload as StageViewDelta),
+      pushToRenderer(contents, stageViewDelta, BOTH, payload as StageViewDelta),
     ).toBe('invalid');
 
     expect(contents.sent).toStrictEqual([]);
@@ -119,7 +163,7 @@ describe('pushToRenderer', () => {
       }),
     };
 
-    expect(pushToRenderer(contents, throwing, 'x')).toBe('invalid');
+    expect(pushToRenderer(contents, throwing, BOTH, 'x')).toBe('invalid');
     expect(contents.sent).toStrictEqual([]);
   });
 
@@ -130,6 +174,7 @@ describe('pushToRenderer', () => {
       pushToRenderer(
         contents,
         { channel: 'stageViewDelta', payload: z.string() },
+        BOTH,
         'x',
       ),
     ).toBe('invalid');
@@ -142,7 +187,9 @@ describe('pushToRenderer', () => {
       throw new Error('could not be cloned');
     };
 
-    expect(pushToRenderer(contents, stageViewDelta, DELTA)).toBe('failed');
+    expect(pushToRenderer(contents, stageViewDelta, BOTH, DELTA)).toBe(
+      'failed',
+    );
     expect(error).toHaveBeenCalledOnce();
   });
 });

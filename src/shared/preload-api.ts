@@ -1,14 +1,29 @@
 import type { PRELOAD_API_KEY } from './constants';
 import type {
+  CanvasReadyReport,
   IpcData,
   IpcError,
   IpcResult,
   appGetVersion,
+  canvasReady,
   settingsGet,
   settingsPatch,
 } from './ipc';
 import type { SettingsPatch } from './settings';
 import type { StageViewSnapshot } from './stage-view';
+
+/** StageView as both renderers see it (src/preload/stage-view.ts). */
+export interface StageViewApi {
+  /**
+   * Calls `listener` with the StageView snapshot, then after each change.
+   * `onError` hears about a snapshot that could not be fetched. Returns an
+   * unsubscribe function.
+   */
+  subscribe(
+    listener: (snapshot: StageViewSnapshot) => void,
+    onError?: (error: IpcError) => void,
+  ): () => void;
+}
 
 /** `window.awp` in the panels renderer (src/preload/panels.ts). */
 export interface PanelsApi {
@@ -26,21 +41,22 @@ export interface PanelsApi {
       patch: SettingsPatch,
     ): Promise<IpcResult<IpcData<typeof settingsPatch>>>;
   };
-  readonly stageView: {
-    /**
-     * Calls `listener` with the StageView snapshot, then after each change.
-     * `onError` hears about a snapshot that could not be fetched. Returns an
-     * unsubscribe function.
-     */
-    subscribe(
-      listener: (snapshot: StageViewSnapshot) => void,
-      onError?: (error: IpcError) => void,
-    ): () => void;
-  };
+  readonly stageView: StageViewApi;
 }
 
-/** `window.awp` in the overlay renderer (src/preload/overlay.ts); empty for now. */
-export type OverlayApi = Readonly<Record<string, never>>;
+/** `window.awp` in the overlay renderer (src/preload/overlay.ts). */
+export interface OverlayApi {
+  readonly stageView: StageViewApi;
+  readonly canvas: {
+    /**
+     * Reports, once per page load, whether the canvas initialised (for the
+     * run log).
+     */
+    ready(
+      report: CanvasReadyReport,
+    ): Promise<IpcResult<IpcData<typeof canvasReady>>>;
+  };
+}
 
 /**
  * A renderer's `window` as its preload leaves it. The key is optional because

@@ -54,6 +54,12 @@ const config: ForgeConfig = {
           name: 'panels',
           config: 'vite.renderer.config.mts',
         },
+        {
+          // The canvas: .vite/renderer/overlay, served as app://overlay/;
+          // main gets OVERLAY_VITE_DEV_SERVER_URL / OVERLAY_VITE_NAME.
+          name: 'overlay',
+          config: 'vite.overlay.config.mts',
+        },
       ],
     }),
     // Fuses are used to enable/disable various Electron functionality

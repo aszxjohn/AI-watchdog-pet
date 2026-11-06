@@ -4,17 +4,25 @@
  *
  * The page comes from the URL fragment (`#/<page id>`, src/shared/panels.ts):
  * main opens the window on a page by loading that fragment, and the links on
- * the left change it. Every page shows 即將推出 for now.
+ * the left change it. 舞台設定 lists the displays for the canvas; the other
+ * pages show 即將推出 for now.
  *
- * The status lines prove the preload loaded and both IPC paths (invoke and
- * the StageView push) work end to end; renderer state only ever comes from
- * StageView (AD-20).
+ * Renderer state only ever comes from StageView (AD-20): a setting changes
+ * through `settings.patch`, and the page shows the new choice once StageView
+ * brings it back, never earlier.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { PRELOAD_API_KEY, PRODUCT_NAME } from '../shared/constants';
 import { PANEL_PAGES, panelPageHash, type PanelPageId } from '../shared/panels';
 import type { PanelsApi } from '../shared/preload-api';
 import type { StageViewSnapshot } from '../shared/stage-view';
+import {
+  createDisplayChooser,
+  displayChoices,
+  IDLE_DISPLAY_CHOICE,
+  stageViewStatusText,
+  type DisplayChoiceState,
+} from './display-options';
 import { currentHashPage, followHashPage } from './hash-page';
 
 interface StatusLine {
@@ -74,36 +82,41 @@ function useVersionLine(awp: PanelsApi | undefined): StatusLine {
   return line;
 }
 
-function stageViewText(snapshot: StageViewSnapshot): string {
-  const displayId = snapshot.view.settings.values.canvasDisplayId;
-  const display = displayId === null ? '主螢幕' : String(displayId);
-  return `StageView rev ${snapshot.rev}｜畫布螢幕：${display}`;
+interface StageViewState {
+  /** The latest StageView, or null until the first snapshot arrives. */
+  readonly snapshot: StageViewSnapshot | null;
+  readonly line: StatusLine;
 }
 
-function useStageViewLine(awp: PanelsApi | undefined): StatusLine {
-  const [line, setLine] = useState(() => pending('讀取 StageView 中…'));
+/** The StageView subscription, shared by the status bar and the pages. */
+function useStageView(awp: PanelsApi | undefined): StageViewState {
+  const [state, setState] = useState<StageViewState>(() => ({
+    snapshot: null,
+    line: pending('讀取 StageView 中…'),
+  }));
   useEffect(() => {
     if (awp === undefined) {
-      setLine(failure(MISSING_PRELOAD));
+      setState({ snapshot: null, line: failure(MISSING_PRELOAD) });
       return undefined;
     }
     try {
       return awp.stageView.subscribe(
         (snapshot) => {
-          setLine(pending(stageViewText(snapshot)));
+          setState({ snapshot, line: pending(stageViewStatusText(snapshot)) });
         },
         (error) => {
-          setLine(
-            failure(`無法取得 StageView（${error.code}：${error.message}）`),
+          const line = failure(
+            `無法取得 StageView（${error.code}：${error.message}）`,
           );
+          setState((previous) => ({ snapshot: previous.snapshot, line }));
         },
       );
     } catch (error) {
-      setLine(failure('無法訂閱 StageView', error));
+      setState({ snapshot: null, line: failure('無法訂閱 StageView', error) });
       return undefined;
     }
   }, [awp]);
-  return line;
+  return state;
 }
 
 function Status({ id, line }: { id: string; line: StatusLine }) {
@@ -114,10 +127,66 @@ function Status({ id, line }: { id: string; line: StatusLine }) {
   );
 }
 
+/**
+ * 舞台設定: where the canvas goes. The choose logic (patch based on the
+ * settings rev in StageView, options disabled until main answers, a failure
+ * shown with the choice left as it was) is createDisplayChooser; this only
+ * renders it.
+ */
+function StageSettings({
+  awp,
+  snapshot,
+}: {
+  awp: PanelsApi | undefined;
+  snapshot: StageViewSnapshot | null;
+}) {
+  const [state, setState] = useState<DisplayChoiceState>(IDLE_DISPLAY_CHOICE);
+  const chooser = useMemo(
+    () =>
+      awp === undefined
+        ? undefined
+        : createDisplayChooser((patch) => awp.settings.patch(patch), setState),
+    [awp],
+  );
+
+  if (snapshot === null) {
+    return <p className="coming-soon">讀取中…</p>;
+  }
+  const { options, selected } = displayChoices(snapshot.view);
+  const current = { selected, settingsRev: snapshot.view.settings.rev };
+
+  return (
+    <section className="setting">
+      <fieldset disabled={state.saving || chooser === undefined}>
+        <legend>畫布所在螢幕</legend>
+        {options.map((option) => (
+          <label key={option.key} className="setting-option">
+            <input
+              type="radio"
+              name="canvas-display"
+              value={option.key}
+              checked={option.key === selected}
+              onChange={() => {
+                void chooser?.choose(option, current);
+              }}
+            />
+            <span>{option.label}</span>
+          </label>
+        ))}
+      </fieldset>
+      {state.error === null ? null : (
+        <p className="setting-error" role="alert">
+          {state.error}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function App({ awp }: { awp: PanelsApi | undefined }) {
   const page = useHashPage();
   const version = useVersionLine(awp);
-  const stageView = useStageViewLine(awp);
+  const stageView = useStageView(awp);
   const current = PANEL_PAGES.find((entry) => entry.id === page);
 
   return (
@@ -139,11 +208,15 @@ export function App({ awp }: { awp: PanelsApi | undefined }) {
       </nav>
       <main className="panel-page" data-page={page}>
         <h1>{current?.label}</h1>
-        <p className="coming-soon">即將推出</p>
+        {page === 'settings' ? (
+          <StageSettings awp={awp} snapshot={stageView.snapshot} />
+        ) : (
+          <p className="coming-soon">即將推出</p>
+        )}
       </main>
       <footer className="panel-status">
         <Status id="app-version" line={version} />
-        <Status id="stage-view" line={stageView} />
+        <Status id="stage-view" line={stageView.line} />
       </footer>
     </div>
   );

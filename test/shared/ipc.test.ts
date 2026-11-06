@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   appGetVersion,
+  CANVAS_READY_REASON_MAX_LENGTH,
+  canvasReady,
   ipcErrorCodeSchema,
   ipcErrorSchema,
   ipcFailure,
@@ -181,7 +183,15 @@ describe('settings and StageView contracts', () => {
     baseRev: 2,
     ops: [{ op: 'set', field: 'canvasDisplayId', value: 7 }],
   };
-  const SNAPSHOT = { rev: 5, view: { settings: STATE } };
+  const SNAPSHOT = {
+    rev: 5,
+    view: {
+      settings: STATE,
+      displays: [],
+      canvas: null,
+      power: { suspended: false, locked: false },
+    },
+  };
   const DELTA = { rev: 6, sections: { settings: STATE } };
 
   it.each([
@@ -221,5 +231,54 @@ describe('settings and StageView contracts', () => {
     expectRoundTrip(stageViewDelta.payload, DELTA);
     expectRejected(stageViewDelta.payload, SNAPSHOT);
     expectRejected(stageViewDelta.payload, { rev: 6, sections: {} });
+  });
+});
+
+describe('canvas:ready contract', () => {
+  const READY = { ok: true, renderer: 'webgl', width: 1512, height: 982 };
+  const FAILED = { ok: false, reason: 'Error: WebGL unsupported' };
+
+  it('uses a valid channel name', () => {
+    expect(canvasReady.channel).toBe('canvas:ready');
+    expect(isIpcChannelName(canvasReady.channel)).toBe(true);
+  });
+
+  it.each([
+    ['a webgl canvas', READY],
+    ['a webgpu canvas', { ...READY, renderer: 'webgpu' }],
+    ['a canvas-2d fallback', { ...READY, renderer: 'canvas' }],
+    ['an empty world', { ...READY, width: 0, height: 0 }],
+    ['a failure', FAILED],
+    [
+      'a failure at the length limit',
+      { ok: false, reason: 'x'.repeat(CANVAS_READY_REASON_MAX_LENGTH) },
+    ],
+  ])('takes exactly one report: %s', (_label, report) => {
+    expectRoundTrip(canvasReady.input, [report]);
+  });
+
+  it.each([
+    ['no report', []],
+    ['two reports', [READY, READY]],
+    ['an unknown renderer', [{ ...READY, renderer: 'webgl2' }]],
+    ['a fractional width', [{ ...READY, width: 1512.5 }]],
+    ['a negative height', [{ ...READY, height: -1 }]],
+    ['a success with a reason', [{ ...READY, reason: 'x' }]],
+    ['a failure with a renderer', [{ ...FAILED, renderer: 'webgl' }]],
+    ['a failure without a reason', [{ ok: false }]],
+    ['an empty reason', [{ ok: false, reason: '' }]],
+    [
+      'a reason past the limit',
+      [{ ok: false, reason: 'x'.repeat(CANVAS_READY_REASON_MAX_LENGTH + 1) }],
+    ],
+    ['ok as a string', [{ ...READY, ok: 'true' }]],
+  ])('rejects %s', (_label, args) => {
+    expectRejected(canvasReady.input, args);
+  });
+
+  it('answers null', () => {
+    expectRoundTrip(canvasReady.output, null);
+    expectRejected(canvasReady.output, undefined);
+    expectRejected(canvasReady.output, {});
   });
 });

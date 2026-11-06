@@ -4,11 +4,13 @@
  *
  * - packaged: the `app://` handler (protocols.ts) sends it with every HTML
  *   response;
- * - `npm start`: the HTML comes from the Vite dev server, so the session's
- *   `onHeadersReceived` (security.ts) adds it to the dev server's responses.
+ * - `npm start`: the HTML comes from a Vite dev server (one per renderer),
+ *   so the session's `onHeadersReceived` (security.ts) adds it to each dev
+ *   server's responses, built for that server's origin.
  *
- * Neither policy ever contains 'unsafe-eval': zod runs jitless and nothing
- * else in the panels needs eval.
+ * Neither policy ever contains 'unsafe-eval': zod runs jitless, PixiJS in
+ * the overlay loads its `pixi.js/unsafe-eval` polyfill, and nothing else
+ * needs eval. The overlay and the panels get the same policy.
  */
 
 /** The directives of the packaged policy, in output order. */

@@ -23,6 +23,9 @@ const state = vi.hoisted(() => {
       | undefined,
     /** What main.ts passed to createPanelWindows. */
     panelOptions: undefined as { focusApp?: () => void } | undefined,
+    /** What main.ts passed to watchDisplays and watchPower. */
+    displaysOptions: undefined as Record<string, unknown> | undefined,
+    powerArgs: undefined as unknown[] | undefined,
     reset() {
       s.squirrel = false;
       s.lock = true;
@@ -32,6 +35,8 @@ const state = vi.hoisted(() => {
       s.listeners = new Map();
       s.trayActions = undefined;
       s.panelOptions = undefined;
+      s.displaysOptions = undefined;
+      s.powerArgs = undefined;
       s.ready = new Promise<void>((resolve) => {
         s.resolveReady = resolve;
       });
@@ -92,6 +97,8 @@ vi.mock('electron', () => ({
     },
   },
   session: { defaultSession: { fake: 'session' } },
+  screen: { fake: 'screen' },
+  powerMonitor: { fake: 'powerMonitor' },
 }));
 
 vi.mock('node:fs', async (importOriginal) => {
@@ -123,16 +130,53 @@ vi.mock('../../src/main/settings/ipc', () => ({
 }));
 
 vi.mock('../../src/main/stage-view/stage-view', () => ({
-  createStageView: () => {
-    state.order.push('createStageView');
+  createStageView: (sources: Record<string, unknown>) => {
+    state.order.push(
+      `createStageView ${Object.entries(sources)
+        .map(([name, source]) => `${name}=${JSON.stringify(source)}`)
+        .join(' ')}`,
+    );
     return { fake: 'stage-view' };
   },
   registerStageViewHandlers: record('registerStageViewHandlers'),
 }));
 
 vi.mock('../../src/main/ipc/register', () => ({
-  registerIpcHandler: (contract: { channel: string }) => {
-    state.order.push(`registerIpcHandler ${contract.channel}`);
+  registerIpcHandler: (contract: { channel: string }, renderers: string[]) => {
+    state.order.push(
+      `registerIpcHandler ${contract.channel} ${JSON.stringify(renderers)}`,
+    );
+  },
+}));
+
+vi.mock('../../src/main/windows/stage-sources', () => ({
+  createWindowsStageSource: () => {
+    state.order.push('createWindowsStageSource');
+    return { fake: 'windows-source' };
+  },
+  watchDisplays: (options: Record<string, unknown>) => {
+    state.displaysOptions = options;
+    state.order.push('watchDisplays');
+  },
+}));
+
+vi.mock('../../src/main/windows/power', () => ({
+  watchPower: (...args: unknown[]) => {
+    state.powerArgs = args;
+    state.order.push('watchPower');
+  },
+}));
+
+vi.mock('../../src/main/windows/canvas-window', () => ({
+  registerCanvasReadyHandler: record('registerCanvasReadyHandler'),
+  createCanvasWindows: (options: { preload: string; platform: string }) => {
+    state.order.push(
+      `createCanvasWindows ${options.preload.split(/[\\/]/).at(-1)} ${options.platform}`,
+    );
+    return {
+      fake: 'canvas',
+      stop: record('canvas.stop'),
+    };
   },
 }));
 
@@ -144,8 +188,7 @@ vi.mock('../../src/main/windows/protocols', () => ({
 vi.mock('../../src/main/windows/environment', () => ({
   currentEnvironment: () => ({
     packaged: false,
-    devServerUrl: undefined,
-    devServerOrigin: undefined,
+    devServers: { panels: undefined, overlay: undefined },
   }),
 }));
 
@@ -280,19 +323,22 @@ describe('the primary instance', () => {
       'registerSchemes',
       'initRunLog /fake/userData/logs',
       'loadSettings',
-      'createStageView',
-      'registerIpcHandler app:get-version',
+      'createWindowsStageSource',
+      'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"}',
+      'registerIpcHandler app:get-version ["panels"]',
       'registerSettingsHandlers',
       'registerStageViewHandlers',
+      'registerCanvasReadyHandler',
       'flushSettingsOnQuit',
       'installWebContentsGuards',
       'createDockController',
       'createPanelWindows panels.cjs',
+      `createCanvasWindows overlay.cjs ${process.platform}`,
     ]);
     expect(state.logs[0]).toMatch(/^app: start version=1\.0\.0 /);
   });
 
-  it('once ready: session guards, application menu, app:// handler, Dock hidden, tray; no window', async () => {
+  it('once ready: session guards, application menu, app:// handler, Dock hidden, tray, then the canvas and the power watch; no panel', async () => {
     await startMain();
     state.order = [];
     await becomeReady();
@@ -303,8 +349,34 @@ describe('the primary instance', () => {
       'handleAppProtocol',
       'dock.hideAtStartup',
       `createTray ${process.platform}`,
+      'watchDisplays',
+      'watchPower',
     ]);
     expect(state.order.join('\n')).not.toMatch(/BrowserWindow|panels\.open/);
+  });
+
+  it('lays the canvas out from the screen and the settings, into the windows source', async () => {
+    await startMain();
+    await becomeReady();
+    expect(state.displaysOptions).toStrictEqual({
+      screen: { fake: 'screen' },
+      settings: { fake: 'settings' },
+      source: { fake: 'windows-source' },
+      canvas: expect.objectContaining({ fake: 'canvas' }),
+    });
+    expect(state.powerArgs).toStrictEqual([
+      { fake: 'powerMonitor' },
+      { fake: 'windows-source' },
+    ]);
+  });
+
+  it('stops rebuilding the canvas once the app is quitting', async () => {
+    await startMain();
+    const beforeQuit = state.listeners.get('before-quit') ?? [];
+    expect(beforeQuit).toHaveLength(1);
+    state.order = [];
+    beforeQuit[0]?.();
+    expect(state.order).toStrictEqual(['canvas.stop']);
   });
 
   it('keeps running when every window is closed', async () => {

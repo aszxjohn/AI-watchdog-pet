@@ -13,6 +13,7 @@ import {
 import { PACKAGED_CSP } from '../../src/main/windows/csp';
 import {
   createAppProtocolHandler,
+  overlayRendererDir,
   panelsRendererDir,
   resolveAppFile,
   type AppProtocolFs,
@@ -52,6 +53,9 @@ beforeAll(() => {
   fs.writeFileSync(path.join(panelsDir, 'assets', 'data.bin'), 'x');
   fs.writeFileSync(path.join(panelsDir, 'assets', 'sub', 'a b.png'), 'png');
   fs.mkdirSync(path.join(panelsDir, 'folder.js'));
+  const overlayDir = path.join(tempRoot, '.vite', 'renderer', 'overlay');
+  fs.mkdirSync(overlayDir, { recursive: true });
+  fs.writeFileSync(path.join(overlayDir, 'index.html'), '<!doctype overlay>');
   secretFile = path.join(tempRoot, '.vite', 'renderer', 'secret.txt');
   fs.writeFileSync(secretFile, 'secret');
   fs.writeFileSync(path.join(tempRoot, 'secret.txt'), 'secret');
@@ -126,6 +130,22 @@ describe('handleAppProtocol', () => {
     expect(await response.text()).toBe('<!doctype html>');
   });
 
+  it('serves app://overlay/ from .vite/renderer/overlay, with the same CSP', async () => {
+    const { handleAppProtocol } =
+      await import('../../src/main/windows/protocols');
+    handleAppProtocol(path.join(tempRoot, '.vite', 'build'));
+    const serve = fake.handled.get('app') as (r: {
+      url: string;
+    }) => Promise<Response>;
+    const response = await serve({ url: 'app://overlay/index.html' });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-security-policy')).toBe(PACKAGED_CSP);
+    expect(await response.text()).toBe('<!doctype overlay>');
+    expect(
+      (await serve({ url: 'app://overlay/../panels/index.html' })).status,
+    ).toBe(404);
+  });
+
   it('only handles app (pack:// is main/packs, Story 3.2)', async () => {
     const { handleAppProtocol } =
       await import('../../src/main/windows/protocols');
@@ -146,6 +166,25 @@ describe('panelsRendererDir', () => {
     try {
       expect(panelsRendererDir('build')).toBe(
         path.join('build', '..', 'renderer', 'renamed-panels'),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe('overlayRendererDir', () => {
+  it('is ../renderer/overlay from the build folder', () => {
+    expect(overlayRendererDir(path.join('root', '.vite', 'build'))).toBe(
+      path.join('root', '.vite', 'renderer', 'overlay'),
+    );
+  });
+
+  it('follows OVERLAY_VITE_NAME when Forge defines it', () => {
+    vi.stubGlobal('OVERLAY_VITE_NAME', 'renamed-overlay');
+    try {
+      expect(overlayRendererDir('build')).toBe(
+        path.join('build', '..', 'renderer', 'renamed-overlay'),
       );
     } finally {
       vi.unstubAllGlobals();

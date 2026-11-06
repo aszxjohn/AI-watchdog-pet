@@ -19,20 +19,21 @@ import {
   PRELOAD_BUNDLES,
   type PanelWindowHandle,
 } from '../../src/main/windows/panel-window';
-import { PANELS_HOST } from '../../src/main/windows/protocols';
+import { OVERLAY_HOST, PANELS_HOST } from '../../src/main/windows/protocols';
 
 vi.mock('electron', () => import('../helpers/fake-electron'));
 
 const DEV_URL = 'http://localhost:5173';
 const PACKAGED: WindowsEnvironment = {
   packaged: true,
-  devServerUrl: undefined,
-  devServerOrigin: undefined,
+  devServers: { panels: undefined, overlay: undefined },
 };
 const DEV: WindowsEnvironment = {
   packaged: false,
-  devServerUrl: DEV_URL,
-  devServerOrigin: DEV_URL,
+  devServers: {
+    panels: { url: DEV_URL, origin: DEV_URL },
+    overlay: { url: 'http://localhost:5174', origin: 'http://localhost:5174' },
+  },
 };
 const PRELOAD = '/app/.vite/build/panels.cjs';
 
@@ -400,10 +401,51 @@ describe('preload bundle names and forge.config.mts', () => {
     expect(PRELOAD_BUNDLES.panels).toBe('panels.cjs');
   });
 
-  it('builds the panels renderer under the name app:// serves', () => {
+  it('builds the panels and overlay renderers under the names app:// serves', () => {
     expect(vite.renderer.map((entry) => entry.name)).toStrictEqual([
       PANELS_HOST,
+      OVERLAY_HOST,
     ]);
+    expect(vite.renderer.map((entry) => entry.name)).toStrictEqual([
+      'panels',
+      'overlay',
+    ]);
+  });
+
+  it('builds the overlay from src/overlay into .vite/renderer/overlay, without the React plugin', async () => {
+    const overlay = vite.renderer.find((entry) => entry.name === 'overlay') as
+      | { config?: string }
+      | undefined;
+    expect(overlay?.config).toBe('vite.overlay.config.mts');
+
+    const configUrl = new URL('../../vite.overlay.config.mts', import.meta.url)
+      .href;
+    const factory = (
+      (await import(/* @vite-ignore */ configUrl)) as {
+        default: (env: unknown) => {
+          root?: string;
+          plugins?: unknown[];
+          build?: { outDir?: string };
+        };
+      }
+    ).default;
+    const root = path.join(path.sep, 'repo');
+    const built = factory({
+      root,
+      forgeConfigSelf: { name: 'overlay' },
+      command: 'build',
+      mode: 'production',
+    });
+    expect(built.root).toBe(path.join(root, 'src/overlay'));
+    expect(built.build?.outDir).toBe(
+      path.join(root, '.vite/renderer', 'overlay'),
+    );
+    expect(built.plugins ?? []).toStrictEqual([]);
+    // Not the panels' default node_modules/.vite: two dev servers sharing it
+    // replace each other's prebundled deps.
+    expect((built as { cacheDir?: string }).cacheDir).toBe(
+      path.join(root, 'node_modules/.vite-overlay'),
+    );
   });
 
   it('marks the macOS app as a menu bar app (LSUIElement)', () => {

@@ -17,12 +17,18 @@ await import('electron');
 function snapshot(rev: number, id: number | null = null): StageViewSnapshot {
   return {
     rev,
-    view: { settings: { rev, values: { canvasDisplayId: id } } },
+    view: {
+      settings: { rev, values: { canvasDisplayId: id } },
+      displays: [],
+      canvas: null,
+      power: { suspended: false, locked: false },
+    },
   };
 }
 
+/** A delta that replaces the settings section only. */
 function delta(rev: number, id: number | null): StageViewDelta {
-  return { rev, sections: snapshot(rev, id).view };
+  return { rev, sections: { settings: snapshot(rev, id).view.settings } };
 }
 
 /** Sends a push to this renderer, as main's pushToRenderer would. */

@@ -28,7 +28,7 @@ afterEach(() => {
 
 describe('preload invoke', () => {
   it('resolves with the IpcResult main answered', async () => {
-    registerIpcHandler(appGetVersion, () => '1.2.3');
+    registerIpcHandler(appGetVersion, ['panels'], () => '1.2.3');
 
     expect(await invoke(appGetVersion)).toStrictEqual({
       ok: true,
@@ -37,13 +37,13 @@ describe('preload invoke', () => {
   });
 
   it('sends the arguments through to the handler', async () => {
-    registerIpcHandler(echo, (_event, text) => text.toUpperCase());
+    registerIpcHandler(echo, ['panels'], (_event, text) => text.toUpperCase());
 
     expect(await invoke(echo, 'hi')).toStrictEqual({ ok: true, data: 'HI' });
   });
 
   it("passes main's failure through as the result", async () => {
-    registerIpcHandler(appGetVersion, () => {
+    registerIpcHandler(appGetVersion, ['panels'], () => {
       throw new Error('boom');
     });
 

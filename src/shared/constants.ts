@@ -42,3 +42,13 @@ export const RUN_LOG_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 /** Longest run log line, in UTF-16 code units; longer content is cut. */
 export const RUN_LOG_MAX_LINE_LENGTH = 4000;
+
+/**
+ * main/windows rebuilds the canvas window when its renderer goes away, but
+ * at most this many times within CANVAS_REBUILD_WINDOW_MS; one more crash in
+ * that window stops the rebuilds (the app keeps running without a canvas).
+ */
+export const CANVAS_REBUILD_LIMIT = 3;
+
+/** The sliding window CANVAS_REBUILD_LIMIT counts rebuilds in. */
+export const CANVAS_REBUILD_WINDOW_MS = 60_000;

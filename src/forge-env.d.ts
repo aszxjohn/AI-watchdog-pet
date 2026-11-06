@@ -11,6 +11,13 @@ declare global {
   const PANELS_VITE_DEV_SERVER_URL: string | undefined;
   /** `panels`: the folder under .vite/renderer the panels build lands in. */
   const PANELS_VITE_NAME: string;
+  /**
+   * The overlay (canvas) Vite dev server URL under `npm start`; `undefined`
+   * in a packaged build. Not defined at all outside a Forge build.
+   */
+  const OVERLAY_VITE_DEV_SERVER_URL: string | undefined;
+  /** `overlay`: the folder under .vite/renderer the overlay build lands in. */
+  const OVERLAY_VITE_NAME: string;
 }
 
 export {};

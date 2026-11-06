@@ -12,6 +12,7 @@ import {
   createStageView,
   registerStageViewHandlers,
 } from '../../src/main/stage-view/stage-view';
+import { createWindowsStageSource } from '../../src/main/windows/stage-sources';
 import { appGetVersion } from '../../src/shared/ipc';
 import type { PanelsApi } from '../../src/shared/preload-api';
 import { SETTINGS_DEFAULTS } from '../../src/shared/settings';
@@ -46,7 +47,9 @@ function startMain(): SettingsStore {
   vi.spyOn(console, 'info').mockImplementation(() => {});
   settings = loadSettings({ file: path.join(dir, 'settings.json') });
   registerSettingsHandlers(settings);
-  registerStageViewHandlers(createStageView({ settings }));
+  registerStageViewHandlers(
+    createStageView({ settings, windows: createWindowsStageSource() }),
+  );
   return settings;
 }
 
@@ -70,7 +73,7 @@ describe('panels preload', () => {
   });
 
   it('app.getVersion() resolves with { ok: true, data } from main', async () => {
-    registerIpcHandler(appGetVersion, () => '1.2.3');
+    registerIpcHandler(appGetVersion, ['panels'], () => '1.2.3');
     const api = await loadApi();
 
     expect(await api.app.getVersion()).toStrictEqual({
@@ -97,7 +100,12 @@ describe('panels preload', () => {
     await settle();
     expect(listener).toHaveBeenCalledExactlyOnceWith({
       rev: 0,
-      view: { settings: { rev: 0, values: SETTINGS_DEFAULTS } },
+      view: {
+        settings: { rev: 0, values: SETTINGS_DEFAULTS },
+        displays: [],
+        canvas: null,
+        power: { suspended: false, locked: false },
+      },
     });
 
     const result = await api.settings.patch({

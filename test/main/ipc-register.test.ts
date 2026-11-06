@@ -32,9 +32,17 @@ vi.mock('electron', () => ({
 }));
 
 const { registerIpcHandler } = await import('../../src/main/ipc/register');
+const { registerSettingsHandlers } =
+  await import('../../src/main/settings/ipc');
+const { registerStageViewHandlers } =
+  await import('../../src/main/stage-view/stage-view');
+const { registerCanvasReadyHandler } =
+  await import('../../src/main/windows/canvas-window');
 
 const DEV_SERVER_URL = 'http://localhost:5173';
+const OVERLAY_DEV_SERVER_URL = 'http://localhost:5174';
 const APP_URL = 'app://panels/index.html';
+const OVERLAY_URL = 'app://overlay/index.html';
 
 /** A top-level frame unless a parent is given. */
 function frame(url: string, parent: object | null = null) {
@@ -85,6 +93,8 @@ beforeEach(() => {
   fake.listeners.clear();
   fake.app.isPackaged = false;
   vi.stubGlobal('PANELS_VITE_DEV_SERVER_URL', DEV_SERVER_URL);
+  vi.stubGlobal('OVERLAY_VITE_DEV_SERVER_URL', OVERLAY_DEV_SERVER_URL);
+  vi.spyOn(console, 'info').mockImplementation(() => {});
   warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   error = vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -99,7 +109,7 @@ afterEach(() => {
 describe('registerIpcHandler', () => {
   describe('normal call', () => {
     it('answers { ok: true, data } to a top-level app:// frame', async () => {
-      registerIpcHandler(appGetVersion, () => '1.2.3');
+      registerIpcHandler(appGetVersion, ['panels'], () => '1.2.3');
 
       const reply = await invoke(
         appGetVersion.channel,
@@ -113,7 +123,7 @@ describe('registerIpcHandler', () => {
     });
 
     it('allows the Vite dev server origin while not packaged', async () => {
-      registerIpcHandler(appGetVersion, () => '1.2.3');
+      registerIpcHandler(appGetVersion, ['panels'], () => '1.2.3');
 
       const reply = await invoke(
         appGetVersion.channel,
@@ -127,7 +137,7 @@ describe('registerIpcHandler', () => {
       const handler = vi.fn((_event: IpcMainInvokeEvent, text: string) =>
         text.toUpperCase(),
       );
-      registerIpcHandler(echo, handler);
+      registerIpcHandler(echo, ['panels'], handler);
       const event = eventFrom(frame(APP_URL));
 
       const reply = await invoke(echo.channel, event, 'hi');
@@ -150,7 +160,7 @@ describe('registerIpcHandler', () => {
       'answers { ok: false } without running the handler when %s',
       async (_label, senderFrame) => {
         const handler = vi.fn(() => '1.2.3');
-        registerIpcHandler(appGetVersion, handler);
+        registerIpcHandler(appGetVersion, ['panels'], handler);
 
         const reply = await invoke(
           appGetVersion.channel,
@@ -177,7 +187,7 @@ describe('registerIpcHandler', () => {
     it('rejects the dev server origin once packaged', async () => {
       fake.app.isPackaged = true;
       const handler = vi.fn(() => '1.2.3');
-      registerIpcHandler(appGetVersion, handler);
+      registerIpcHandler(appGetVersion, ['panels'], handler);
 
       const reply = await invoke(
         appGetVersion.channel,
@@ -195,7 +205,7 @@ describe('registerIpcHandler', () => {
     it('rejects every http origin when no dev server is defined', async () => {
       vi.unstubAllGlobals();
       const handler = vi.fn(() => '1.2.3');
-      registerIpcHandler(appGetVersion, handler);
+      registerIpcHandler(appGetVersion, ['panels'], handler);
 
       const reply = await invoke(
         appGetVersion.channel,
@@ -208,7 +218,7 @@ describe('registerIpcHandler', () => {
 
     it('still allows app:// once packaged', async () => {
       fake.app.isPackaged = true;
-      registerIpcHandler(appGetVersion, () => '1.2.3');
+      registerIpcHandler(appGetVersion, ['panels'], () => '1.2.3');
 
       const reply = await invoke(
         appGetVersion.channel,
@@ -220,7 +230,7 @@ describe('registerIpcHandler', () => {
 
     it('rejects a frame that was disposed mid-call', async () => {
       const handler = vi.fn(() => '1.2.3');
-      registerIpcHandler(appGetVersion, handler);
+      registerIpcHandler(appGetVersion, ['panels'], handler);
       const disposed = {
         get parent() {
           throw new Error('Render frame was disposed');
@@ -238,6 +248,192 @@ describe('registerIpcHandler', () => {
     });
   });
 
+  describe('channels limited by renderer (B7)', () => {
+    type Renderer = 'panels' | 'overlay';
+    const SENDERS: readonly (readonly [string, Renderer, string])[] = [
+      ['app://panels', 'panels', `${APP_URL}#/settings`],
+      ['app://overlay', 'overlay', OVERLAY_URL],
+      ['the panels dev server', 'panels', `${DEV_SERVER_URL}/#/settings`],
+      ['the overlay dev server', 'overlay', `${OVERLAY_DEV_SERVER_URL}/`],
+    ];
+    const LISTS: readonly (readonly [Renderer, ...Renderer[]])[] = [
+      ['panels'],
+      ['overlay'],
+      ['panels', 'overlay'],
+    ];
+    const CASES = LISTS.flatMap((list) =>
+      SENDERS.map(
+        ([label, renderer, url]) =>
+          [
+            list.join(' + '),
+            label,
+            url,
+            list,
+            list.includes(renderer),
+          ] as const,
+      ),
+    );
+
+    it.each(CASES)(
+      'a channel for %s, called from %s (%s)',
+      async (_list, _label, url, list, allowed) => {
+        const handler = vi.fn(() => '1.2.3');
+        registerIpcHandler(appGetVersion, list, handler);
+
+        const reply = await invoke(
+          appGetVersion.channel,
+          eventFrom(frame(url)),
+        );
+
+        if (allowed) {
+          expect(reply).toStrictEqual({ ok: true, data: '1.2.3' });
+          expect(handler).toHaveBeenCalledOnce();
+          expect(warn).not.toHaveBeenCalled();
+          return;
+        }
+        expect(reply).toStrictEqual({
+          ok: false,
+          error: { code: 'sender-rejected', message: 'sender is not allowed' },
+        });
+        expect(handler).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledOnce();
+        const logged = runLogLines();
+        expect(logged).toHaveLength(1);
+        expect(logged[0]?.[0]).toBe('ipc');
+        expect(logged[0]?.[1]).toMatch(
+          /^app:get-version: sender rejected: renderer (panels|overlay) may not use this channel$/,
+        );
+      },
+    );
+
+    it.each([
+      ['another app:// host', 'app://secret/index.html'],
+      ['an app:// host with a port', 'app://panels:1/index.html'],
+      ['a pack:// page', 'pack://some-pack/1.0.0/index.html'],
+    ])(
+      'rejects %s on a channel open to both renderers',
+      async (_label, url) => {
+        const handler = vi.fn(() => '1.2.3');
+        registerIpcHandler(appGetVersion, ['panels', 'overlay'], handler);
+
+        const reply = await invoke(
+          appGetVersion.channel,
+          eventFrom(frame(url)),
+        );
+
+        expect(reply).toMatchObject({
+          ok: false,
+          error: { code: 'sender-rejected' },
+        });
+        expect(handler).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects the overlay dev server once packaged', async () => {
+      fake.app.isPackaged = true;
+      const handler = vi.fn(() => '1.2.3');
+      registerIpcHandler(appGetVersion, ['overlay'], handler);
+
+      const reply = await invoke(
+        appGetVersion.channel,
+        eventFrom(frame(`${OVERLAY_DEV_SERVER_URL}/`)),
+      );
+
+      expect(reply).toMatchObject({
+        ok: false,
+        error: { code: 'sender-rejected' },
+      });
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    describe("the stage's channels", () => {
+      const SETTINGS_STATE = { rev: 0, values: { canvasDisplayId: null } };
+      const SNAPSHOT = {
+        rev: 0,
+        view: {
+          settings: SETTINGS_STATE,
+          displays: [],
+          canvas: null,
+          power: { suspended: false, locked: false },
+        },
+      };
+      const PATCH = {
+        baseRev: 0,
+        ops: [{ op: 'set', field: 'canvasDisplayId', value: 5 }],
+      };
+      const READY = { ok: true, renderer: 'webgl', width: 1512, height: 982 };
+
+      let store: {
+        get: ReturnType<typeof vi.fn>;
+        patch: ReturnType<typeof vi.fn>;
+      };
+      let hub: { subscribe: ReturnType<typeof vi.fn> };
+
+      beforeEach(() => {
+        store = {
+          get: vi.fn(() => SETTINGS_STATE),
+          patch: vi.fn(() => ({ rev: 1, merged: false })),
+        };
+        hub = { subscribe: vi.fn(() => SNAPSHOT) };
+        registerSettingsHandlers(store as never);
+        registerStageViewHandlers(hub as never);
+        registerCanvasReadyHandler();
+      });
+
+      /** Whether the channel's own handler ran. */
+      function ran(channel: string): boolean {
+        switch (channel) {
+          case 'settings:get':
+            return store.get.mock.calls.length > 0;
+          case 'settings:patch':
+            return store.patch.mock.calls.length > 0;
+          case 'stage-view:subscribe':
+            return hub.subscribe.mock.calls.length > 0;
+          default:
+            return runLogLines().some(
+              ([category, message]) =>
+                category === 'windows' && message?.startsWith('canvas ready'),
+            );
+        }
+      }
+
+      it.each([
+        ['settings:get', 'panels', true, []],
+        ['settings:get', 'overlay', false, []],
+        ['settings:patch', 'panels', true, [PATCH]],
+        ['settings:patch', 'overlay', false, [PATCH]],
+        ['stage-view:subscribe', 'panels', true, []],
+        ['stage-view:subscribe', 'overlay', true, []],
+        ['canvas:ready', 'panels', false, [READY]],
+        ['canvas:ready', 'overlay', true, [READY]],
+      ] as const)(
+        '%s from %s: allowed %s',
+        async (channel, renderer, allowed, args) => {
+          for (const url of [
+            renderer === 'panels' ? APP_URL : OVERLAY_URL,
+            renderer === 'panels' ? DEV_SERVER_URL : OVERLAY_DEV_SERVER_URL,
+          ]) {
+            const event = {
+              senderFrame: frame(url),
+              sender: { id: 1 },
+            } as unknown as IpcMainInvokeEvent;
+
+            const reply = (await invoke(channel, event, ...args)) as {
+              ok: boolean;
+              error?: { code: string };
+            };
+
+            expect(reply.ok, url).toBe(allowed);
+            expect(ran(channel), url).toBe(allowed);
+            if (!allowed) {
+              expect(reply.error?.code).toBe('sender-rejected');
+            }
+          }
+        },
+      );
+    });
+  });
+
   describe('input that does not match the schema', () => {
     it.each([
       ['a number instead of a string', [42]],
@@ -249,7 +445,7 @@ describe('registerIpcHandler', () => {
         const handler = vi.fn(
           (_event: IpcMainInvokeEvent, text: string) => text,
         );
-        registerIpcHandler(echo, handler);
+        registerIpcHandler(echo, ['panels'], handler);
 
         const reply = await invoke(
           echo.channel,
@@ -269,7 +465,7 @@ describe('registerIpcHandler', () => {
     );
 
     it('rejects an argument sent to app:get-version', async () => {
-      registerIpcHandler(appGetVersion, () => '1.2.3');
+      registerIpcHandler(appGetVersion, ['panels'], () => '1.2.3');
 
       const reply = await invoke(
         appGetVersion.channel,
@@ -294,7 +490,7 @@ describe('registerIpcHandler', () => {
         output: z.string(),
       } as const;
       const handler = vi.fn(() => 'x');
-      registerIpcHandler(throwing, handler);
+      registerIpcHandler(throwing, ['panels'], handler);
 
       const reply = await invoke(
         throwing.channel,
@@ -333,7 +529,7 @@ describe('registerIpcHandler', () => {
     ])(
       'answers handler-failed without leaking the error when it %s',
       async (_label, handler) => {
-        registerIpcHandler(appGetVersion, handler);
+        registerIpcHandler(appGetVersion, ['panels'], handler);
 
         const reply = await invoke(
           appGetVersion.channel,
@@ -362,7 +558,7 @@ describe('registerIpcHandler', () => {
     );
 
     it('answers invalid-output when the handler returns data the schema rejects', async () => {
-      registerIpcHandler(appGetVersion, () => '');
+      registerIpcHandler(appGetVersion, ['panels'], () => '');
 
       const reply = await invoke(
         appGetVersion.channel,
@@ -384,7 +580,7 @@ describe('registerIpcHandler', () => {
           throw new Error('secret in transform');
         }),
       } as const;
-      registerIpcHandler(throwing, () => 'x');
+      registerIpcHandler(throwing, ['panels'], () => 'x');
 
       const reply = await invoke(throwing.channel, eventFrom(frame(APP_URL)));
 
@@ -401,7 +597,11 @@ describe('registerIpcHandler', () => {
 
     it('answers handler-failed when the handler never settles', async () => {
       vi.useFakeTimers();
-      registerIpcHandler(appGetVersion, () => new Promise<string>(() => {}));
+      registerIpcHandler(
+        appGetVersion,
+        ['panels'],
+        () => new Promise<string>(() => {}),
+      );
       let settled = false;
 
       const pending = invoke(
@@ -433,6 +633,7 @@ describe('registerIpcHandler', () => {
       expect(() =>
         registerIpcHandler(
           { channel, input: z.tuple([]), output: z.string() },
+          ['panels'],
           () => '1.2.3',
         ),
       ).toThrow(/<domain>:<action>/);

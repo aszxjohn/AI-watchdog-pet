@@ -9,7 +9,7 @@ import {
   type IpcResult,
 } from '../../shared/ipc';
 import { errorCode, logEvent } from '../log/run-log';
-import { frameRejection } from './origin';
+import { frameRejection, type ChannelRenderers } from './origin';
 
 export type IpcHandler<C extends IpcContract> = (
   event: IpcMainInvokeEvent,
@@ -21,8 +21,10 @@ export type IpcHandler<C extends IpcContract> = (
  * Conventions: IPC). Every call is checked in this order, and the first
  * failure answers `{ ok: false, error }` without running the handler:
  *
- * 1. the sender is a live, top-level frame whose URL is allowed (`app://`,
- *    or the Vite dev server origin while `!app.isPackaged`; see origin.ts);
+ * 1. the sender is a live, top-level frame of one of `renderers` (its page
+ *    is `app://<renderer>/`, or that renderer's Vite dev server while
+ *    `!app.isPackaged`; see origin.ts). Any other renderer, panels or
+ *    overlay included, gets `sender-rejected`;
  * 2. the arguments match `contract.input` (a schema that throws counts as a
  *    mismatch);
  * 3. the handler runs and settles within IPC_HANDLER_TIMEOUT_MS; a throw,
@@ -38,6 +40,7 @@ export type IpcHandler<C extends IpcContract> = (
  */
 export function registerIpcHandler<C extends IpcContract>(
   contract: C,
+  renderers: ChannelRenderers,
   handler: IpcHandler<C>,
 ): void {
   const { channel } = contract;
@@ -53,7 +56,7 @@ export function registerIpcHandler<C extends IpcContract>(
       event: IpcMainInvokeEvent,
       ...args: unknown[]
     ): Promise<IpcResult<IpcData<C>>> => {
-      const rejection = senderRejection(event);
+      const rejection = senderRejection(event, renderers);
       if (rejection !== null) {
         logEvent('ipc', `${channel}: sender rejected: ${rejection}`, 'warn');
         return ipcFailure('sender-rejected', 'sender is not allowed');
@@ -160,12 +163,15 @@ async function withTimeout<T>(
 }
 
 /** Why the sender is refused, or null when it is allowed. Never throws. */
-function senderRejection(event: IpcMainInvokeEvent): string | null {
+function senderRejection(
+  event: IpcMainInvokeEvent,
+  renderers: ChannelRenderers,
+): string | null {
   let frame: IpcMainInvokeEvent['senderFrame'];
   try {
     frame = event.senderFrame;
   } catch {
     return 'senderFrame is no longer available';
   }
-  return frameRejection(frame);
+  return frameRejection(frame, renderers);
 }

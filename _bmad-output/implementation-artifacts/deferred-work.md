@@ -26,8 +26,8 @@
   summary: IPC 只有 invoke，沒有 main→renderer 推送的契約與驗證（B6）（已解決）
   evidence: Story 1.4 建 StageView 推送時，以 `src/shared` 同一套 schema 加 main 端 send 與 preload 端 subscribe。已由 Story 1.4 的 `IpcPushContract`、`src/main/ipc/push.ts` 與 `src/preload/stage-view.ts` 完成。
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-3-shared-contracts-ipc-ci.md`
-  summary: IPC 允許清單不分通道、dev server 來源只認 main_window 且暫放在 register.ts（B7）
-  evidence: Story 1.5／1.6 建立 overlay 視窗時，把來源判斷搬到 `main/windows`，並依視窗限制可呼叫的通道。Story 1.4 已先把來源判斷從 `register.ts` 抽到 `src/main/ipc/origin.ts`，invoke 與推送共用。Story 1.5 已把環境判斷與來源規則集中到 `src/main/windows/environment.ts`；依視窗限制通道仍待 Story 1.6 建立 overlay 視窗時處理。
+  summary: IPC 允許清單不分通道、dev server 來源只認 main_window 且暫放在 register.ts（B7）（已解決）
+  evidence: Story 1.5／1.6 建立 overlay 視窗時，把來源判斷搬到 `main/windows`，並依視窗限制可呼叫的通道。Story 1.4 已先把來源判斷從 `register.ts` 抽到 `src/main/ipc/origin.ts`，invoke 與推送共用。Story 1.5 已把環境判斷與來源規則集中到 `src/main/windows/environment.ts`。Story 1.6 完成依視窗限制：`registerIpcHandler`／`pushToRenderer` 必填 `renderers`，`environment.ts` 的 `rendererOfUrl` 認 `app://panels`、`app://overlay` 與兩個 dev server，其他 renderer 一律 `sender-rejected`。
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-3-shared-contracts-ipc-ci.md`
   summary: preload 以不含 DOM 的 lib 做型別檢查（B18a）
   evidence: preload 開始使用 DOM API 時，為 preload 開獨立 tsconfig（DOM＋Electron 型別）。
@@ -49,3 +49,12 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-5-tray-entry-panel-window.md`
   summary: 面板的 React 元件（錯誤訊息、訂閱的掛載與卸載、`aria-current`）沒有元件層級的自動測試
   evidence: Vitest 目前是 node 環境，元件測試需要 jsdom 或 happy-dom 等新套件；Epic 2 面板有實際內容時決定是否引入。hash 切頁邏輯已抽成純函式並測試。
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-transparent-canvas.md`
+  summary: 畫布換到縮放比例不同的螢幕時，PixiJS 的 `resolution` 不會跟著變
+  evidence: overlay 只在初始化時取 `devicePixelRatio`；目前畫布沒有內容，看不出差別。Story 3.x 開始畫角色時，依 StageView `canvas.scaleFactor` 調整 renderer 的 resolution。
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-transparent-canvas.md`
+  summary: Windows／Linux 的穿透、透明與跨 DPI 螢幕 `setBounds` 只有單元測試
+  evidence: 開發代理只能在 macOS 實測；Windows 上 Electron 在不同 DPI 螢幕間 `setBounds` 有已知的大小偏差問題。需在 Windows 實機確認，Story 2.3 的端到端測試可補 `getBounds()` 檢查。
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-transparent-canvas.md`
+  summary: 畫布沒有處理 GPU 行程當掉、WebGL context lost／restored、renderer 無回應（B6）
+  evidence: 目前只處理 renderer 行程當掉；overlay 以 `autoStart: false` 只畫一次，context 恢復後也不會重畫。Story 3.x 有節拍與繪製時，一起設計這些情況的偵測、記錄與重建。

@@ -145,6 +145,41 @@ export const stageViewSubscribe = {
   output: stageViewSnapshotSchema,
 } as const satisfies IpcContract;
 
+/** Longest failure reason `canvas:ready` carries, in UTF-16 code units. */
+export const CANVAS_READY_REASON_MAX_LENGTH = 200;
+
+/** The renderers PixiJS can pick; English codes for the run log. */
+export const canvasRendererSchema = z.enum(['webgl', 'webgpu', 'canvas']);
+
+/**
+ * What the overlay reports once its canvas has initialised: the renderer it
+ * got and the world size it sees (DIP), or a short reason it failed.
+ */
+export const canvasReadyReportSchema = z.discriminatedUnion('ok', [
+  z.strictObject({
+    ok: z.literal(true),
+    renderer: canvasRendererSchema,
+    width: z.int().nonnegative(),
+    height: z.int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    reason: z.string().min(1).max(CANVAS_READY_REASON_MAX_LENGTH),
+  }),
+]);
+
+export type CanvasReadyReport = z.infer<typeof canvasReadyReportSchema>;
+
+/**
+ * `canvas:ready`: the overlay says once per page load whether its canvas
+ * initialised; main writes it to the run log. Answers null.
+ */
+export const canvasReady = {
+  channel: 'canvas:ready',
+  input: z.tuple([canvasReadyReportSchema]),
+  output: z.null(),
+} as const satisfies IpcContract;
+
 // Push channels (main to renderer).
 
 /** `stage-view:delta`: the sections that changed since the previous rev. */

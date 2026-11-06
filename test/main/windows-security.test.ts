@@ -14,15 +14,17 @@ import {
 vi.mock('electron', () => import('../helpers/fake-electron'));
 
 const DEV_ORIGIN = 'http://localhost:5173';
+const OVERLAY_DEV_ORIGIN = 'http://localhost:5174';
 const PACKAGED: WindowsEnvironment = {
   packaged: true,
-  devServerUrl: undefined,
-  devServerOrigin: undefined,
+  devServers: { panels: undefined, overlay: undefined },
 };
 const DEV: WindowsEnvironment = {
   packaged: false,
-  devServerUrl: DEV_ORIGIN,
-  devServerOrigin: DEV_ORIGIN,
+  devServers: {
+    panels: { url: DEV_ORIGIN, origin: DEV_ORIGIN },
+    overlay: { url: OVERLAY_DEV_ORIGIN, origin: OVERLAY_DEV_ORIGIN },
+  },
 };
 
 let warn: ReturnType<typeof vi.spyOn>;
@@ -115,9 +117,10 @@ describe('guardWebContents: navigation', () => {
     ['app://panels/index.html#/packs', false, false],
     ['pack://_stage/sandbox.html', false, false],
     [`${DEV_ORIGIN}/index.html`, true, false],
+    [`${OVERLAY_DEV_ORIGIN}/index.html`, true, false],
     ['https://example.com/', true, true],
     ['file:///etc/passwd', true, true],
-    ['http://localhost:5174/', true, true],
+    ['http://localhost:5175/', true, true],
   ])('%s: blocked when packaged %s, in dev %s', (url, packaged, dev) => {
     for (const [env, blocked] of [
       [PACKAGED, packaged],
@@ -198,6 +201,9 @@ describe('createRequestFilter', () => {
     ['devtools://devtools/bundled/inspector.html', false, false],
     [`${DEV_ORIGIN}/@vite/client`, true, false],
     ['ws://localhost:5173/?token=1', true, false],
+    [`${OVERLAY_DEV_ORIGIN}/main.ts`, true, false],
+    ['ws://localhost:5174/?token=1', true, false],
+    ['http://localhost:5175/', true, true],
     ['https://example.com/x.js', true, true],
     ['wss://example.com/socket', true, true],
     ['http://127.0.0.1:5173/', true, true],
@@ -245,6 +251,17 @@ describe('devCspHeaders', () => {
     });
   });
 
+  it("adds the overlay dev server's own CSP to its responses", () => {
+    expect(
+      devCspHeaders(
+        { url: `${OVERLAY_DEV_ORIGIN}/`, responseHeaders: {} },
+        DEV,
+      ),
+    ).toStrictEqual({
+      'Content-Security-Policy': [devServerCsp(OVERLAY_DEV_ORIGIN)],
+    });
+  });
+
   it('handles a response with no headers', () => {
     expect(devCspHeaders({ url: `${DEV_ORIGIN}/x.js` }, DEV)).toStrictEqual({
       'Content-Security-Policy': [devServerCsp(DEV_ORIGIN)],
@@ -253,7 +270,8 @@ describe('devCspHeaders', () => {
 
   it.each([
     ['app://panels/index.html'],
-    ['http://localhost:5174/'],
+    ['app://overlay/index.html'],
+    ['http://localhost:5175/'],
     ['https://example.com/'],
     ['not a url'],
   ])('leaves %s alone', (url) => {
@@ -370,5 +388,26 @@ describe('installSessionGuards', () => {
       ],
       [{}],
     ]);
+  });
+
+  it('adds the dev CSP header when only the overlay has a dev server', () => {
+    const session = fakeSession();
+    installSessionGuards(session as unknown as GuardedSession, {
+      packaged: false,
+      devServers: {
+        panels: undefined,
+        overlay: { url: OVERLAY_DEV_ORIGIN, origin: OVERLAY_DEV_ORIGIN },
+      },
+    });
+    expect(session.webRequest.onHeadersReceived).toHaveBeenCalledOnce();
+  });
+
+  it('adds no dev CSP header when there is no dev server', () => {
+    const session = fakeSession();
+    installSessionGuards(session as unknown as GuardedSession, {
+      packaged: false,
+      devServers: { panels: undefined, overlay: undefined },
+    });
+    expect(session.webRequest.onHeadersReceived).not.toHaveBeenCalled();
   });
 });

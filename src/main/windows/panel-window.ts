@@ -73,7 +73,7 @@ export function panelWindowOptions(
  */
 export function panelUrl(page: PanelPageId, env: WindowsEnvironment): string {
   const url = new URL(
-    env.devServerUrl ?? `${APP_SCHEME}://${PANELS_HOST}/index.html`,
+    env.devServers.panels?.url ?? `${APP_SCHEME}://${PANELS_HOST}/index.html`,
   );
   url.hash = panelPageHash(page);
   return url.toString();

@@ -1,7 +1,7 @@
 /**
  * The runtime half of AD-24 and NFR5 for every window and the session they
  * share. (The static half is lint and dependency-cruiser; the per-window
- * webPreferences are in panel-window.ts.)
+ * webPreferences are in panel-window.ts and canvas-window.ts.)
  *
  * - Every `window` webContents: `window.open` and `target=_blank` are
  *   denied, a frame may only navigate where environment.ts allows, and no
@@ -9,8 +9,8 @@
  * - The default session: every permission request and permission check is
  *   denied, and so is every device (HID, serial, USB) permission; every request
  *   to a URL environment.ts does not allow is cancelled, and each such
- *   origin is logged once; while not packaged, the dev server's responses
- *   get the dev CSP header (csp.ts).
+ *   origin is logged once; while not packaged, each dev server's (panels,
+ *   overlay) responses get the dev CSP header for that origin (csp.ts).
  *
  * The decisions are pure functions over a WindowsEnvironment; the install
  * functions only wire them to Electron.
@@ -20,6 +20,7 @@ import { logEvent } from '../log/run-log';
 import { devServerCsp } from './csp';
 import {
   describeUrlOrigin,
+  devServersOf,
   isAllowedNavigationUrl,
   isAllowedRequestUrl,
   type WindowsEnvironment,
@@ -109,9 +110,9 @@ export function createRequestFilter(
 }
 
 /**
- * Response headers for a dev server response, with the dev CSP in place of
- * any CSP it had; undefined (leave the response alone) for any other URL or
- * when there is no dev server.
+ * Response headers for a response from one of the dev servers, with that
+ * server's dev CSP in place of any CSP it had; undefined (leave the response
+ * alone) for any other URL or when there is no dev server.
  */
 export function devCspHeaders(
   details: {
@@ -120,7 +121,7 @@ export function devCspHeaders(
   },
   env: WindowsEnvironment,
 ): Record<string, string[]> | undefined {
-  if (env.packaged || env.devServerOrigin === undefined) {
+  if (env.packaged) {
     return undefined;
   }
   let origin: string;
@@ -129,7 +130,7 @@ export function devCspHeaders(
   } catch {
     return undefined;
   }
-  if (origin !== env.devServerOrigin) {
+  if (!devServersOf(env).some((server) => server.origin === origin)) {
     return undefined;
   }
   const headers: Record<string, string[]> = {};
@@ -138,7 +139,7 @@ export function devCspHeaders(
       headers[name] = Array.isArray(value) ? value : [value];
     }
   }
-  headers['Content-Security-Policy'] = [devServerCsp(env.devServerOrigin)];
+  headers['Content-Security-Policy'] = [devServerCsp(origin)];
   return headers;
 }
 
@@ -171,7 +172,7 @@ export function installSessionGuards(
     callback(filter(details));
   });
 
-  if (!env.packaged && env.devServerOrigin !== undefined) {
+  if (!env.packaged && devServersOf(env).length > 0) {
     session.webRequest.onHeadersReceived((details, callback) => {
       const responseHeaders = devCspHeaders(details, env);
       callback(responseHeaders === undefined ? {} : { responseHeaders });

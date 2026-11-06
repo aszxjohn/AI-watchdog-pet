@@ -4,7 +4,8 @@
  * main/packs (Story 3.2).
  *
  * `app://<host>/<path>` maps a known host to one Vite output folder:
- * `app://panels/index.html` is `.vite/renderer/panels/index.html`. Anything
+ * `app://panels/index.html` is `.vite/renderer/panels/index.html`, and
+ * `app://overlay/index.html` is `.vite/renderer/overlay/index.html`. Anything
  * that does not name an existing file inside that folder, with a known file
  * type, is answered 404 without reading anything: unknown hosts, `..` or `.`
  * segments (raw or percent-encoded), encoded slashes or backslashes, NUL,
@@ -59,16 +60,38 @@ export function registerSchemes(): void {
 /** The `app://` host the panels page is served from. */
 export const PANELS_HOST = 'panels';
 
+/** The `app://` host the overlay (canvas) page is served from. */
+export const OVERLAY_HOST = 'overlay';
+
+/** `.vite/renderer/<name>` next to the build folder main.cjs runs from. */
+function rendererDir(buildDir: string, forgeName: unknown, host: string) {
+  const name =
+    typeof forgeName === 'string' && forgeName !== '' ? forgeName : host;
+  return path.join(buildDir, '..', 'renderer', name);
+}
+
 /**
  * Folder of the panels Vite build, given the folder main.cjs runs from
  * (`.vite/build`): `.vite/renderer/<PANELS_VITE_NAME>`.
  */
 export function panelsRendererDir(buildDir: string): string {
-  const name =
-    typeof PANELS_VITE_NAME === 'string' && PANELS_VITE_NAME !== ''
-      ? PANELS_VITE_NAME
-      : PANELS_HOST;
-  return path.join(buildDir, '..', 'renderer', name);
+  return rendererDir(
+    buildDir,
+    typeof PANELS_VITE_NAME === 'undefined' ? undefined : PANELS_VITE_NAME,
+    PANELS_HOST,
+  );
+}
+
+/**
+ * Folder of the overlay Vite build, given the folder main.cjs runs from
+ * (`.vite/build`): `.vite/renderer/<OVERLAY_VITE_NAME>`.
+ */
+export function overlayRendererDir(buildDir: string): string {
+  return rendererDir(
+    buildDir,
+    typeof OVERLAY_VITE_NAME === 'undefined' ? undefined : OVERLAY_VITE_NAME,
+    OVERLAY_HOST,
+  );
 }
 
 /** Content types served, by lower-case extension; others are 404. */
@@ -213,7 +236,10 @@ export function handleAppProtocol(buildDir: string): void {
   protocol.handle(
     APP_SCHEME,
     createAppProtocolHandler({
-      roots: { [PANELS_HOST]: panelsRendererDir(buildDir) },
+      roots: {
+        [PANELS_HOST]: panelsRendererDir(buildDir),
+        [OVERLAY_HOST]: overlayRendererDir(buildDir),
+      },
     }),
   );
 }

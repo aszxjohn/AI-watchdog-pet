@@ -13,7 +13,7 @@ import {
   type IpcPushContract,
 } from '../../shared/ipc';
 import { errorCode, logEvent } from '../log/run-log';
-import { frameRejection } from './origin';
+import { frameRejection, type ChannelRenderers } from './origin';
 
 /** The parts of a WebContents a push touches. */
 export interface PushTarget {
@@ -28,7 +28,10 @@ export type PushOutcome =
   | 'sent'
   /** The webContents is gone; drop it from any subscriber list. */
   | 'destroyed'
-  /** Its top-level frame is not an allowed page (now); nothing was sent. */
+  /**
+   * Its top-level frame is not (now) a page of a renderer the push accepts;
+   * nothing was sent.
+   */
   | 'rejected'
   /** The contract or payload is wrong (a bug in main); nothing was sent. */
   | 'invalid'
@@ -39,11 +42,13 @@ export type PushOutcome =
  * Sends `payload` on `contract.channel` to `target`, after checking, in this
  * order, that the channel name is `<domain>:<action>`, the payload matches
  * `contract.payload`, the target is not destroyed, and its top-level frame
- * is still an allowed page. Never throws.
+ * is still a page of one of `renderers` (the same rule as invoke handlers,
+ * origin.ts). Never throws.
  */
 export function pushToRenderer<C extends IpcPushContract>(
   target: PushTarget,
   contract: C,
+  renderers: ChannelRenderers,
   payload: IpcPayload<C>,
 ): PushOutcome {
   const { channel } = contract;
@@ -82,7 +87,7 @@ export function pushToRenderer<C extends IpcPushContract>(
     if (target.isDestroyed()) {
       return 'destroyed';
     }
-    rejection = frameRejection(target.mainFrame);
+    rejection = frameRejection(target.mainFrame, renderers);
   } catch {
     // mainFrame throws once the webContents is being torn down.
     return 'destroyed';
