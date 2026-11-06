@@ -14,3 +14,15 @@ export const PRELOAD_API_KEY = 'awp';
  * handler that never settles cannot leave a renderer waiting forever.
  */
 export const IPC_HANDLER_TIMEOUT_MS = 10_000;
+
+/**
+ * How long main/settings waits, from the first change not yet on disk, before
+ * writing settings.json once for every change made in that window.
+ */
+export const SETTINGS_FLUSH_DEBOUNCE_MS = 500;
+
+/** Run log files whose hour started longer ago than this are deleted. */
+export const RUN_LOG_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/** Longest run log line, in UTF-16 code units; longer content is cut. */
+export const RUN_LOG_MAX_LINE_LENGTH = 4000;

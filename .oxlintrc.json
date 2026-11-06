@@ -15,12 +15,13 @@
   },
   "overrides": [
     {
-      // Every src file except the three that own zod / ipcMain / ipcRenderer.
+      // Every src file except the ones that own zod / ipcMain / ipcRenderer.
       "files": ["src/**"],
       "excludeFiles": [
         "src/shared/zod-setup.ts",
         "src/main/ipc/register.ts",
-        "src/preload/invoke.ts"
+        "src/preload/invoke.ts",
+        "src/preload/stage-view.ts"
       ],
       "rules": {
         "no-restricted-imports": [
@@ -35,7 +36,7 @@
               {
                 "name": "electron",
                 "importNames": ["ipcRenderer"],
-                "message": "Invoke IPC only through src/preload/invoke.ts (AD-24)."
+                "message": "Invoke IPC only through src/preload/invoke.ts, and listen for StageView pushes only in src/preload/stage-view.ts (AD-20, AD-24)."
               },
               {
                 "name": "electron",
@@ -80,7 +81,7 @@
               {
                 "name": "electron",
                 "importNames": ["ipcRenderer"],
-                "message": "Invoke IPC only through src/preload/invoke.ts (AD-24)."
+                "message": "Invoke IPC only through src/preload/invoke.ts, and listen for StageView pushes only in src/preload/stage-view.ts (AD-20, AD-24)."
               },
               {
                 "name": "electron",
@@ -100,6 +101,36 @@
     },
     {
       "files": ["src/preload/invoke.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "electron",
+                "importNames": ["ipcMain"],
+                "message": "Register IPC handlers only through src/main/ipc/register.ts (AD-24)."
+              },
+              {
+                "name": "electron",
+                "importNames": ["net"],
+                "message": "The app never makes network requests (AD-26)."
+              }
+            ],
+            "patterns": [
+              {
+                "group": ["zod", "zod/*"],
+                "message": "Import z from src/shared/zod-setup so jitless is set before any schema is built (AD-24)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // The StageView subscription: may use ipcRenderer (to listen for
+      // stage-view:delta), nothing else that the first override forbids.
+      "files": ["src/preload/stage-view.ts"],
       "rules": {
         "no-restricted-imports": [
           "error",

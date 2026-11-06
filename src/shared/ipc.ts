@@ -1,3 +1,9 @@
+import {
+  settingsPatchResultSchema,
+  settingsPatchSchema,
+  settingsStateSchema,
+} from './settings';
+import { stageViewDeltaSchema, stageViewSnapshotSchema } from './stage-view';
 import { z } from './zod-setup';
 
 /**
@@ -72,6 +78,20 @@ export type IpcArgs<C extends IpcContract> =
 /** Data an invoke resolves with on success. */
 export type IpcData<C extends IpcContract> = z.output<C['output']>;
 
+/**
+ * One push channel, main to renderer. Main only ever pushes StageView
+ * (AD-20), through src/main/ipc/push.ts, which validates `payload` before
+ * sending; the preload validates it again on receipt. The channel name
+ * follows the same `<domain>:<action>` rule as invoke channels.
+ */
+export interface IpcPushContract {
+  readonly channel: string;
+  readonly payload: z.ZodType;
+}
+
+/** What a push carries after `payload` validation. */
+export type IpcPayload<C extends IpcPushContract> = z.output<C['payload']>;
+
 /** Validates a reply received from main against the channel's contract. */
 export function parseIpcResult<C extends IpcContract>(
   contract: C,
@@ -89,7 +109,7 @@ export function parseIpcResult<C extends IpcContract>(
 
 // ---------------------------------------------------------------------------
 // Channels. Each contract is defined here once and used by both main
-// (registerIpcHandler) and the preloads.
+// (registerIpcHandler, pushToRenderer) and the preloads.
 
 /** `app:get-version`: the app's version string; takes no arguments. */
 export const appGetVersion = {
@@ -97,3 +117,38 @@ export const appGetVersion = {
   input: z.tuple([]),
   output: z.string().min(1),
 } as const satisfies IpcContract;
+
+/** `settings:get`: the current settings values and their rev. */
+export const settingsGet = {
+  channel: 'settings:get',
+  input: z.tuple([]),
+  output: settingsStateSchema,
+} as const satisfies IpcContract;
+
+/**
+ * `settings:patch`: applies field operations to the current values (AD-23)
+ * and answers the new rev and whether the patch was merged.
+ */
+export const settingsPatch = {
+  channel: 'settings:patch',
+  input: z.tuple([settingsPatchSchema]),
+  output: settingsPatchResultSchema,
+} as const satisfies IpcContract;
+
+/**
+ * `stage-view:subscribe`: registers the calling renderer for
+ * `stage-view:delta` pushes (once per webContents) and answers a snapshot.
+ */
+export const stageViewSubscribe = {
+  channel: 'stage-view:subscribe',
+  input: z.tuple([]),
+  output: stageViewSnapshotSchema,
+} as const satisfies IpcContract;
+
+// Push channels (main to renderer).
+
+/** `stage-view:delta`: the sections that changed since the previous rev. */
+export const stageViewDelta = {
+  channel: 'stage-view:delta',
+  payload: stageViewDeltaSchema,
+} as const satisfies IpcPushContract;

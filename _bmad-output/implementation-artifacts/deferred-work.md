@@ -23,11 +23,11 @@
   summary: preload bundle 名稱與 main 的期待沒有 CI 一致性檢查，CI 也沒有 build 步驟（VG3、B14）
   evidence: Story 1.5 新增 overlay 視窗時集中 bundle 名稱；Story 2.3 建 Playwright `_electron` 端到端測試時在 CI 一併建置並檢查 preload 產物只 require `electron`。
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-3-shared-contracts-ipc-ci.md`
-  summary: IPC 只有 invoke，沒有 main→renderer 推送的契約與驗證（B6）
-  evidence: Story 1.4 建 StageView 推送時，以 `src/shared` 同一套 schema 加 main 端 send 與 preload 端 subscribe。
+  summary: IPC 只有 invoke，沒有 main→renderer 推送的契約與驗證（B6）（已解決）
+  evidence: Story 1.4 建 StageView 推送時，以 `src/shared` 同一套 schema 加 main 端 send 與 preload 端 subscribe。已由 Story 1.4 的 `IpcPushContract`、`src/main/ipc/push.ts` 與 `src/preload/stage-view.ts` 完成。
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-3-shared-contracts-ipc-ci.md`
   summary: IPC 允許清單不分通道、dev server 來源只認 main_window 且暫放在 register.ts（B7）
-  evidence: Story 1.5／1.6 建立 overlay 視窗時，把來源判斷搬到 `main/windows`，並依視窗限制可呼叫的通道。
+  evidence: Story 1.5／1.6 建立 overlay 視窗時，把來源判斷搬到 `main/windows`，並依視窗限制可呼叫的通道。Story 1.4 已先把來源判斷從 `register.ts` 抽到 `src/main/ipc/origin.ts`，invoke 與推送共用。
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-3-shared-contracts-ipc-ci.md`
   summary: preload 以不含 DOM 的 lib 做型別檢查（B18a）
   evidence: preload 開始使用 DOM API 時，為 preload 開獨立 tsconfig（DOM＋Electron 型別）。
@@ -38,5 +38,8 @@
   summary: 第一次 `npm start` 曾出現沒有 renderer 的情況，原因未查明
   evidence: 之後 3 次都正常；再發生時保留當下的主程式輸出再追查。
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-3-shared-contracts-ipc-ci.md`
-  summary: CI 尚未實際執行
-  evidence: 使用者推上 GitHub 後確認 macOS 與 Windows 兩個 job 都通過。
+  summary: CI 尚未實際執行（已解決）
+  evidence: 2026-11-05 推送 c938ea4 後，CI 在 macOS 與 Windows 都通過。
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-4-settings-stageview-run-log.md`
+  summary: Squirrel 安裝／更新／解除安裝事件時，main 仍會初始化運行紀錄並載入設定（B8、E1）
+  evidence: `if (started) app.quit()` 不會中止模組往下執行，`initRunLog`、`loadSettings`（可能改名、複製或寫回 `settings.json`）都會跑；Story 1.5 處理 Squirrel 事件時，要讓這些初始化在 `started` 時一律跳過。

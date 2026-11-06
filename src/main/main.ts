@@ -4,11 +4,27 @@ import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { appGetVersion } from '../shared/ipc';
 import { registerIpcHandler } from './ipc/register';
+import { initRunLog, logEvent } from './log/run-log';
+import { registerSettingsHandlers } from './settings/ipc';
+import { flushSettingsOnQuit, loadSettings } from './settings/store';
+import {
+  createStageView,
+  registerStageViewHandlers,
+} from './stage-view/stage-view';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
   app.quit();
 }
+
+// Startup order: run log, settings, StageView, IPC handlers, then windows.
+// userData is the same folder for `npm start` and the packaged app.
+const USER_DATA = app.getPath('userData');
+initRunLog(path.join(USER_DATA, 'logs'));
+logEvent(
+  'app',
+  `start version=${app.getVersion()} platform=${process.platform} arch=${process.arch} packaged=${app.isPackaged}`,
+);
 
 /**
  * Path of a preload bundle next to main.cjs. Forge names each bundle after
@@ -21,7 +37,7 @@ function preloadPath(fileName: string): string {
   const file = path.join(__dirname, fileName);
   if (!fs.existsSync(file)) {
     const reason = `Preload bundle not found: ${file}. Check the preload entries in forge.config.mts.`;
-    console.error(reason);
+    logEvent('app', reason, 'error');
     dialog.showErrorBox('AI Watchdog Pet 無法啟動', reason);
     app.exit(1);
   }
@@ -30,7 +46,21 @@ function preloadPath(fileName: string): string {
 
 const PANELS_PRELOAD = preloadPath('panels.cjs');
 
+const settings = loadSettings({
+  file: path.join(USER_DATA, 'settings.json'),
+});
+const stageView = createStageView({ settings });
+
 registerIpcHandler(appGetVersion, () => app.getVersion());
+registerSettingsHandlers(settings);
+registerStageViewHandlers(stageView);
+
+// Write settings that are still waiting for their debounce before exiting,
+// then log the quit (will-quit listeners run in the order they were added).
+flushSettingsOnQuit(app, settings);
+app.on('will-quit', () => {
+  logEvent('app', 'quit');
+});
 
 const createWindow = () => {
   // Create the browser window.

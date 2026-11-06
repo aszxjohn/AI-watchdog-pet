@@ -1,10 +1,5 @@
-import {
-  app,
-  ipcMain,
-  type IpcMainInvokeEvent,
-  type WebFrameMain,
-} from 'electron';
-import { APP_SCHEME, IPC_HANDLER_TIMEOUT_MS } from '../../shared/constants';
+import { ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { IPC_HANDLER_TIMEOUT_MS } from '../../shared/constants';
 import {
   ipcFailure,
   isIpcChannelName,
@@ -13,6 +8,8 @@ import {
   type IpcData,
   type IpcResult,
 } from '../../shared/ipc';
+import { errorCode, logEvent } from '../log/run-log';
+import { frameRejection } from './origin';
 
 export type IpcHandler<C extends IpcContract> = (
   event: IpcMainInvokeEvent,
@@ -25,7 +22,7 @@ export type IpcHandler<C extends IpcContract> = (
  * failure answers `{ ok: false, error }` without running the handler:
  *
  * 1. the sender is a live, top-level frame whose URL is allowed (`app://`,
- *    or the Vite dev server origin while `!app.isPackaged`);
+ *    or the Vite dev server origin while `!app.isPackaged`; see origin.ts);
  * 2. the arguments match `contract.input` (a schema that throws counts as a
  *    mismatch);
  * 3. the handler runs and settles within IPC_HANDLER_TIMEOUT_MS; a throw,
@@ -33,6 +30,9 @@ export type IpcHandler<C extends IpcContract> = (
  *    so no error text or stack trace reaches the renderer;
  * 4. the result matches `contract.output` (a throwing schema counts as a
  *    mismatch).
+ *
+ * Rejections and failures go to the run log (category `ipc`), which also
+ * prints them to the console.
  *
  * Throws at registration when the channel name is not `<domain>:<action>`.
  */
@@ -55,7 +55,7 @@ export function registerIpcHandler<C extends IpcContract>(
     ): Promise<IpcResult<IpcData<C>>> => {
       const rejection = senderRejection(event);
       if (rejection !== null) {
-        console.warn(`[ipc] ${channel}: sender rejected: ${rejection}`);
+        logEvent('ipc', `${channel}: sender rejected: ${rejection}`, 'warn');
         return ipcFailure('sender-rejected', 'sender is not allowed');
       }
 
@@ -74,12 +74,18 @@ export function registerIpcHandler<C extends IpcContract>(
           handler(event, ...(input.data as IpcArgs<C>)),
         );
       } catch (error) {
-        console.error(`[ipc] ${channel}: handler failed`, error);
+        logEvent(
+          'ipc',
+          `${channel}: handler failed (${errorCode(error)})`,
+          'error',
+        );
         return ipcFailure('handler-failed', 'handler failed');
       }
       if (data === TIMED_OUT) {
-        console.error(
-          `[ipc] ${channel}: handler did not settle within ${IPC_HANDLER_TIMEOUT_MS} ms`,
+        logEvent(
+          'ipc',
+          `${channel}: handler did not settle within ${IPC_HANDLER_TIMEOUT_MS} ms`,
+          'error',
         );
         return ipcFailure('handler-failed', 'handler failed');
       }
@@ -117,12 +123,19 @@ function logInvalid(
   failure: Exclude<Validation, { ok: true }>,
 ): void {
   if ('thrown' in failure) {
-    console.error(`[ipc] ${channel}: ${side} schema threw`, failure.thrown);
+    logEvent(
+      'ipc',
+      `${channel}: ${side} schema threw (${errorCode(failure.thrown)})`,
+      'error',
+    );
     return;
   }
   // Bad input is the renderer's doing; bad output is a bug in main.
-  const log = side === 'input' ? console.warn : console.error;
-  log(`[ipc] ${channel}: invalid ${side}: ${failure.issues} issue(s)`);
+  logEvent(
+    'ipc',
+    `${channel}: invalid ${side}: ${failure.issues} issue(s)`,
+    side === 'input' ? 'warn' : 'error',
+  );
 }
 
 const TIMED_OUT = Symbol('ipc-handler-timed-out');
@@ -148,58 +161,11 @@ async function withTimeout<T>(
 
 /** Why the sender is refused, or null when it is allowed. Never throws. */
 function senderRejection(event: IpcMainInvokeEvent): string | null {
-  let frame: WebFrameMain | null;
-  let url: string;
+  let frame: IpcMainInvokeEvent['senderFrame'];
   try {
     frame = event.senderFrame;
-    if (frame === null) {
-      return 'senderFrame is null';
-    }
-    if (frame.parent !== null) {
-      return 'not a top-level frame';
-    }
-    url = frame.url;
   } catch {
-    // WebFrameMain throws when the frame was disposed mid-call.
     return 'senderFrame is no longer available';
   }
-  return isAllowedSenderUrl(url) ? null : `origin not allowed (${url})`;
-}
-
-function isAllowedSenderUrl(url: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return false;
-  }
-  if (parsed.protocol === `${APP_SCHEME}:`) {
-    return true;
-  }
-  const devOrigin = devServerOrigin();
-  return devOrigin !== undefined && parsed.origin === devOrigin;
-}
-
-/**
- * The Vite dev server origin, only while `!app.isPackaged`. Forge's Vite
- * plugin defines MAIN_WINDOW_VITE_DEV_SERVER_URL at build time (a URL under
- * `npm start`, undefined in a packaged build); `typeof` also keeps this safe
- * where the constant is not defined at all (unit tests). Story 1.5 moves the
- * environment check into main/windows (AD-24).
- */
-function devServerOrigin(): string | undefined {
-  if (app.isPackaged) {
-    return undefined;
-  }
-  if (
-    typeof MAIN_WINDOW_VITE_DEV_SERVER_URL !== 'string' ||
-    MAIN_WINDOW_VITE_DEV_SERVER_URL === ''
-  ) {
-    return undefined;
-  }
-  try {
-    return new URL(MAIN_WINDOW_VITE_DEV_SERVER_URL).origin;
-  } catch {
-    return undefined;
-  }
+  return frameRejection(frame);
 }

@@ -7,6 +7,10 @@ import {
   ipcResultSchema,
   isIpcChannelName,
   parseIpcResult,
+  settingsGet,
+  settingsPatch,
+  stageViewDelta,
+  stageViewSubscribe,
 } from '../../src/shared/ipc';
 import { z } from '../../src/shared/zod-setup';
 import { expectRejected, expectRoundTrip } from './schema-helpers';
@@ -168,5 +172,54 @@ describe('parseIpcResult', () => {
     const result = parseIpcResult(appGetVersion, reply);
     expect(result.ok).toBe(false);
     expect(result.ok ? undefined : result.error.code).toBe('invalid-response');
+  });
+});
+
+describe('settings and StageView contracts', () => {
+  const STATE = { rev: 2, values: { canvasDisplayId: null } };
+  const PATCH = {
+    baseRev: 2,
+    ops: [{ op: 'set', field: 'canvasDisplayId', value: 7 }],
+  };
+  const SNAPSHOT = { rev: 5, view: { settings: STATE } };
+  const DELTA = { rev: 6, sections: { settings: STATE } };
+
+  it.each([
+    [settingsGet.channel, 'settings:get'],
+    [settingsPatch.channel, 'settings:patch'],
+    [stageViewSubscribe.channel, 'stage-view:subscribe'],
+    [stageViewDelta.channel, 'stage-view:delta'],
+  ])('%s is a valid channel name', (channel, expected) => {
+    expect(channel).toBe(expected);
+    expect(isIpcChannelName(channel)).toBe(true);
+  });
+
+  it('settings:get takes no arguments and answers values with their rev', () => {
+    expectRoundTrip(settingsGet.input, []);
+    expectRejected(settingsGet.input, ['x']);
+    expectRoundTrip(settingsGet.output, STATE);
+    expectRejected(settingsGet.output, STATE.values);
+  });
+
+  it('settings:patch takes exactly one patch and answers { rev, merged }', () => {
+    expectRoundTrip(settingsPatch.input, [PATCH]);
+    expectRejected(settingsPatch.input, []);
+    expectRejected(settingsPatch.input, [PATCH, PATCH]);
+    expectRejected(settingsPatch.input, [{ ...PATCH, ops: [] }]);
+    expectRoundTrip(settingsPatch.output, { rev: 3, merged: false });
+    expectRejected(settingsPatch.output, { rev: 3 });
+  });
+
+  it('stage-view:subscribe takes no arguments and answers a snapshot', () => {
+    expectRoundTrip(stageViewSubscribe.input, []);
+    expectRejected(stageViewSubscribe.input, [0]);
+    expectRoundTrip(stageViewSubscribe.output, SNAPSHOT);
+    expectRejected(stageViewSubscribe.output, DELTA);
+  });
+
+  it('stage-view:delta carries a delta', () => {
+    expectRoundTrip(stageViewDelta.payload, DELTA);
+    expectRejected(stageViewDelta.payload, SNAPSHOT);
+    expectRejected(stageViewDelta.payload, { rev: 6, sections: {} });
   });
 });

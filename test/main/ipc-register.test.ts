@@ -1,5 +1,9 @@
 import type { IpcMainInvokeEvent } from 'electron';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { initRunLog } from '../../src/main/log/run-log';
 import { IPC_HANDLER_TIMEOUT_MS } from '../../src/shared/constants';
 import { appGetVersion, ipcResultSchema } from '../../src/shared/ipc';
 import { z } from '../../src/shared/zod-setup';
@@ -63,8 +67,21 @@ const echo = {
 
 let warn: ReturnType<typeof vi.spyOn>;
 let error: ReturnType<typeof vi.spyOn>;
+let logDir: string;
+
+/** `[category, message]` of every run log line written in this test. */
+function runLogLines(): string[][] {
+  return fs
+    .readdirSync(logDir)
+    .flatMap((name) =>
+      fs.readFileSync(path.join(logDir, name), 'utf8').split('\n').slice(0, -1),
+    )
+    .map((line) => line.split('\t').slice(1));
+}
 
 beforeEach(() => {
+  logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'awp-ipc-log-'));
+  initRunLog(logDir);
   fake.listeners.clear();
   fake.app.isPackaged = false;
   vi.stubGlobal('MAIN_WINDOW_VITE_DEV_SERVER_URL', DEV_SERVER_URL);
@@ -76,6 +93,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  fs.rmSync(logDir, { recursive: true, force: true });
 });
 
 describe('registerIpcHandler', () => {
@@ -145,6 +163,14 @@ describe('registerIpcHandler', () => {
         });
         expect(handler).not.toHaveBeenCalled();
         expect(warn).toHaveBeenCalledOnce();
+        const logged = runLogLines();
+        expect(logged).toHaveLength(1);
+        expect(logged[0]?.[0]).toBe('ipc');
+        expect(
+          logged[0]?.[1]?.startsWith(
+            `${appGetVersion.channel}: sender rejected`,
+          ),
+        ).toBe(true);
       },
     );
 
@@ -322,6 +348,16 @@ describe('registerIpcHandler', () => {
         expect(wire).not.toContain('secret');
         expect(wire).not.toContain('/Users/');
         expect(error).toHaveBeenCalledOnce();
+        const logged = runLogLines();
+        expect(logged).toHaveLength(1);
+        expect(logged[0]?.[0]).toBe('ipc');
+        expect(
+          logged[0]?.[1]?.startsWith(
+            `${appGetVersion.channel}: handler failed`,
+          ),
+        ).toBe(true);
+        expect(logged[0]?.[1]).not.toContain('secret');
+        expect(logged[0]?.[1]).not.toContain('/Users/');
       },
     );
 

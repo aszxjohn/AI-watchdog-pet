@@ -120,6 +120,8 @@ describe('oxlint guard rules', () => {
       'src/main/uses-electron.ts': ELECTRON_ALL,
       'src/main/ipc/register.ts': ELECTRON_ALL + ZOD,
       'src/preload/invoke.ts': ELECTRON_ALL + ZOD,
+      'src/preload/stage-view.ts': ELECTRON_ALL + ZOD,
+      'src/preload/uses-electron.ts': ELECTRON_ALL,
       'src/shared/zod-setup.ts': ELECTRON_ALL + ZOD,
       'src/panels/uses-network.ts': useGlobals(NETWORK_GLOBALS),
       'src/preload/uses-globals.ts': useGlobals([
@@ -158,6 +160,7 @@ describe('oxlint guard rules', () => {
       'src/main/uses-zod.ts',
       'src/main/ipc/register.ts',
       'src/preload/invoke.ts',
+      'src/preload/stage-view.ts',
     ]) {
       expect(flags(file, 'no-restricted-imports', 'zod'), file).toBe(true);
     }
@@ -170,6 +173,8 @@ describe('oxlint guard rules', () => {
     for (const file of [
       'src/main/uses-electron.ts',
       'src/preload/invoke.ts',
+      'src/preload/stage-view.ts',
+      'src/preload/uses-electron.ts',
       'src/shared/zod-setup.ts',
     ]) {
       expect(flags(file, 'no-restricted-imports', 'ipcMain'), file).toBe(true);
@@ -179,19 +184,22 @@ describe('oxlint guard rules', () => {
     ).toBe(false);
   });
 
-  it('allows ipcRenderer only in src/preload/invoke.ts', () => {
+  it('allows ipcRenderer only in src/preload/invoke.ts and src/preload/stage-view.ts', () => {
     for (const file of [
       'src/main/uses-electron.ts',
       'src/main/ipc/register.ts',
+      'src/preload/uses-electron.ts',
       'src/shared/zod-setup.ts',
     ]) {
       expect(flags(file, 'no-restricted-imports', 'ipcRenderer'), file).toBe(
         true,
       );
     }
-    expect(
-      flags('src/preload/invoke.ts', 'no-restricted-imports', 'ipcRenderer'),
-    ).toBe(false);
+    for (const file of ['src/preload/invoke.ts', 'src/preload/stage-view.ts']) {
+      expect(flags(file, 'no-restricted-imports', 'ipcRenderer'), file).toBe(
+        false,
+      );
+    }
   });
 
   it("rejects electron's net in every src file", () => {
@@ -199,6 +207,8 @@ describe('oxlint guard rules', () => {
       'src/main/uses-electron.ts',
       'src/main/ipc/register.ts',
       'src/preload/invoke.ts',
+      'src/preload/stage-view.ts',
+      'src/preload/uses-electron.ts',
       'src/shared/zod-setup.ts',
     ]) {
       expect(flags(file, 'no-restricted-imports', 'net'), file).toBe(true);
