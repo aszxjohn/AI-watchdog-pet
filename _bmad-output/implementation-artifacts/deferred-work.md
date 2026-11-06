@@ -58,3 +58,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-6-transparent-canvas.md`
   summary: 畫布沒有處理 GPU 行程當掉、WebGL context lost／restored、renderer 無回應（B6）
   evidence: 目前只處理 renderer 行程當掉；overlay 以 `autoStart: false` 只畫一次，context 恢復後也不會重畫。Story 3.x 有節拍與繪製時，一起設計這些情況的偵測、記錄與重建。
+- source_spec: `_bmad-output/implementation-artifacts/epic-1-acceptance.md`
+  summary: 選單列的佔位圖示（空心圓圈）很難認出來，使用者驗收時在選單列找不到 app（A1）
+  evidence: 2026-11-06 打包版實機驗收：圖示確實存在（副螢幕選單列 x=3186），但要由 Claude 指出位置才找得到。正式圖示設計前，至少換成較容易辨認的佔位圖，或在第一次啟動時提示 app 在選單列。
+- source_spec: `_bmad-output/implementation-artifacts/epic-1-acceptance.md`
+  summary: 使用者以為關掉面板就是結束 app，目前沒有任何提示說明 app 會繼續留在選單列
+  evidence: 2026-11-06 驗收時，使用者回報「結束了」，紀錄卻只有 `panel closed`。常駐是 FR7 的預期行為；可考慮在第一次關掉面板時提示一次，或在面板上標示「關閉後仍在選單列執行」。
