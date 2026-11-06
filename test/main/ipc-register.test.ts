@@ -84,7 +84,7 @@ beforeEach(() => {
   initRunLog(logDir);
   fake.listeners.clear();
   fake.app.isPackaged = false;
-  vi.stubGlobal('MAIN_WINDOW_VITE_DEV_SERVER_URL', DEV_SERVER_URL);
+  vi.stubGlobal('PANELS_VITE_DEV_SERVER_URL', DEV_SERVER_URL);
   warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   error = vi.spyOn(console, 'error').mockImplementation(() => {});
 });

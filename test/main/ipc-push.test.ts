@@ -18,7 +18,7 @@ let error: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   fake.resetFakeElectron();
-  vi.stubGlobal('MAIN_WINDOW_VITE_DEV_SERVER_URL', DEV_SERVER_URL);
+  vi.stubGlobal('PANELS_VITE_DEV_SERVER_URL', DEV_SERVER_URL);
   vi.spyOn(console, 'info').mockImplementation(() => {});
   warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   error = vi.spyOn(console, 'error').mockImplementation(() => {});

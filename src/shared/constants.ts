@@ -3,8 +3,24 @@
  * imports it from here instead of repeating the literal.
  */
 
+/**
+ * The product name as shown to the user: tray tooltip, window title, panel
+ * header, error dialogs. (index.html's <title> repeats it as a literal.)
+ */
+export const PRODUCT_NAME = 'AI Watchdog Pet';
+
 /** Scheme the stage's own pages (overlay, panels) load from once packaged. */
 export const APP_SCHEME = 'app';
+
+/** Scheme character pack files load from (main/packs serves it, Story 3.2). */
+export const PACK_SCHEME = 'pack';
+
+/**
+ * macOS ignores `app.dock.hide()` within about a second of the previous Dock
+ * change (Electron known issue), so main/windows waits at least this long
+ * after one before hiding the Dock icon.
+ */
+export const DOCK_HIDE_MIN_INTERVAL_MS = 1100;
 
 /** Name each preload exposes its API under: `window.awp`. */
 export const PRELOAD_API_KEY = 'awp';

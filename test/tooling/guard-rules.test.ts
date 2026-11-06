@@ -14,6 +14,7 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -243,6 +244,7 @@ describe('dependency-cruiser rules', () => {
     'src-no-network-modules',
     'preload-only-electron-and-shared',
     'overlay-no-react',
+    'react-only-in-panels',
     'web-side-no-node-builtins',
     'web-side-no-electron',
     'not-to-unresolvable',
@@ -267,6 +269,7 @@ describe('dependency-cruiser rules', () => {
     writeTree(dir, {
       ...fakePackage('electron'),
       ...fakePackage('fake-pkg'),
+      ...fakePackage('react', { 'jsx-runtime.js': 'module.exports = {};\n' }),
       ...fakePackage('react-dom', { 'client.js': 'module.exports = {};\n' }),
       'src/main/target.ts': target,
       'src/overlay/target.ts': target,
@@ -300,6 +303,13 @@ describe('dependency-cruiser rules', () => {
         './to-others',
       ),
       'src/overlay/to-react.ts': imports('react', 'react-dom/client'),
+      'src/main/to-react.ts': imports('react', 'react-dom/client'),
+      'src/shared/to-react.ts': imports('react/jsx-runtime'),
+      'src/panels/uses-react.ts': imports(
+        'react',
+        'react/jsx-runtime',
+        'react-dom/client',
+      ),
       'src/main/to-missing.ts': imports('./missing'),
     });
     copyFileSync(
@@ -362,9 +372,33 @@ describe('dependency-cruiser rules', () => {
       'src/preload/to-others.ts',
       'node_modules/fake-pkg/index.js',
     ],
-    ['overlay-no-react', 'src/overlay/to-react.ts', 'react'],
     [
       'overlay-no-react',
+      'src/overlay/to-react.ts',
+      'node_modules/react/index.js',
+    ],
+    [
+      'overlay-no-react',
+      'src/overlay/to-react.ts',
+      'node_modules/react-dom/client.js',
+    ],
+    [
+      'react-only-in-panels',
+      'src/main/to-react.ts',
+      'node_modules/react/index.js',
+    ],
+    [
+      'react-only-in-panels',
+      'src/main/to-react.ts',
+      'node_modules/react-dom/client.js',
+    ],
+    [
+      'react-only-in-panels',
+      'src/shared/to-react.ts',
+      'node_modules/react/jsx-runtime.js',
+    ],
+    [
+      'react-only-in-panels',
       'src/overlay/to-react.ts',
       'node_modules/react-dom/client.js',
     ],
@@ -389,9 +423,31 @@ describe('dependency-cruiser rules', () => {
     );
   });
 
+  it('lets src/panels import react and react-dom', () => {
+    expect(
+      violations.filter((v) => v.from === 'src/panels/uses-react.ts'),
+    ).toStrictEqual([]);
+  });
+
   it('lets a preload import electron, src/shared and other preload files', () => {
     expect(
       violations.filter((v) => v.from === 'src/preload/allowed.ts'),
     ).toStrictEqual([]);
+  });
+});
+
+describe('JSX placement', () => {
+  // Only tsconfig.web.json enables JSX, but the compiler's own
+  // `react/jsx-runtime` import never shows up in the source, so
+  // dependency-cruiser cannot see it: a .tsx file elsewhere in src/ would
+  // slip React past react-only-in-panels and overlay-no-react.
+  it('has .tsx files only under src/panels/', () => {
+    const tsx = readdirSync(path.join(REPO_ROOT, 'src'), { recursive: true })
+      .map((file) => `src/${String(file).replaceAll('\\', '/')}`)
+      .filter((file) => file.endsWith('.tsx'));
+    expect(tsx.length).toBeGreaterThan(0);
+    expect(tsx.filter((file) => !file.startsWith('src/panels/'))).toStrictEqual(
+      [],
+    );
   });
 });

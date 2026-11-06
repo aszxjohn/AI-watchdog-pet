@@ -65,6 +65,14 @@ module.exports = {
       to: { path: '^(node_modules/)?(react|react-dom)(/|$)' },
     },
     {
+      name: 'react-only-in-panels',
+      comment:
+        'React and react-dom are used in src/panels only (Story 1.5): main, preload, shared, overlay and sandbox never import them.',
+      severity: 'error',
+      from: { path: '^src/', pathNot: '^src/panels/' },
+      to: { path: '^(node_modules/)?(react|react-dom)(/|$)' },
+    },
+    {
       name: 'web-side-no-node-builtins',
       comment:
         'shared, overlay, panels and sandbox also run in renderers, where Node built-ins do not exist.',

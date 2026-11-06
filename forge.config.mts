@@ -11,6 +11,12 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     executableName: 'ai-watchdog-pet',
+    extendInfo: {
+      // A menu bar app (FR7): no Dock icon at launch, so it does not flash
+      // before main/windows hides it. main/windows still shows the Dock icon
+      // while a panel is open, for ⌘Tab.
+      LSUIElement: true,
+    },
   },
   rebuildConfig: {},
   makers: [
@@ -43,7 +49,9 @@ const config: ForgeConfig = {
       ],
       renderer: [
         {
-          name: 'main_window',
+          // One name per renderer: the bundle lands in .vite/renderer/panels
+          // and main gets PANELS_VITE_DEV_SERVER_URL / PANELS_VITE_NAME.
+          name: 'panels',
           config: 'vite.renderer.config.mts',
         },
       ],
