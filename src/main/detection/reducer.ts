@@ -1,0 +1,294 @@
+import type { Confidence, DetectionEvent } from '../../shared/detection-events';
+import type { StateCode } from '../../shared/states';
+
+/**
+ * The one place the 8 states are decided (AD-5, AD-21). Pure functions:
+ * `reduceSession` folds one session's events into the facts below, and
+ * `evaluate` derives the state from those facts, the current time and the
+ * timings. Only facts are kept, so a change of timings applies at once
+ * without replaying any history.
+ *
+ * Every time here is the caller's monotonic clock in milliseconds, taken when
+ * the event was received; an event's `ts` never takes part (AD-22). This
+ * module reads no settings, starts no timers and writes no log; whoever
+ * drives it schedules re-evaluation with `nextChangeAt`.
+ */
+
+/**
+ * The three durations the states depend on, passed in on every call. Each
+ * must be a finite positive number of milliseconds; nothing here checks it
+ * (NaN, for one, would make every session `idle` with no next change). The
+ * settings schema that supplies them guarantees it.
+ */
+export interface DetectionTimings {
+  /** How long a session stays `done` after `turn.end`. */
+  readonly doneMs: number;
+  /** How long after its last event a session counts as `waiting`, not `idle`. */
+  readonly idleMs: number;
+  /** How long `error` holds unless a turn or a tool starts first. */
+  readonly errorHoldMs: number;
+}
+
+/**
+ * The facts about one session. Read-only: `reduceSession` returns a new
+ * object whenever something changes and never alters the one it was given.
+ * The freeze is shallow, and successive objects share the Sets and Maps that
+ * did not change, so those must never be mutated, not even through a cast.
+ */
+export interface SessionConditions {
+  /** `session.end` arrived: everything is cleared and later events are ignored. */
+  readonly ended: boolean;
+  /** Between `turn.start` and `turn.end`. */
+  readonly inTurn: boolean;
+  /** Tool calls that started and have not ended, by `toolCallId`. */
+  readonly openTools: ReadonlySet<string>;
+  /**
+   * Pending approvals by `requestId`, each with the best confidence any of
+   * its `approval.request` events had (an exact request outranks an inferred
+   * one; nothing downgrades it).
+   */
+  readonly openApprovals: ReadonlyMap<string, Confidence>;
+  /** Pending questions, kept the same way as approvals. */
+  readonly openQuestions: ReadonlyMap<string, Confidence>;
+  /** When the last `turn.end` arrived; null once a turn starts again. */
+  readonly turnEndedAt: number | null;
+  /** When the last `error` arrived; null once a turn or a tool starts. */
+  readonly errorAt: number | null;
+  /**
+   * When the last event arrived. `session.meta` does not count, except as a
+   * session's first event: the conditions it creates start at that moment.
+   */
+  readonly lastEventAt: number;
+}
+
+/** A session's state right now, and how sure the stage is of it. */
+export interface EvaluatedState {
+  readonly state: StateCode;
+  /**
+   * `inferred` only when the state is `approval` or `decision` and every
+   * pending request behind it is inferred; otherwise `exact`.
+   */
+  readonly confidence: Confidence;
+}
+
+function conditions(fields: SessionConditions): SessionConditions {
+  return Object.freeze(fields);
+}
+
+function emptyConditions(now: number, ended: boolean): SessionConditions {
+  return conditions({
+    ended,
+    inTurn: false,
+    openTools: new Set(),
+    openApprovals: new Map(),
+    openQuestions: new Map(),
+    turnEndedAt: null,
+    errorAt: null,
+    lastEventAt: now,
+  });
+}
+
+/** The set with `id` removed; the same set when `id` is not in it. */
+function withoutTool(tools: ReadonlySet<string>, id: string) {
+  if (!tools.has(id)) {
+    return tools;
+  }
+  const next = new Set(tools);
+  next.delete(id);
+  return next;
+}
+
+/** The map with `id` removed; the same map when `id` is not in it. */
+function withoutRequest(
+  requests: ReadonlyMap<string, Confidence>,
+  id: string,
+): ReadonlyMap<string, Confidence> {
+  if (!requests.has(id)) {
+    return requests;
+  }
+  const next = new Map(requests);
+  next.delete(id);
+  return next;
+}
+
+/** The map with `id` pending at the better of its old and new confidence. */
+function withRequest(
+  requests: ReadonlyMap<string, Confidence>,
+  id: string,
+  confidence: Confidence,
+): ReadonlyMap<string, Confidence> {
+  const best = requests.get(id) === 'exact' ? 'exact' : confidence;
+  return new Map(requests).set(id, best);
+}
+
+/**
+ * The conditions after `event`, received at monotonic time `now`. Pass
+ * `undefined` for a session seen for the first time. Conditions open and
+ * close only as AD-21's table says; an id that matches nothing open is
+ * ignored, never thrown on.
+ */
+export function reduceSession(
+  current: SessionConditions | undefined,
+  event: DetectionEvent,
+  now: number,
+): SessionConditions {
+  if (current?.ended) {
+    return current;
+  }
+  const base = current ?? emptyConditions(now, false);
+  const update = (changes: Partial<SessionConditions>) =>
+    conditions({ ...base, ...changes, lastEventAt: now });
+
+  switch (event.type) {
+    case 'session.meta':
+      // The display name belongs to main/detection/sessions (Story 2.2).
+      return base;
+    case 'session.start':
+    case 'activity':
+      return update({});
+    case 'session.end':
+      return emptyConditions(now, true);
+    case 'turn.start':
+      return update({ inTurn: true, turnEndedAt: null, errorAt: null });
+    case 'turn.end':
+      // Whatever this turn left open was not written to the log; close it.
+      // `error` is not cleared.
+      return update({
+        inTurn: false,
+        openTools: new Set(),
+        openApprovals: new Map(),
+        openQuestions: new Map(),
+        turnEndedAt: now,
+      });
+    case 'tool.start':
+      return update({
+        openTools: new Set(base.openTools).add(event.toolCallId),
+        errorAt: null,
+      });
+    case 'tool.end':
+      // A tool call's end also closes the request it raised (same id).
+      return update({
+        openTools: withoutTool(base.openTools, event.toolCallId),
+        openApprovals: withoutRequest(base.openApprovals, event.toolCallId),
+        openQuestions: withoutRequest(base.openQuestions, event.toolCallId),
+      });
+    case 'approval.request':
+      return update({
+        openApprovals: withRequest(
+          base.openApprovals,
+          event.requestId,
+          event.confidence,
+        ),
+      });
+    case 'approval.resolved':
+      return update({
+        openApprovals: withoutRequest(base.openApprovals, event.requestId),
+      });
+    case 'question.request':
+      return update({
+        openQuestions: withRequest(
+          base.openQuestions,
+          event.requestId,
+          event.confidence,
+        ),
+      });
+    case 'question.resolved':
+      return update({
+        openQuestions: withoutRequest(base.openQuestions, event.requestId),
+      });
+    case 'error':
+      return update({ errorAt: now });
+  }
+}
+
+/** `exact` if any pending request is exact, else `inferred`. */
+function requestsConfidence(
+  requests: ReadonlyMap<string, Confidence>,
+): Confidence {
+  for (const confidence of requests.values()) {
+    if (confidence === 'exact') {
+      return 'exact';
+    }
+  }
+  return 'inferred';
+}
+
+function exact(state: StateCode): EvaluatedState {
+  return { state, confidence: 'exact' };
+}
+
+/**
+ * The state at monotonic time `now`: the highest-priority condition that
+ * holds, in the order approval > decision > error > working > thinking >
+ * done > waiting > idle. Durations are half-open: `done` while less than
+ * `doneMs` has passed since `turn.end`, `error` while less than
+ * `errorHoldMs` has passed since `error`, `waiting` while less than `idleMs`
+ * has passed since the last event.
+ */
+export function evaluate(
+  current: SessionConditions,
+  now: number,
+  timings: DetectionTimings,
+): EvaluatedState {
+  if (current.openApprovals.size > 0) {
+    return {
+      state: 'approval',
+      confidence: requestsConfidence(current.openApprovals),
+    };
+  }
+  if (current.openQuestions.size > 0) {
+    return {
+      state: 'decision',
+      confidence: requestsConfidence(current.openQuestions),
+    };
+  }
+  // Each end is compared as the same sum nextChangeAt returns: with a
+  // fractional clock, `now - start < duration` can still be true at
+  // `now === start + duration`, because the subtraction rounds.
+  if (current.errorAt !== null && now < current.errorAt + timings.errorHoldMs) {
+    return exact('error');
+  }
+  if (current.openTools.size > 0) {
+    return exact('working');
+  }
+  if (current.inTurn) {
+    return exact('thinking');
+  }
+  if (
+    current.turnEndedAt !== null &&
+    now < current.turnEndedAt + timings.doneMs
+  ) {
+    return exact('done');
+  }
+  if (now < current.lastEventAt + timings.idleMs) {
+    return exact('waiting');
+  }
+  return exact('idle');
+}
+
+/**
+ * The earliest time after `now` at which the state may change with no new
+ * event: the soonest of `turn.end + doneMs`, `error + errorHoldMs` and
+ * `last event + idleMs` that is later than `now`; null if none is. The state
+ * need not actually change then (a pending approval outranks all three).
+ */
+export function nextChangeAt(
+  current: SessionConditions,
+  now: number,
+  timings: DetectionTimings,
+): number | null {
+  const candidates = [current.lastEventAt + timings.idleMs];
+  if (current.turnEndedAt !== null) {
+    candidates.push(current.turnEndedAt + timings.doneMs);
+  }
+  if (current.errorAt !== null) {
+    candidates.push(current.errorAt + timings.errorHoldMs);
+  }
+  let next: number | null = null;
+  for (const candidate of candidates) {
+    if (candidate > now && (next === null || candidate < next)) {
+      next = candidate;
+    }
+  }
+  return next;
+}

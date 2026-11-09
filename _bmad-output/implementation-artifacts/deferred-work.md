@@ -94,3 +94,12 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-epic-1-retro-closeout.md`
   summary: 「關閉面板」（⌘H）與 ⌘W 都走 win.close()，之後若有頁面擋下卸載（Epic 2 編輯頁），關閉可能被取消或丟掉未存內容
   evidence: `src/main/windows/panel-window.ts` 的 `close()`；目前沒有任何頁面會擋。與 R12 同一類，Epic 2 編輯頁一起決定「未存內容時關閉面板」的規則。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-detection-event-contract-reducer.md`
+  summary: 把 `doneMs`（預設 5 秒）、`idleMs`（預設 5 分鐘）、`errorHoldMs`（預設 30 秒，使用者 2026-11-09 決定）加進 `src/shared/settings.ts` 的設定 schema，含合理範圍，並修正測試裡寫死的完整設定值；判斷器改由設定取值
+  evidence: Story 2.1 規格約 2,700 token，使用者 2026-11-09 選擇拆開；判斷器已改成由呼叫端傳入計時值，不依賴設定。建議併入 Story 2.2，與 `approvalInferMs`、`discoveryWindowMs`、`sessionExpireMs`、`syncTimeoutMs` 一起加，那時計時器才真正開始運作。Story 2.1 驗收條件中「設定 schema 的預設值」這一段隨之移過去。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-detection-event-contract-reducer.md`
+  summary: 已結束的 session 在判斷器裡仍評估為 `waiting`、`nextChangeAt` 照常回報時間，同一個 key 之後的事件（含 `session.start`）都被忽略；Story 2.2 的 `sessions` 要丟掉已結束的條件物件，讓重用同一原生 id 的 session 從頭建立，也不顯示、不替它排計時器
+  evidence: Story 2.1 審查 B6／E3／E4（`src/main/detection/reducer.ts` 的 `reduceSession`、`evaluate`、`nextChangeAt`）。未驗證，若呼叫端保留已結束的條件物件則為 medium：恢復的 session 永遠停在 `waiting`→`idle`。要確認的是 2.2 的 `sessions` 怎麼處理 `ended: true`，以及各工具恢復對話時是否重用原生 id。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-detection-event-contract-reducer.md`
+  summary: 推測的 `approval.request`／`question.request` 若在同 id 的 `tool.end` 之後才送到判斷器，或 id 不在進行中的 tool 裡，會開出只有 `turn.end`／`session.end` 才能關的未決項目
+  evidence: Story 2.1 審查 B4／E6（`src/main/detection/reducer.ts` 的 `withRequest`）。未驗證，若成立為 medium：沒有 turn 標記的來源會一直顯示「要你批准」。要在 Story 2.2 確認推測模組只對還開著的 tool 發出推測，且推測與 `tool.end` 的處理順序不會競態；否則在判斷器忽略 id 不在 `openTools` 裡的推測 request。
