@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-03-2026 15:49
-last_updated: 11-06-2026 17:51
+last_updated: 11-09-2026 13:08
 project: gundam-pet
 project_key: NOKEY
 tracking_system: file-system
@@ -108,38 +108,38 @@ action_items:
     epic: 1
     action: "A1 啟動鏈與 second-instance、activate 補上 .catch，記錄錯誤碼並確保 tray 一定建立（R1）"
     owner: "開發：Epic 1 收尾 story"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"
   - id: "epic-1-retro-a2-hide-menu"
     epic: 1
     action: "A2 macOS 應用程式選單拿掉 hide、hideOthers、unhide，改成只隱藏或關閉面板的自訂項目（R2）"
     owner: "開發：Epic 1 收尾 story"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"
   - id: "epic-1-retro-a3-tests"
     epic: 1
     action: "A3 補測試：StrictMode 重新訂閱、結束時寫設定與記 quit 的先後、5174 案例改用非 dev server 的埠（R7–R9）"
     owner: "開發：Epic 1 收尾 story"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"
   - id: "epic-1-retro-a4-no-circular"
     epic: 1
     action: "A4 dependency-cruiser 加上 no-circular，並規定 main/ipc 只能 import main/windows/environment.ts（R5）"
     owner: "開發：Epic 1 收尾 story"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"
   - id: "epic-1-retro-a5-base-webprefs"
     epic: 1
     action: "A5 AD-24 webPreferences 基準移到 security.ts，面板與畫布各自展開；統一 renderer 當掉後延後
       destroy（R6、R17）"
     owner: "開發：Epic 1 收尾 story"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"
   - id: "epic-1-retro-a7-activate-focus"
     epic: 1
     action: "A7 規格調整：macOS activate 在面板已開時只帶到前景、不切頁，I/O 矩陣照著改（R3）"
     owner: "Epic 2（或併入收尾 story）"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"
   - id: "epic-1-retro-a8-devserver-initiator"
     epic: 1
