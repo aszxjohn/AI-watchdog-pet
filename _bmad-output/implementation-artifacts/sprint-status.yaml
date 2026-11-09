@@ -29,20 +29,20 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-03-2026 15:49
-last_updated: 11-06-2026 11:59
+last_updated: 11-06-2026 17:51
 project: gundam-pet
 project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 development_status:
-  epic-1: in-progress
-  1-1-用-forge-模板建立專案骨架: review
-  1-2-沙盒原型驗證-ad-7-閘門: review
-  1-3-共用契約-ipc-骨架與-ci: review
-  1-4-可靠的設定-stageview-與運行紀錄: review
-  1-5-選單列-系統匣入口與面板視窗: review
-  1-6-透明置頂穿透畫布: review
-  epic-1-retrospective: optional
+  epic-1: done
+  1-1-用-forge-模板建立專案骨架: done
+  1-2-沙盒原型驗證-ad-7-閘門: done
+  1-3-共用契約-ipc-骨架與-ci: done
+  1-4-可靠的設定-stageview-與運行紀錄: done
+  1-5-選單列-系統匣入口與面板視窗: done
+  1-6-透明置頂穿透畫布: done
+  epic-1-retrospective: done
 
   epic-2: backlog
   2-1-偵測事件契約與-8-狀態判斷器: backlog
@@ -93,11 +93,71 @@ development_status:
 sequencing_rules:
   - id: sandbox-gate
     gate_story: 1-2-沙盒原型驗證-ad-7-閘門
-    rule: "Story 1.2 在 Story 1.1（專案骨架，是 1.2 的前提）之後立刻做、最先完成；(a)～(d) 四項全部通過，且 sandbox-prototype-report.md 標記閘門通過前，不開始任何沙盒相關 story。"
+    rule: "Story 1.2 在 Story 1.1（專案骨架，是 1.2 的前提）之後立刻做、最先完成；(a)～(d) 四項全部通過，且 sandbox-prototype-report.md
+      標記閘門通過前，不開始任何沙盒相關 story。"
     blocks:
       - "Story 3.5 起的所有沙盒相關 story（3.5～3.9，以及依賴它們的 Epic 4、Epic 5）"
       - "Story 3.1 角色包 API v1 契約：AD-7 的閘門範圍包含「角色包 API 的實作」，必須等閘門（Story 3.1 的 AC 已寫明）"
     if_failed: "停止上列 story，回頭修訂 AD-7 並請使用者確認；1.3～1.6 與 Epic 2 不依賴沙盒，可以繼續。"
   - id: copilot-last
     epic: epic-6
-    rule: "Epic 6 排在最後。Story 6.1 必須用真實 Copilot CLI session 走過 thinking、working、approval、一輪結束與 error（或中止），去識別化紀錄放進 test/fixtures/copilot/ 並通過快照測試，才能標 done；沒有真實 session 可測時維持未完成。"
+    rule: "Epic 6 排在最後。Story 6.1 必須用真實 Copilot CLI session 走過 thinking、working、approval、一輪結束與
+      error（或中止），去識別化紀錄放進 test/fixtures/copilot/ 並通過快照測試，才能標 done；沒有真實 session 可測時維持未完成。"
+action_items:
+  - id: "epic-1-retro-a1-startup-catch"
+    epic: 1
+    action: "A1 啟動鏈與 second-instance、activate 補上 .catch，記錄錯誤碼並確保 tray 一定建立（R1）"
+    owner: "開發：Epic 1 收尾 story"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"
+  - id: "epic-1-retro-a2-hide-menu"
+    epic: 1
+    action: "A2 macOS 應用程式選單拿掉 hide、hideOthers、unhide，改成只隱藏或關閉面板的自訂項目（R2）"
+    owner: "開發：Epic 1 收尾 story"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"
+  - id: "epic-1-retro-a3-tests"
+    epic: 1
+    action: "A3 補測試：StrictMode 重新訂閱、結束時寫設定與記 quit 的先後、5174 案例改用非 dev server 的埠（R7–R9）"
+    owner: "開發：Epic 1 收尾 story"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"
+  - id: "epic-1-retro-a4-no-circular"
+    epic: 1
+    action: "A4 dependency-cruiser 加上 no-circular，並規定 main/ipc 只能 import main/windows/environment.ts（R5）"
+    owner: "開發：Epic 1 收尾 story"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"
+  - id: "epic-1-retro-a5-base-webprefs"
+    epic: 1
+    action: "A5 AD-24 webPreferences 基準移到 security.ts，面板與畫布各自展開；統一 renderer 當掉後延後
+      destroy（R6、R17）"
+    owner: "開發：Epic 1 收尾 story"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"
+  - id: "epic-1-retro-a7-activate-focus"
+    epic: 1
+    action: "A7 規格調整：macOS activate 在面板已開時只帶到前景、不切頁，I/O 矩陣照著改（R3）"
+    owner: "Epic 2（或併入收尾 story）"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"
+  - id: "epic-1-retro-a8-devserver-initiator"
+    epic: 1
+    action: "A8 Story 3.5 驗收條件：dev server 只放行 overlay、panels 頂層框架發出的請求，pack:// 發出的一律
+      cancel（R4）"
+    owner: "Story 3.5 規格"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"
+  - id: "epic-1-retro-a9-first-use"
+    epic: 1
+    action: "A9 Story 2.3 規劃第一次使用的引導：認得出的選單列圖示、關掉面板後仍在選單列的提示（P5）"
+    owner: "使用者／PM"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"
+  - id: "epic-1-retro-a13-npm-cache"
+    epic: 1
+    action: "A13 修正 ~/.npm 擁有者（sudo chown -R 501:20 ~/.npm），不再需要 npm_config_cache
+      繞道（P2）"
+    owner: "使用者"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"

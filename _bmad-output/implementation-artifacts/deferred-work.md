@@ -1,15 +1,15 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-forge-project-scaffold.md`
-  summary: preload 檔名寫錯時沒有任何驗證會發現（VG2、E4）
-  evidence: preload 目前為空；Story 1.3 讓 preload 暴露 API 時，加上對 API 存在的斷言。
+  summary: preload 檔名寫錯時沒有任何驗證會發現（VG2、E4）（已解決）
+  evidence: preload 目前為空；Story 1.3 讓 preload 暴露 API 時，加上對 API 存在的斷言。Epic 1 回顧確認：Story 1.5 的 `PRELOAD_BUNDLES` 與 `forge.config.mts` 一致性測試（`test/main/windows-main.test.ts`）已涵蓋。
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-forge-project-scaffold.md`
-  summary: oxlint 不展開 glob，新增根目錄 .mts 不會被 lint（B7、E14）
-  evidence: Story 1.3 新增 vitest／dependency-cruiser 設定並建 CI 時，一併調整 lint 範圍的維護方式。
+  summary: oxlint 不展開 glob，新增根目錄 .mts 不會被 lint（B7、E14）（已解決）
+  evidence: Story 1.3 新增 vitest／dependency-cruiser 設定並建 CI 時，一併調整 lint 範圍的維護方式。Epic 1 回顧確認：`scripts/lint.mjs` 已由 Story 1.3 改成動態列出根目錄設定檔（第 5、26 行）。
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-forge-project-scaffold.md`
   summary: renderer 名稱仍是模板的 main_window（B8）（已解決）
   evidence: Story 1.5／1.6 建立 panels 與 overlay 兩個 renderer 時決定命名與 `*_VITE_*` 宣告。已由 Story 1.5 改名為 `panels`。
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-forge-project-scaffold.md`
-  summary: main、preload、renderer 共用一份 tsconfig，型別檢查擋不住跨 process 誤用（B10a）
-  evidence: Story 1.3 建 preload API 時決定是否拆分各 process 的 tsconfig。
+  summary: main、preload、renderer 共用一份 tsconfig，型別檢查擋不住跨 process 誤用（B10a）（部分解決）
+  evidence: Story 1.3 建 preload API 時決定是否拆分各 process 的 tsconfig。Epic 1 回顧確認：renderer 已拆到 `tsconfig.web.json`（含 DOM）；main 與 preload 仍共用 `tsconfig.node.json`。
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-forge-project-scaffold.md`
   summary: 模板 main.ts 尚未符合 AD-24／NFR10：file:// 載入、未明寫 sandbox 等設定、沒有 CSP、沒有單一實例鎖、沒擋 window.open 與外部導覽、Squirrel 事件與載入失敗沒處理（B13b～d、E1、E3、E5～E7）（已解決）
   evidence: 這些都在 Story 1.5（選單列／面板視窗）的驗收條件內，屆時改寫視窗建立流程。已由 Story 1.5 的 `src/main/windows` 處理：`app://` 載入、明寫 webPreferences、CSP、單一實例鎖、擋開新視窗與導覽、Squirrel 時直接結束、載入失敗時記錄並關閉面板。
@@ -64,3 +64,27 @@
 - source_spec: `_bmad-output/implementation-artifacts/epic-1-acceptance.md`
   summary: 使用者以為關掉面板就是結束 app，目前沒有任何提示說明 app 會繼續留在選單列
   evidence: 2026-11-06 驗收時，使用者回報「結束了」，紀錄卻只有 `panel closed`。常駐是 FR7 的預期行為；可考慮在第一次關掉面板時提示一次，或在面板上標示「關閉後仍在選單列執行」。
+- source_spec: `_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md`
+  summary: 開發模式放行 dev server 時只看目標 URL，不看發起者；違反 AD-24「沙盒 iframe 與 pack:// 在任何環境都沒有例外」（R4）
+  evidence: `src/main/windows/environment.ts:158-182`。現在還沒有沙盒，所以沒有實際暴露。Story 3.5 的驗收條件必須加上：只放行 overlay 或 panels 頂層框架發出的 dev server 請求，`pack://` 發出的一律 cancel，並附測試。
+- source_spec: `_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md`
+  summary: 一次 settings:patch 產生兩個 StageView 增量（先 settings、後 canvas），中間有不一致的狀態；settings → StageView → watchDisplays → canvas 這條鏈沒有整合測試（R10）
+  evidence: `src/main/stage-view/stage-view.ts:96-101`、`src/main/windows/stage-sources.ts:187`。Story 3.6 讓 overlay 同時讀 settings 與 canvas 之前，要先合併同一次變更的增量；整合測試可以提早到 Story 2.3。
+- source_spec: `_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md`
+  summary: Windows 關機或登出不觸發 will-quit，500 ms 內的設定變更會遺失，紀錄也沒有結束行（R11，重提 1.4 E3）
+  evidence: `src/` 沒有 `session-end`。1.4 當時拒絕的理由「視窗由 1.5 重寫」已經不成立。在 Windows 實機驗證時，於畫布視窗掛 `session-end`，同步寫設定、停止畫布並記一行。
+- source_spec: `_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md`
+  summary: before-quit 時 canvas.stop() 之後無法恢復；若結束被取消，桌寵會消失（R12）
+  evidence: `src/main/main.ts:153-156`、`src/main/windows/canvas-window.ts:251-252`。目前沒有任何東西會取消結束。Epic 2 加入編輯頁時二選一：面板不得阻擋卸載，或畫布提供恢復的方法。
+- source_spec: `_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md`
+  summary: StageView 的 canvas 區段發佈的是要求的位置，不是實際位置；偏差只記一行（R13）
+  evidence: `src/shared/stage-view.ts:62-76`、`src/main/windows/canvas-window.ts:213-234`。Story 3.x 開始畫角色時，和 DPI、setBounds 偏差的延後項目一起處理：把實際 bounds 寫回，或在契約加上偏差欄位。
+- source_spec: `_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md`
+  summary: 設定只存 Display.id，換接埠或接擴充座後 id 可能改變（R14）
+  evidence: `src/shared/settings.ts:28-34`，平台行為沒有實測。Epic 5 舞台設定時決定要不要存輔助資訊（名稱、尺寸）；在那之前，規格寫明「id 改變時退回主螢幕，需要使用者重選」。
+- source_spec: `_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md`
+  summary: settings.json 無法寫入時改選螢幕，畫面顯示成功，重啟後卻回到舊值（R15，重提 1.4 B4）
+  evidence: `src/panels/display-options.ts:154-167`。Epic 2 處理面板錯誤提示時，patch 結果回報是否已保存，沒保存就提示使用者。
+- source_spec: `_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md`
+  summary: windows 區段只要一筆不合 schema，StageView 就會一直推不出去（R16，重提 1.6 B2／E7／E8）
+  evidence: `src/main/stage-view/stage-view.ts:76-94`。觸發條件（重複的螢幕 id）沒有實際證據；之後新增區段時，改成先驗證再前進 rev。
