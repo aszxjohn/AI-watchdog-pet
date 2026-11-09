@@ -13,9 +13,16 @@
  * 3. Once ready: the session guards, the application menu, the `app://`
  *    handler, the Dock icon hidden, the tray icon, then the stage: the
  *    canvas on the chosen display (following display and settings changes)
- *    and the sleep / lock watch. No panel opens at startup; the tray menu, a
- *    second launch and macOS `activate` open it.
- * 4. Closing every window keeps the app running; only the tray menu's 結束
+ *    and the sleep / lock watch. Each step that throws is logged as an error
+ *    with its errorCode and the next one still runs, so a failure in any
+ *    other step does not stop the tray from being created; only the session
+ *    guards are different: without them no window may open, so the app says
+ *    why and exits. Anything else that throws once ready is logged too.
+ * 4. No panel opens at startup; the tray menu opens it on a page. A second
+ *    launch and macOS `activate` bring an open panel to the front on the
+ *    page it shows, or open the main panel when none is open; a failure
+ *    there is logged too.
+ * 5. Closing every window keeps the app running; only the tray menu's 結束
  *    quits, and settings still waiting for their debounce are written first.
  */
 import {
@@ -34,7 +41,7 @@ import { PRODUCT_NAME } from '../shared/constants';
 import { appGetVersion } from '../shared/ipc';
 import { MAIN_PANEL_PAGE } from '../shared/panels';
 import { registerIpcHandler } from './ipc/register';
-import { initRunLog, logEvent } from './log/run-log';
+import { errorCode, initRunLog, logEvent } from './log/run-log';
 import { registerSettingsHandlers } from './settings/ipc';
 import { flushSettingsOnQuit, loadSettings } from './settings/store';
 import {
@@ -67,7 +74,7 @@ if (started) {
 } else if (!app.requestSingleInstanceLock()) {
   // Console only: the run log belongs to the instance holding the lock.
   console.info(
-    '[app] another instance holds the single-instance lock (it opens its main panel); exiting',
+    '[app] another instance holds the single-instance lock (it brings up its panel); exiting',
   );
   app.quit();
 } else {
@@ -76,19 +83,44 @@ if (started) {
 }
 
 /**
+ * Logs why the app cannot start, shows it, and exits, instead of leaving a
+ * windowless process behind (showErrorBox is safe before `ready`).
+ */
+function exitBecause(reason: string): void {
+  logEvent('app', reason, 'error');
+  dialog.showErrorBox(`${PRODUCT_NAME} 無法啟動`, reason);
+  app.exit(1);
+}
+
+/**
  * Path of a preload bundle next to main.cjs. When the bundle is missing,
- * show why and exit, instead of throwing and leaving a windowless process
- * behind (showErrorBox is safe before `ready`).
+ * show why and exit.
  */
 function preloadPath(fileName: string): string {
   const file = path.join(__dirname, fileName);
   if (!fs.existsSync(file)) {
-    const reason = `Preload bundle not found: ${file}. Check the preload entries in forge.config.mts.`;
-    logEvent('app', reason, 'error');
-    dialog.showErrorBox(`${PRODUCT_NAME} 無法啟動`, reason);
-    app.exit(1);
+    exitBecause(
+      `Preload bundle not found: ${file}. Check the preload entries in forge.config.mts.`,
+    );
   }
   return file;
+}
+
+/**
+ * Runs one startup step after `ready`. A step that throws is logged with its
+ * name and errorCode, and the caller goes on with the next one: a missing
+ * feature beats a missing tray.
+ */
+function startupStep(name: string, run: () => void): void {
+  try {
+    run();
+  } catch (error) {
+    logEvent(
+      'app',
+      `startup step ${name} failed: ${errorCode(error)}`,
+      'error',
+    );
+  }
 }
 
 function startPrimaryInstance(): void {
@@ -155,43 +187,90 @@ function startPrimaryInstance(): void {
     canvas.stop();
   });
 
-  // A second launch (any platform; macOS only when started from a shell)
-  // opens the main panel in this instance.
+  /**
+   * A second launch or macOS `activate`, once ready: brings the open panel
+   * to the front on the page it shows (an unsaved page is not thrown away),
+   * or opens the main panel when none is open. A failure is logged.
+   */
+  function showPanelOn(event: string, what: string): void {
+    void app
+      .whenReady()
+      .then(() => {
+        logEvent(
+          'windows',
+          panels.isOpen()
+            ? `${what}: bringing the open panel to the front`
+            : `${what}: opening the main panel`,
+        );
+        panels.openOrFocus(MAIN_PANEL_PAGE);
+      })
+      .catch((error: unknown) => {
+        logEvent('windows', `${event} failed: ${errorCode(error)}`, 'error');
+      });
+  }
+  // A second launch (any platform; macOS only when started from a shell).
   app.on('second-instance', () => {
-    void app.whenReady().then(() => {
-      logEvent('windows', 'second instance launched: opening the main panel');
-      panels.open(MAIN_PANEL_PAGE);
-    });
+    showPanelOn('second-instance', 'second instance launched');
   });
   // macOS: launching the running app again (Finder, Spotlight) or clicking
-  // its Dock icon. Like a second launch (I/O matrix 再啟動一次), this opens
-  // the main panel, or switches the open panel to it and brings it forward.
+  // its Dock icon. An open panel comes to the front on the page it shows;
+  // otherwise the main panel opens. This replaces Story 1.5's 再啟動一次
+  // behaviour, which always switched to the main panel (Epic 1 retro A7).
   app.on('activate', () => {
-    void app.whenReady().then(() => {
-      logEvent('windows', 'app activated: opening the main panel');
-      panels.open(MAIN_PANEL_PAGE);
-    });
+    showPanelOn('activate', 'app activated');
   });
   // Stay resident with no window open; only the tray menu quits.
   app.on('window-all-closed', () => {});
 
-  // Session guards first, so a failure further down cannot leave a window
-  // without them; the application menu before any window can open; the
-  // canvas after the app:// handler it loads from.
-  void app.whenReady().then(() => {
-    installSessionGuards(session.defaultSession, env);
-    Menu.setApplicationMenu(buildApplicationMenu(process.platform));
-    handleAppProtocol(__dirname);
-    dock.hideAtStartup();
-    createTray(process.platform, {
-      openPage: (page) => {
-        panels.open(page);
-      },
-      quit: () => {
-        app.quit();
-      },
+  // Session guards first: if they cannot be installed, no window opens
+  // (no tray, no canvas) and the app says why and exits. Then the
+  // application menu before any window can open, and the canvas after the
+  // app:// handler it loads from; each of these may fail on its own.
+  void app
+    .whenReady()
+    .then(() => {
+      try {
+        installSessionGuards(session.defaultSession, env);
+      } catch (error) {
+        exitBecause(
+          `startup step session-guards failed: ${errorCode(error)}. No window may open without the session guards, so the app exits.`,
+        );
+        return;
+      }
+      startupStep('menu', () => {
+        Menu.setApplicationMenu(
+          buildApplicationMenu(process.platform, {
+            closePanel: () => {
+              panels.close();
+            },
+          }),
+        );
+      });
+      startupStep('app-protocol', () => {
+        handleAppProtocol(__dirname);
+      });
+      startupStep('dock', () => {
+        dock.hideAtStartup();
+      });
+      startupStep('tray', () => {
+        createTray(process.platform, {
+          openPage: (page) => {
+            panels.open(page);
+          },
+          quit: () => {
+            app.quit();
+          },
+        });
+      });
+      startupStep('canvas', () => {
+        watchDisplays({ screen, settings, source: stageSources, canvas });
+      });
+      startupStep('power', () => {
+        watchPower(powerMonitor, stageSources);
+      });
+    })
+    .catch((error: unknown) => {
+      // Something outside a step threw (exitBecause included).
+      logEvent('app', `startup failed: ${errorCode(error)}`, 'error');
     });
-    watchDisplays({ screen, settings, source: stageSources, canvas });
-    watchPower(powerMonitor, stageSources);
-  });
 }

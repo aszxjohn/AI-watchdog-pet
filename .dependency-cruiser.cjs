@@ -89,6 +89,25 @@ module.exports = {
       to: { path: '^node_modules/electron/' },
     },
     {
+      name: 'no-circular',
+      comment:
+        'No import cycles between files in src/, type-only imports included (tsPreCompilationDeps below) (Epic 1 retro R5). It sees file-level cycles only; the direction between main/ipc and main/windows is held by main-ipc-only-windows-environment.',
+      severity: 'error',
+      from: { path: '^src/' },
+      to: { circular: true },
+    },
+    {
+      name: 'main-ipc-only-windows-environment',
+      comment:
+        'main/windows builds on main/ipc (it registers its own handlers), so main/ipc may import from main/windows only environment.ts, the one place that knows which renderer a URL is (Epic 1 retro R5).',
+      severity: 'error',
+      from: { path: '^src/main/ipc/' },
+      to: {
+        path: '^src/main/windows/',
+        pathNot: '^src/main/windows/environment\\.ts$',
+      },
+    },
+    {
       name: 'not-to-unresolvable',
       comment:
         'An import that cannot be resolved would slip past the path rules above.',

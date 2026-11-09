@@ -7,6 +7,7 @@ import {
   guardWebContents,
   installSessionGuards,
   installWebContentsGuards,
+  secureWebPreferences,
   type GuardedContents,
   type GuardedSession,
 } from '../../src/main/windows/security';
@@ -36,6 +37,24 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe('secureWebPreferences', () => {
+  it('is the AD-24 baseline, spelled out even where it matches the defaults', () => {
+    expect(secureWebPreferences('/app/.vite/build/panels.cjs')).toStrictEqual({
+      preload: '/app/.vite/build/panels.cjs',
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
+      nodeIntegrationInWorker: false,
+      webviewTag: false,
+    });
+  });
+
+  it('is a fresh object each time, so one window cannot change another', () => {
+    expect(secureWebPreferences('a')).not.toBe(secureWebPreferences('a'));
+  });
 });
 
 /** `[windows] …` lines logged at warn level. */

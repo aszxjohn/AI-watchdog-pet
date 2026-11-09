@@ -13,7 +13,7 @@ import {
   type CanvasWindowHandle,
 } from '../../src/main/windows/canvas-window';
 import type { WindowsEnvironment } from '../../src/main/windows/environment';
-import { panelWebPreferences } from '../../src/main/windows/panel-window';
+import { secureWebPreferences } from '../../src/main/windows/security';
 import {
   CANVAS_REBUILD_LIMIT,
   CANVAS_REBUILD_WINDOW_MS,
@@ -231,19 +231,17 @@ describe('canvas window settings', () => {
     }
   });
 
-  it("has the panel's AD-24 webPreferences, plus no background throttling", () => {
-    expect(
-      canvasWindowOptions(PRELOAD, PRIMARY.bounds, 'darwin').webPreferences,
-    ).toStrictEqual({
-      ...panelWebPreferences(PRELOAD),
-      backgroundThrottling: false,
-    });
-    expect(panelWebPreferences(PRELOAD)).toMatchObject({
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-    });
-  });
+  it.each([['darwin'], ['win32'], ['linux']] as const)(
+    '%s: has the AD-24 webPreferences baseline from security.ts, plus no background throttling',
+    (platform) => {
+      expect(
+        canvasWindowOptions(PRELOAD, PRIMARY.bounds, platform).webPreferences,
+      ).toStrictEqual({
+        ...secureWebPreferences(PRELOAD),
+        backgroundThrottling: false,
+      });
+    },
+  );
 });
 
 describe('click-through', () => {

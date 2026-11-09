@@ -269,6 +269,28 @@ describe('subscribeStageView', () => {
     expect(listener).toHaveBeenCalledExactlyOnceWith(snapshot(6));
   });
 
+  it('gives the snapshot to a listener that unsubscribes and subscribes again at once (React StrictMode)', async () => {
+    // StrictMode in development runs every effect twice: subscribe, clean up
+    // (unsubscribe) and subscribe again, synchronously, while the first
+    // snapshot is still on its way. That first answer is then stale, so the
+    // second subscribe must fetch its own.
+    const { handler, answers } = serveManually();
+    const { subscribeStageView } = await loadPreload();
+    const listener = vi.fn();
+
+    const unsubscribe = subscribeStageView(listener);
+    unsubscribe();
+    subscribeStageView(listener);
+    answers[0]?.(ok(snapshot(1, 1)));
+    answers[1]?.(ok(snapshot(2, 2)));
+    await settle();
+
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(listener).toHaveBeenCalledExactlyOnceWith(snapshot(2, 2));
+    push(delta(3, 3));
+    expect(listener).toHaveBeenLastCalledWith(snapshot(3, 3));
+  });
+
   it('ignores a snapshot that arrives after everyone left', async () => {
     const { answers } = serveManually();
     const { subscribeStageView } = await loadPreload();

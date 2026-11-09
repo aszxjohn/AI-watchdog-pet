@@ -43,8 +43,8 @@ import { registerIpcHandler } from '../ipc/register';
 import { logEvent } from '../log/run-log';
 import { describePlacement } from './displays';
 import type { WindowsEnvironment } from './environment';
-import { panelWebPreferences } from './panel-window';
 import { OVERLAY_HOST } from './protocols';
+import { secureWebPreferences } from './security';
 
 /** Where the canvas is: a non-null StageView `canvas` section. */
 export type CanvasPlacement = NonNullable<StageCanvas>;
@@ -60,9 +60,9 @@ export const CANVAS_RENDERERS: ChannelRenderers = ['overlay'];
  * always on top, never focused, not in the taskbar, hidden until ready; a
  * non-activating panel on macOS and a tool window (`type: 'toolbar'`) on
  * Windows, where skipTaskbar and focusable alone still leave a full-screen
- * window in Alt+Tab; nothing extra on Linux. webPreferences are the panel's (AD-24)
- * plus no background throttling, so the stage keeps its pace while other
- * apps are in front.
+ * window in Alt+Tab; nothing extra on Linux. webPreferences are the AD-24
+ * baseline (security.ts) plus no background throttling, so the stage keeps
+ * its pace while other apps are in front.
  *
  * macOS also gets `enableLargerThanScreen`: without it AppKit constrains
  * even a frameless window to below the menu bar (measured: a 1920x1080
@@ -98,7 +98,7 @@ export function canvasWindowOptions(
       : {}),
     ...(platform === 'win32' ? { type: 'toolbar' } : {}),
     webPreferences: {
-      ...panelWebPreferences(preload),
+      ...secureWebPreferences(preload),
       backgroundThrottling: false,
     },
   };

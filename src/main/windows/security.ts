@@ -1,8 +1,10 @@
 /**
  * The runtime half of AD-24 and NFR5 for every window and the session they
- * share. (The static half is lint and dependency-cruiser; the per-window
- * webPreferences are in panel-window.ts and canvas-window.ts.)
+ * share. (The static half is lint and dependency-cruiser.)
  *
+ * - The AD-24 webPreferences baseline, defined here once: the panel
+ *   (panel-window.ts) and the canvas (canvas-window.ts) each spread it and
+ *   add only their own extras, so one window's extras never reach another.
  * - Every `window` webContents: `window.open` and `target=_blank` are
  *   denied, a frame may only navigate where environment.ts allows, and no
  *   `<webview>` may attach.
@@ -15,7 +17,7 @@
  * The decisions are pure functions over a WindowsEnvironment; the install
  * functions only wire them to Electron.
  */
-import type { App, Session } from 'electron';
+import type { App, Session, WebPreferences } from 'electron';
 import { logEvent } from '../log/run-log';
 import { devServerCsp } from './csp';
 import {
@@ -25,6 +27,23 @@ import {
   isAllowedRequestUrl,
   type WindowsEnvironment,
 } from './environment';
+
+/**
+ * The AD-24 webPreferences every window starts from, spelled out even where
+ * they match Electron's defaults: sandboxed, context-isolated, no Node in the
+ * page, its subframes or its workers, and no `<webview>`.
+ */
+export function secureWebPreferences(preload: string): WebPreferences {
+  return {
+    preload,
+    sandbox: true,
+    contextIsolation: true,
+    nodeIntegration: false,
+    nodeIntegrationInSubFrames: false,
+    nodeIntegrationInWorker: false,
+    webviewTag: false,
+  };
+}
 
 /** The parts of a webContents the guards touch. */
 export interface GuardedContents {

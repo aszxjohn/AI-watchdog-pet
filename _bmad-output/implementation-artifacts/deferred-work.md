@@ -88,3 +88,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md`
   summary: windows 區段只要一筆不合 schema，StageView 就會一直推不出去（R16，重提 1.6 B2／E7／E8）
   evidence: `src/main/stage-view/stage-view.ts:76-94`。觸發條件（重複的螢幕 id）沒有實際證據；之後新增區段時，改成先驗證再前進 rev。
+- source_spec: `_bmad-output/implementation-artifacts/spec-epic-1-retro-closeout.md`
+  summary: 面板開著、Dock 圖示出現時，Dock 圖示右鍵選單的「隱藏」，以及別的 app 的「隱藏其他」，仍會把整個 app 連同畫布藏起來（R2 同類，收尾 story 只處理本 app 選單的 ⌘H）
+  evidence: 兩者都走 macOS 的整個 app 隱藏（NSApplication hide），所有視窗都會被藏；收尾 story 審查 E5／B8 指出，沒有實測。Epic 3 角色上台前決定做法，例如偵測 app 被隱藏後讓畫布重新出現，並在實機確認。
+- source_spec: `_bmad-output/implementation-artifacts/spec-epic-1-retro-closeout.md`
+  summary: 「關閉面板」（⌘H）與 ⌘W 都走 win.close()，之後若有頁面擋下卸載（Epic 2 編輯頁），關閉可能被取消或丟掉未存內容
+  evidence: `src/main/windows/panel-window.ts` 的 `close()`；目前沒有任何頁面會擋。與 R12 同一類，Epic 2 編輯頁一起決定「未存內容時關閉面板」的規則。

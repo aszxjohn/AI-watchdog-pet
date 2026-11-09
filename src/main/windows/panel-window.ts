@@ -3,19 +3,24 @@
  * one panel window; its side navigation switches between the pages in
  * src/shared/panels.ts, and the tray menu opens it on a given page.
  *
- * - Opening a page while the panel is open switches it to that page and
+ * - open(page) while the panel is open switches it to that page and
  *   brings it to the front; otherwise a new window is created, hidden until
- *   `ready-to-show`.
+ *   `ready-to-show`. openOrFocus(page) only brings an open panel to the
+ *   front, on whatever page it shows (a second launch, macOS `activate`).
+ * - close() closes the panel the way ⌘W does (the application menu's
+ *   關閉面板, ⌘H); it does nothing when no panel is open.
  * - The Dock controller hears about every panel that opens and closes.
  * - A main-frame load failure or a renderer that goes away is logged and
- *   the panel is closed; the tray menu can open it again.
- * - Every window gets the AD-24 webPreferences below; security.ts adds the
- *   window-open and navigation guards to every window webContents.
+ *   the panel is closed; the tray menu can open it again. The window is
+ *   forgotten at once but destroyed on the next task, as the canvas does,
+ *   so it is not destroyed from inside its own webContents event.
+ * - The window gets the AD-24 webPreferences baseline (security.ts) and
+ *   nothing more; security.ts also adds the window-open and navigation
+ *   guards to every window webContents.
  */
 import type {
   BrowserWindowConstructorOptions,
   RenderProcessGoneDetails,
-  WebPreferences,
 } from 'electron';
 import { APP_SCHEME, PRODUCT_NAME } from '../../shared/constants';
 import { panelPageHash, type PanelPageId } from '../../shared/panels';
@@ -23,6 +28,7 @@ import { logEvent } from '../log/run-log';
 import type { DockController } from './dock';
 import type { WindowsEnvironment } from './environment';
 import { PANELS_HOST } from './protocols';
+import { secureWebPreferences } from './security';
 
 /**
  * Preload bundle file names, next to main.cjs. Forge names each bundle after
@@ -41,19 +47,6 @@ export const PANEL_WINDOW_TITLE = PRODUCT_NAME;
 /** Chromium's net::ERR_ABORTED: a load replaced by a newer one, not a failure. */
 const ERR_ABORTED = -3;
 
-/** AD-24 webPreferences, spelled out even where they match the defaults. */
-export function panelWebPreferences(preload: string): WebPreferences {
-  return {
-    preload,
-    sandbox: true,
-    contextIsolation: true,
-    nodeIntegration: false,
-    nodeIntegrationInSubFrames: false,
-    nodeIntegrationInWorker: false,
-    webviewTag: false,
-  };
-}
-
 export function panelWindowOptions(
   preload: string,
 ): BrowserWindowConstructorOptions {
@@ -63,7 +56,7 @@ export function panelWindowOptions(
     center: true,
     show: false,
     title: PANEL_WINDOW_TITLE,
-    webPreferences: panelWebPreferences(preload),
+    webPreferences: secureWebPreferences(preload),
   };
 }
 
@@ -107,6 +100,7 @@ export interface PanelWindowHandle {
   restore(): void;
   show(): void;
   focus(): void;
+  close(): void;
   destroy(): void;
 }
 
@@ -121,11 +115,24 @@ export interface PanelWindowsOptions {
   readonly dock: Pick<DockController, 'panelOpened' | 'panelClosed'>;
   /** Makes the app the active app (macOS `app.focus({ steal: true })`). */
   readonly focusApp?: () => void;
+  /**
+   * Runs `run` soon, outside the current Electron event (default
+   * `setTimeout(run, 0)`), so a window is not destroyed from inside its
+   * own `render-process-gone` or `did-fail-load` listener.
+   */
+  readonly defer?: (run: () => void) => void;
 }
 
 export interface PanelWindows {
   /** Opens the panel on `page`, or switches the open panel to it. */
   open(page: PanelPageId): void;
+  /**
+   * Brings the open panel to the front without changing its page, or, when
+   * no panel is open, opens one on `page`.
+   */
+  openOrFocus(page: PanelPageId): void;
+  /** Closes the panel as ⌘W does; nothing when no panel is open. */
+  close(): void;
   /** Whether the panel window exists. */
   isOpen(): boolean;
 }
@@ -136,6 +143,9 @@ export function createPanelWindows({
   env,
   dock,
   focusApp,
+  defer = (run) => {
+    setTimeout(run, 0);
+  },
 }: PanelWindowsOptions): PanelWindows {
   let current: PanelWindowHandle | undefined;
 
@@ -160,11 +170,22 @@ export function createPanelWindows({
     win.webContents.loadURL(panelUrl(page, env)).catch(() => {});
   }
 
-  function close(win: PanelWindowHandle, reason: string): void {
-    logEvent('windows', `panel closed after an error: ${reason}`, 'error');
-    if (!win.isDestroyed()) {
-      win.destroy();
+  /**
+   * Closes `win` after an error: logged and forgotten now (open() makes a new
+   * panel from here on), destroyed on the next task. A second error from the
+   * same window before then is ignored.
+   */
+  function closeAfterError(win: PanelWindowHandle, reason: string): void {
+    if (current !== win) {
+      return;
     }
+    logEvent('windows', `panel closed after an error: ${reason}`, 'error');
+    current = undefined;
+    defer(() => {
+      if (!win.isDestroyed()) {
+        win.destroy();
+      }
+    });
   }
 
   function create(page: PanelPageId): void {
@@ -174,7 +195,8 @@ export function createPanelWindows({
     logEvent('windows', `panel opened on ${page}`);
 
     win.once('ready-to-show', () => {
-      if (!win.isDestroyed()) {
+      // Not a window closed after an error and waiting to be destroyed.
+      if (!win.isDestroyed() && current === win) {
         bringToFront(win);
       }
     });
@@ -191,11 +213,11 @@ export function createPanelWindows({
         if (!isMainFrame || errorCode === ERR_ABORTED) {
           return;
         }
-        close(win, `load failed (${errorCode} ${errorDescription})`);
+        closeAfterError(win, `load failed (${errorCode} ${errorDescription})`);
       },
     );
     win.webContents.on('render-process-gone', (_event, details) => {
-      close(
+      closeAfterError(
         win,
         `renderer gone (${details.reason}, exit code ${details.exitCode})`,
       );
@@ -219,6 +241,19 @@ export function createPanelWindows({
         load(win, page);
       }
       bringToFront(win);
+    },
+
+    openOrFocus(page) {
+      const win = live();
+      if (win === undefined) {
+        create(page);
+        return;
+      }
+      bringToFront(win);
+    },
+
+    close() {
+      live()?.close();
     },
 
     isOpen: () => live() !== undefined,

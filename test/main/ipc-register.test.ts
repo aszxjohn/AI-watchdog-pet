@@ -41,6 +41,8 @@ const { registerCanvasReadyHandler } =
 
 const DEV_SERVER_URL = 'http://localhost:5173';
 const OVERLAY_DEV_SERVER_URL = 'http://localhost:5174';
+/** An http origin that is neither dev server's. */
+const NON_DEV_SERVER_URL = 'http://localhost:5175/';
 const APP_URL = 'app://panels/index.html';
 const OVERLAY_URL = 'app://overlay/index.html';
 
@@ -149,16 +151,32 @@ describe('registerIpcHandler', () => {
 
   describe('rejected senders', () => {
     it.each([
-      ['senderFrame is null', null],
-      ['the frame is an iframe', frame(APP_URL, frame(APP_URL))],
-      ['packaged build loading file://', frame('file:///app/index.html')],
-      ['a non-dev-server http origin', frame('http://localhost:5174/')],
-      ['a remote https origin', frame('https://example.com/')],
-      ['a frame with no URL yet', frame('')],
-      ['about:blank', frame('about:blank')],
+      ['senderFrame is null', null, 'frame is null'],
+      [
+        'the frame is an iframe',
+        frame(APP_URL, frame(APP_URL)),
+        'not a top-level frame',
+      ],
+      [
+        'packaged build loading file://',
+        frame('file:///app/index.html'),
+        'origin not allowed',
+      ],
+      [
+        'a non-dev-server http origin',
+        frame(NON_DEV_SERVER_URL),
+        'origin not allowed',
+      ],
+      [
+        'a remote https origin',
+        frame('https://example.com/'),
+        'origin not allowed',
+      ],
+      ['a frame with no URL yet', frame(''), 'origin not allowed'],
+      ['about:blank', frame('about:blank'), 'origin not allowed'],
     ])(
       'answers { ok: false } without running the handler when %s',
-      async (_label, senderFrame) => {
+      async (_label, senderFrame, reason) => {
         const handler = vi.fn(() => '1.2.3');
         registerIpcHandler(appGetVersion, ['panels'], handler);
 
@@ -178,11 +196,17 @@ describe('registerIpcHandler', () => {
         expect(logged[0]?.[0]).toBe('ipc');
         expect(
           logged[0]?.[1]?.startsWith(
-            `${appGetVersion.channel}: sender rejected`,
+            `${appGetVersion.channel}: sender rejected: ${reason}`,
           ),
         ).toBe(true);
       },
     );
+
+    it('uses a non-dev-server origin that is neither dev server', () => {
+      const origin = new URL(NON_DEV_SERVER_URL).origin;
+      expect(origin).not.toBe(new URL(DEV_SERVER_URL).origin);
+      expect(origin).not.toBe(new URL(OVERLAY_DEV_SERVER_URL).origin);
+    });
 
     it('rejects the dev server origin once packaged', async () => {
       fake.app.isPackaged = true;

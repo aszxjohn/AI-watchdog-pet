@@ -15,12 +15,22 @@ const state = vi.hoisted(() => {
     preloadExists: true,
     order: [] as string[],
     logs: [] as string[],
+    /** The run log lines logged at error level. */
+    errors: [] as string[],
+    /** Settings writes and run log lines, in the order they happened. */
+    events: [] as string[],
+    /** Recorded calls (as in `order`) that throw an error with code EFAKE. */
+    failing: new Set<string>(),
+    /** What the panel mock's isOpen() answers. */
+    panelOpen: false,
     listeners: new Map<string, Listener[]>(),
     resolveReady: () => {},
     ready: Promise.resolve(),
     trayActions: undefined as
       | { openPage(page: string): void; quit(): void }
       | undefined,
+    /** What main.ts passed to buildApplicationMenu. */
+    menuActions: undefined as { closePanel(): void } | undefined,
     /** What main.ts passed to createPanelWindows. */
     panelOptions: undefined as { focusApp?: () => void } | undefined,
     /** What main.ts passed to watchDisplays and watchPower. */
@@ -32,8 +42,13 @@ const state = vi.hoisted(() => {
       s.preloadExists = true;
       s.order = [];
       s.logs = [];
+      s.errors = [];
+      s.events = [];
+      s.failing = new Set();
+      s.panelOpen = false;
       s.listeners = new Map();
       s.trayActions = undefined;
+      s.menuActions = undefined;
       s.panelOptions = undefined;
       s.displaysOptions = undefined;
       s.powerArgs = undefined;
@@ -41,12 +56,19 @@ const state = vi.hoisted(() => {
         s.resolveReady = resolve;
       });
     },
+    /** Throws, like a failing Electron call, when `name` is in `failing`. */
+    maybeFail(name: string) {
+      if (s.failing.has(name)) {
+        throw Object.assign(new Error(`${name} failed`), { code: 'EFAKE' });
+      }
+    },
   };
   return s;
 });
 
 const record = (name: string) => () => {
   state.order.push(name);
+  state.maybeFail(name);
 };
 
 vi.mock('electron-squirrel-startup', () => ({
@@ -89,6 +111,7 @@ vi.mock('electron', () => ({
   dialog: {
     showErrorBox: (title: string) => {
       state.order.push(`dialog.showErrorBox ${title}`);
+      state.maybeFail('dialog.showErrorBox');
     },
   },
   Menu: {
@@ -111,10 +134,14 @@ vi.mock('../../src/main/log/run-log', () => ({
   initRunLog: (dir: string) => {
     state.order.push(`initRunLog ${dir.replaceAll('\\', '/')}`);
   },
-  logEvent: (category: string, message: string) => {
+  logEvent: (category: string, message: string, level = 'info') => {
     state.logs.push(`${category}: ${message}`);
+    state.events.push(`log ${category}: ${message}`);
+    if (level === 'error') {
+      state.errors.push(`${category}: ${message}`);
+    }
   },
-  errorCode: () => 'Error',
+  errorCode: (error: unknown) => (error as { code?: string }).code ?? 'Error',
 }));
 
 vi.mock('../../src/main/settings/store', () => ({
@@ -122,7 +149,15 @@ vi.mock('../../src/main/settings/store', () => ({
     state.order.push('loadSettings');
     return { fake: 'settings' };
   },
-  flushSettingsOnQuit: record('flushSettingsOnQuit'),
+  // Like the real one: a will-quit listener that writes pending settings.
+  flushSettingsOnQuit: (app: {
+    on(event: string, listener: Listener): void;
+  }) => {
+    state.order.push('flushSettingsOnQuit');
+    app.on('will-quit', () => {
+      state.events.push('settings flushed');
+    });
+  },
 }));
 
 vi.mock('../../src/main/settings/ipc', () => ({
@@ -157,6 +192,7 @@ vi.mock('../../src/main/windows/stage-sources', () => ({
   watchDisplays: (options: Record<string, unknown>) => {
     state.displaysOptions = options;
     state.order.push('watchDisplays');
+    state.maybeFail('watchDisplays');
   },
 }));
 
@@ -164,6 +200,7 @@ vi.mock('../../src/main/windows/power', () => ({
   watchPower: (...args: unknown[]) => {
     state.powerArgs = args;
     state.order.push('watchPower');
+    state.maybeFail('watchPower');
   },
 }));
 
@@ -196,6 +233,7 @@ vi.mock('../../src/main/windows/security', () => ({
   installWebContentsGuards: record('installWebContentsGuards'),
   installSessionGuards: (session: unknown) => {
     state.order.push(`installSessionGuards ${JSON.stringify(session)}`);
+    state.maybeFail('installSessionGuards');
   },
 }));
 
@@ -217,14 +255,21 @@ vi.mock('../../src/main/windows/panel-window', () => ({
       open: (page: string) => {
         state.order.push(`panels.open ${page}`);
       },
-      isOpen: () => false,
+      openOrFocus: (page: string) => {
+        state.order.push(`panels.openOrFocus ${page}`);
+        state.maybeFail('panels.openOrFocus');
+      },
+      close: record('panels.close'),
+      isOpen: () => state.panelOpen,
     };
   },
 }));
 
 vi.mock('../../src/main/windows/menu', () => ({
-  buildApplicationMenu: (platform: string) => {
+  buildApplicationMenu: (platform: string, actions: { closePanel(): void }) => {
     state.order.push(`buildApplicationMenu ${platform}`);
+    state.menuActions = actions;
+    state.maybeFail('buildApplicationMenu');
     return { fake: `menu ${platform}` };
   },
 }));
@@ -236,6 +281,7 @@ vi.mock('../../src/main/windows/tray', () => ({
   ) => {
     state.order.push(`createTray ${platform}`);
     state.trayActions = actions;
+    state.maybeFail('createTray');
   },
 }));
 
@@ -249,6 +295,20 @@ async function becomeReady(): Promise<void> {
   state.resolveReady();
   await state.ready;
   await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** What runs once ready, in order, when nothing fails. */
+function readySteps(): string[] {
+  return [
+    'installSessionGuards {"fake":"session"}',
+    `buildApplicationMenu ${process.platform}`,
+    `Menu.setApplicationMenu {"fake":"menu ${process.platform}"}`,
+    'handleAppProtocol',
+    'dock.hideAtStartup',
+    `createTray ${process.platform}`,
+    'watchDisplays',
+    'watchPower',
+  ];
 }
 
 function emit(event: string, ...args: unknown[]): void {
@@ -306,7 +366,7 @@ describe('a process that must not start', () => {
     await startMain();
     expect(info.mock.calls).toStrictEqual([
       [
-        '[app] another instance holds the single-instance lock (it opens its main panel); exiting',
+        '[app] another instance holds the single-instance lock (it brings up its panel); exiting',
       ],
     ]);
     expect(state.order.some((entry) => entry.startsWith('initRunLog'))).toBe(
@@ -342,17 +402,69 @@ describe('the primary instance', () => {
     await startMain();
     state.order = [];
     await becomeReady();
+    expect(state.order).toStrictEqual(readySteps());
+    expect(state.order.join('\n')).not.toMatch(/BrowserWindow|panels\.open/);
+    expect(state.errors).toStrictEqual([]);
+  });
+
+  it.each([
+    ['menu', 'buildApplicationMenu'],
+    ['app-protocol', 'handleAppProtocol'],
+    ['dock', 'dock.hideAtStartup'],
+    ['tray', 'createTray'],
+    ['canvas', 'watchDisplays'],
+    ['power', 'watchPower'],
+  ])(
+    'once ready, a failing startup step (%s) is logged with its errorCode and the other steps still run, the tray included',
+    async (step, call) => {
+      state.failing.add(call);
+      await startMain();
+      state.order = [];
+      await becomeReady();
+      expect(state.errors).toStrictEqual([
+        `app: startup step ${step} failed: EFAKE`,
+      ]);
+      expect(state.order).toStrictEqual(
+        readySteps().filter(
+          // A menu that cannot be built is not set.
+          (entry) => step !== 'menu' || !entry.startsWith('Menu.'),
+        ),
+      );
+      expect(state.order).toContain(`createTray ${process.platform}`);
+    },
+  );
+
+  it('once ready, failing session guards are logged and shown, and the app exits: no menu, tray or canvas', async () => {
+    state.failing.add('installSessionGuards');
+    await startMain();
+    state.order = [];
+    await becomeReady();
     expect(state.order).toStrictEqual([
       'installSessionGuards {"fake":"session"}',
-      `buildApplicationMenu ${process.platform}`,
-      `Menu.setApplicationMenu {"fake":"menu ${process.platform}"}`,
-      'handleAppProtocol',
-      'dock.hideAtStartup',
-      `createTray ${process.platform}`,
-      'watchDisplays',
-      'watchPower',
+      'dialog.showErrorBox AI Watchdog Pet 無法啟動',
+      'app.exit 1',
     ]);
-    expect(state.order.join('\n')).not.toMatch(/BrowserWindow|panels\.open/);
+    expect(state.errors).toHaveLength(1);
+    expect(state.errors[0]).toMatch(
+      /^app: startup step session-guards failed: EFAKE\./,
+    );
+  });
+
+  it('once ready, a throw outside any step is logged with its errorCode, with no unhandled rejection', async () => {
+    // The session guards fail, and so does the error box that reports it.
+    state.failing.add('installSessionGuards');
+    state.failing.add('dialog.showErrorBox');
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      await startMain();
+      await becomeReady();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+    expect(state.errors.at(-1)).toBe('app: startup failed: EFAKE');
+    expect(unhandled).not.toHaveBeenCalled();
   });
 
   it('lays the canvas out from the screen and the settings, into the windows source', async () => {
@@ -388,39 +500,75 @@ describe('the primary instance', () => {
     expect(state.order).toStrictEqual([]);
   });
 
-  it('opens the main panel when launched again, and logs it', async () => {
-    await startMain();
-    await becomeReady();
-    state.order = [];
-    emit('second-instance', {}, ['electron', '.'], '/repo');
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(state.order).toStrictEqual(['panels.open sessions']);
-    expect(state.logs).toContain(
-      'windows: second instance launched: opening the main panel',
-    );
-  });
+  describe.each([
+    [
+      'second-instance',
+      'second instance launched',
+      [{}, ['electron', '.'], '/repo'],
+    ],
+    ['activate', 'app activated', [{}, true]],
+  ] as const)(
+    '%s (a second launch; macOS: relaunch or Dock click)',
+    (event, what, args) => {
+      async function trigger(): Promise<void> {
+        emit(event, ...args);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      it('opens the main panel when none is open, and logs it', async () => {
+        await startMain();
+        await becomeReady();
+        state.order = [];
+        state.panelOpen = false;
+        await trigger();
+        expect(state.order).toStrictEqual(['panels.openOrFocus sessions']);
+        expect(state.logs).toContain(
+          `windows: ${what}: opening the main panel`,
+        );
+        expect(state.errors).toStrictEqual([]);
+      });
+
+      it('only brings an open panel to the front, on the page it shows, and logs it', async () => {
+        await startMain();
+        await becomeReady();
+        state.order = [];
+        state.panelOpen = true;
+        await trigger();
+        // openOrFocus keeps the page (windows-panel-window.test.ts); open() would switch it.
+        expect(state.order).toStrictEqual(['panels.openOrFocus sessions']);
+        expect(state.logs).toContain(
+          `windows: ${what}: bringing the open panel to the front`,
+        );
+        expect(state.logs).not.toContain(
+          `windows: ${what}: opening the main panel`,
+        );
+      });
+
+      it('logs a failure as an error, with no unhandled rejection', async () => {
+        await startMain();
+        await becomeReady();
+        state.failing.add('panels.openOrFocus');
+        const unhandled = vi.fn();
+        process.on('unhandledRejection', unhandled);
+        try {
+          await trigger();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        } finally {
+          process.off('unhandledRejection', unhandled);
+        }
+        expect(state.errors).toStrictEqual([`windows: ${event} failed: EFAKE`]);
+        expect(unhandled).not.toHaveBeenCalled();
+      });
+    },
+  );
 
   it('waits for ready before opening a panel for an early second launch', async () => {
     await startMain();
     emit('second-instance', {}, [], '/repo');
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(state.order).not.toContain('panels.open sessions');
+    expect(state.order).not.toContain('panels.openOrFocus sessions');
     await becomeReady();
-    expect(state.order.at(-1)).toBe('panels.open sessions');
-  });
-
-  it('macOS activate (relaunch from Finder or Spotlight) opens the main panel, open or not', async () => {
-    await startMain();
-    await becomeReady();
-    for (const hasVisibleWindows of [false, true]) {
-      state.order = [];
-      emit('activate', {}, hasVisibleWindows);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(state.order).toStrictEqual(['panels.open sessions']);
-    }
-    expect(state.logs).toContain(
-      'windows: app activated: opening the main panel',
-    );
+    expect(state.order.at(-1)).toBe('panels.openOrFocus sessions');
   });
 
   it('macOS: the panel makes the app active with app.focus({ steal: true })', async () => {
@@ -451,12 +599,20 @@ describe('the primary instance', () => {
     expect(state.order).toStrictEqual(['panels.open packs', 'app.quit']);
   });
 
-  it('logs the quit on will-quit, after the settings flush was registered', async () => {
+  it("wires the application menu's 關閉面板 (⌘H) to closing the panel", async () => {
     await startMain();
-    const willQuit = state.listeners.get('will-quit') ?? [];
-    expect(willQuit).toHaveLength(1);
-    willQuit[0]?.();
-    expect(state.logs.at(-1)).toBe('app: quit');
+    await becomeReady();
+    state.order = [];
+    state.menuActions?.closePanel();
+    expect(state.order).toStrictEqual(['panels.close']);
+  });
+
+  it('on will-quit, writes pending settings first, then logs the quit', async () => {
+    await startMain();
+    expect(state.listeners.get('will-quit')).toHaveLength(2);
+    state.events = [];
+    emit('will-quit');
+    expect(state.events).toStrictEqual(['settings flushed', 'log app: quit']);
   });
 
   it('shows why and exits when the panels preload bundle is missing', async () => {

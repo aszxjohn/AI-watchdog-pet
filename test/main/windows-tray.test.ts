@@ -3,8 +3,10 @@ import {
   applicationMenuTemplate,
   buildApplicationMenu,
   buildTrayMenu,
+  CLOSE_PANEL_LABEL,
   QUIT_LABEL,
   trayMenuTemplate,
+  type ApplicationMenuActions,
 } from '../../src/main/windows/menu';
 import {
   createTray,
@@ -296,14 +298,33 @@ describe('tray icon', () => {
 });
 
 describe('application menu', () => {
-  it('macOS: app menu (hide, hide others, show all, 結束), Edit and Window only', () => {
-    expect(applicationMenuTemplate('darwin')).toStrictEqual([
+  function menuActions() {
+    return { closePanel: vi.fn<ApplicationMenuActions['closePanel']>() };
+  }
+
+  /** The macOS app menu's items. */
+  function appMenuItems(handlers: ApplicationMenuActions) {
+    const appMenu = applicationMenuTemplate('darwin', handlers)?.[0];
+    return (appMenu?.submenu ?? []) as {
+      id?: string;
+      role?: string;
+      label?: string;
+      accelerator?: string;
+      click?: unknown;
+    }[];
+  }
+
+  it('macOS: app menu (關閉面板 ⌘H, 結束), Edit and Window only', () => {
+    expect(applicationMenuTemplate('darwin', menuActions())).toStrictEqual([
       {
         label: 'AI Watchdog Pet',
         submenu: [
-          { role: 'hide' },
-          { role: 'hideOthers' },
-          { role: 'unhide' },
+          {
+            id: 'close-panel',
+            label: '關閉面板',
+            accelerator: 'Command+H',
+            click: expect.any(Function),
+          },
           { type: 'separator' },
           { role: 'quit', label: '結束' },
         ],
@@ -320,17 +341,40 @@ describe('application menu', () => {
         ],
       },
     ]);
+    expect(CLOSE_PANEL_LABEL).toBe('關閉面板');
+  });
+
+  it('macOS: has no hide, hide others or show all, which would hide the canvas too (R2)', () => {
+    const json = JSON.stringify(
+      applicationMenuTemplate('darwin', menuActions()),
+    );
+    for (const role of ['hide', 'hideOthers', 'unhide']) {
+      expect(json).not.toContain(`"${role}"`);
+    }
+  });
+
+  it('macOS: ⌘H is 關閉面板, which closes the panel and nothing else', () => {
+    const handlers = menuActions();
+    const items = appMenuItems(handlers).filter(
+      (item) => item.accelerator === 'Command+H',
+    );
+    expect(items.map((item) => item.label)).toStrictEqual([CLOSE_PANEL_LABEL]);
+    expect(items[0]?.role).toBeUndefined();
+    click(items[0]);
+    expect(handlers.closePanel).toHaveBeenCalledOnce();
   });
 
   it('macOS: ⌘W closes the panel (the close role is in the Window menu)', () => {
-    const windowMenu = applicationMenuTemplate('darwin')?.find(
+    const windowMenu = applicationMenuTemplate('darwin', menuActions())?.find(
       (item) => item.role === 'window',
     );
     expect(windowMenu?.submenu).toContainEqual({ role: 'close' });
   });
 
   it('has no View menu, reload or DevTools item', () => {
-    const roles = JSON.stringify(applicationMenuTemplate('darwin'));
+    const roles = JSON.stringify(
+      applicationMenuTemplate('darwin', menuActions()),
+    );
     for (const role of [
       'viewMenu',
       'reload',
@@ -343,14 +387,19 @@ describe('application menu', () => {
   });
 
   it.each([['win32'], ['linux']] as const)('%s: no menu at all', (platform) => {
-    expect(applicationMenuTemplate(platform)).toBeNull();
-    expect(buildApplicationMenu(platform)).toBeNull();
+    expect(applicationMenuTemplate(platform, menuActions())).toBeNull();
+    expect(buildApplicationMenu(platform, menuActions())).toBeNull();
   });
 
-  it('builds the macOS template', () => {
-    const menu = buildApplicationMenu('darwin') as unknown as {
-      built: unknown;
+  it('builds the macOS template, wired to the same actions', () => {
+    const handlers = menuActions();
+    const menu = buildApplicationMenu('darwin', handlers) as unknown as {
+      built: { submenu?: { click?: unknown }[] }[];
     };
-    expect(menu.built).toStrictEqual(applicationMenuTemplate('darwin'));
+    expect(JSON.stringify(menu.built)).toBe(
+      JSON.stringify(applicationMenuTemplate('darwin', handlers)),
+    );
+    click(menu.built[0]?.submenu?.[0]);
+    expect(handlers.closePanel).toHaveBeenCalledOnce();
   });
 });

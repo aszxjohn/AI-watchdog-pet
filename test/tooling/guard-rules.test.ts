@@ -248,6 +248,8 @@ describe('dependency-cruiser rules', () => {
     'react-only-in-panels',
     'web-side-no-node-builtins',
     'web-side-no-electron',
+    'no-circular',
+    'main-ipc-only-windows-environment',
     'not-to-unresolvable',
   ];
 
@@ -312,6 +314,15 @@ describe('dependency-cruiser rules', () => {
         'react-dom/client',
       ),
       'src/main/to-missing.ts': imports('./missing'),
+      // The cycle closes only through a type-only import, so the rule must
+      // count those (tsPreCompilationDeps).
+      'src/main/cycle-a.ts': `${imports('./cycle-b')}export type A = number;\n`,
+      'src/main/cycle-b.ts':
+        "import type { A } from './cycle-a';\nexport const b: A = 1;\n",
+      'src/main/windows/target.ts': target,
+      'src/main/windows/environment.ts': target,
+      'src/main/ipc/to-windows.ts': imports('../windows/target'),
+      'src/main/ipc/to-environment.ts': imports('../windows/environment'),
     });
     copyFileSync(
       path.join(REPO_ROOT, '.dependency-cruiser.cjs'),
@@ -404,6 +415,11 @@ describe('dependency-cruiser rules', () => {
       'node_modules/react-dom/client.js',
     ],
     ['not-to-unresolvable', 'src/main/to-missing.ts', './missing'],
+    [
+      'main-ipc-only-windows-environment',
+      'src/main/ipc/to-windows.ts',
+      'src/main/windows/target.ts',
+    ],
   ])('%s: %s -> %s', (rule, from, to) => {
     expect(targets(rule, from)).toContain(to);
   });
@@ -427,6 +443,22 @@ describe('dependency-cruiser rules', () => {
   it('lets src/panels import react and react-dom', () => {
     expect(
       violations.filter((v) => v.from === 'src/panels/uses-react.ts'),
+    ).toStrictEqual([]);
+  });
+
+  it('no-circular reports the cycle between cycle-a.ts and cycle-b.ts', () => {
+    // A cycle is reported once, from whichever file the cruise reached first.
+    const cycle = violations
+      .filter((v) => v.rule.name === 'no-circular')
+      .map((v) => [v.from, v.to].sort().join(' <-> '));
+    expect(cycle).toStrictEqual([
+      'src/main/cycle-a.ts <-> src/main/cycle-b.ts',
+    ]);
+  });
+
+  it('lets main/ipc import main/windows/environment.ts', () => {
+    expect(
+      violations.filter((v) => v.from === 'src/main/ipc/to-environment.ts'),
     ).toStrictEqual([]);
   });
 

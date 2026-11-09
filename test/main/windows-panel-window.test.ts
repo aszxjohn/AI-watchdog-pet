@@ -14,12 +14,12 @@ import type { WindowsEnvironment } from '../../src/main/windows/environment';
 import {
   createPanelWindows,
   panelUrl,
-  panelWebPreferences,
   panelWindowOptions,
   PRELOAD_BUNDLES,
   type PanelWindowHandle,
 } from '../../src/main/windows/panel-window';
 import { OVERLAY_HOST, PANELS_HOST } from '../../src/main/windows/protocols';
+import { secureWebPreferences } from '../../src/main/windows/security';
 
 vi.mock('electron', () => import('../helpers/fake-electron'));
 
@@ -135,8 +135,9 @@ class FakeWindow implements PanelWindowHandle {
     this.destroyed = true;
     this.emit('closed');
   }
-  /** What the user closing the window does. */
+  /** What closing the window (⌘W, the close button, win.close()) does. */
   close() {
+    this.calls.push('close');
     this.destroyed = true;
     this.emit('closed');
   }
@@ -146,28 +147,32 @@ function setup(env: WindowsEnvironment = PACKAGED) {
   FakeWindow.created = [];
   const dock = { panelOpened: vi.fn(), panelClosed: vi.fn() };
   const focusApp = vi.fn();
+  /** Work the panel deferred to the next task; runDeferred() runs it. */
+  const deferred: (() => void)[] = [];
   const panels = createPanelWindows({
     createWindow: (options) => new FakeWindow(options),
     preload: PRELOAD,
     env,
     dock,
     focusApp,
+    defer: (run) => {
+      deferred.push(run);
+    },
   });
   const win = () => FakeWindow.created.at(-1) as FakeWindow;
-  return { panels, dock, focusApp, win };
+  const runDeferred = () => {
+    for (const run of deferred.splice(0)) {
+      run();
+    }
+  };
+  return { panels, dock, focusApp, win, deferred, runDeferred };
 }
 
 describe('panel window settings', () => {
-  it('has the AD-24 webPreferences, spelled out', () => {
-    expect(panelWebPreferences(PRELOAD)).toStrictEqual({
-      preload: PRELOAD,
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      nodeIntegrationInSubFrames: false,
-      nodeIntegrationInWorker: false,
-      webviewTag: false,
-    });
+  it('has the AD-24 webPreferences baseline from security.ts, and nothing more', () => {
+    expect(panelWindowOptions(PRELOAD).webPreferences).toStrictEqual(
+      secureWebPreferences(PRELOAD),
+    );
   });
 
   it('is 960 x 680, centred, hidden until ready-to-show', () => {
@@ -177,7 +182,7 @@ describe('panel window settings', () => {
       center: true,
       show: false,
       title: 'AI Watchdog Pet',
-      webPreferences: panelWebPreferences(PRELOAD),
+      webPreferences: secureWebPreferences(PRELOAD),
     });
   });
 });
@@ -279,6 +284,34 @@ describe('opening the panel', () => {
   });
 });
 
+describe('openOrFocus (a second launch, macOS activate)', () => {
+  it('opens the panel on the page when none is open', () => {
+    const { panels, dock, win } = setup();
+    panels.openOrFocus('sessions');
+    expect(FakeWindow.created).toHaveLength(1);
+    expect(win().loaded).toStrictEqual(['app://panels/index.html#/sessions']);
+    expect(dock.panelOpened).toHaveBeenCalledOnce();
+    expect(lines(info)).toContain('[windows] panel opened on sessions');
+  });
+
+  it('only brings an open panel to the front, leaving it on its page', () => {
+    const { panels, dock, focusApp, win } = setup();
+    panels.open('settings');
+    const first = win();
+    first.minimized = true;
+    info.mockClear();
+
+    panels.openOrFocus('sessions');
+
+    expect(FakeWindow.created).toHaveLength(1);
+    expect(first.loaded).toStrictEqual(['app://panels/index.html#/settings']);
+    expect(first.calls).toStrictEqual(['restore', 'show', 'focus']);
+    expect(focusApp).toHaveBeenCalledOnce();
+    expect(dock.panelOpened).toHaveBeenCalledOnce();
+    expect(lines(info)).toStrictEqual([]);
+  });
+});
+
 describe('closing the panel', () => {
   it('tells the Dock, logs it, and lets the menu open a new one', () => {
     const { panels, dock, win } = setup();
@@ -295,6 +328,29 @@ describe('closing the panel', () => {
     expect(dock.panelOpened).toHaveBeenCalledTimes(2);
   });
 
+  it('close() closes the open panel the way ⌘W does', () => {
+    const { panels, dock, win } = setup();
+    panels.open('settings');
+    panels.close();
+    expect(win().calls).toStrictEqual(['close']);
+    expect(dock.panelClosed).toHaveBeenCalledOnce();
+    expect(panels.isOpen()).toBe(false);
+    expect(lines(info)).toContain('[windows] panel closed');
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('close() does nothing when no panel is open', () => {
+    const { panels, dock } = setup();
+    panels.close();
+    panels.open('sessions');
+    panels.close();
+    info.mockClear();
+    panels.close();
+    expect(FakeWindow.created).toHaveLength(1);
+    expect(dock.panelClosed).toHaveBeenCalledOnce();
+    expect(info).not.toHaveBeenCalled();
+  });
+
   it('treats a destroyed window as closed', () => {
     const { panels, win } = setup();
     panels.open('sessions');
@@ -307,7 +363,7 @@ describe('closing the panel', () => {
 
 describe('panel errors', () => {
   it('closes the panel when the page fails to load, and logs why', () => {
-    const { panels, dock, win } = setup();
+    const { panels, dock, win, runDeferred } = setup();
     panels.open('sessions');
     win().emitContents(
       'did-fail-load',
@@ -317,25 +373,30 @@ describe('panel errors', () => {
       'app://panels/index.html',
       true,
     );
-    expect(win().calls).toContain('destroy');
-    expect(dock.panelClosed).toHaveBeenCalledOnce();
     expect(panels.isOpen()).toBe(false);
     expect(lines(error)).toStrictEqual([
       '[windows] panel closed after an error: load failed (-6 ERR_FILE_NOT_FOUND)',
     ]);
+
+    // Destroyed on the next task, not inside the webContents event.
+    expect(win().calls).not.toContain('destroy');
+    runDeferred();
+    expect(win().calls).toContain('destroy');
+    expect(dock.panelClosed).toHaveBeenCalledOnce();
   });
 
   it('ignores an aborted load and a failed subframe', () => {
-    const { panels, win } = setup();
+    const { panels, win, deferred } = setup();
     panels.open('sessions');
     win().emitContents('did-fail-load', {}, -3, 'ERR_ABORTED', 'x', true);
     win().emitContents('did-fail-load', {}, -6, 'ERR_FILE', 'x', false);
+    expect(deferred).toHaveLength(0);
     expect(win().calls).not.toContain('destroy');
     expect(panels.isOpen()).toBe(true);
   });
 
   it('closes the panel when its renderer goes away, and logs why', () => {
-    const { panels, dock, win } = setup();
+    const { panels, dock, win, runDeferred } = setup();
     panels.open('sessions');
     win().emitContents(
       'render-process-gone',
@@ -345,14 +406,92 @@ describe('panel errors', () => {
         exitCode: 11,
       },
     );
-    expect(win().calls).toContain('destroy');
-    expect(dock.panelClosed).toHaveBeenCalledOnce();
     expect(lines(error)).toStrictEqual([
       '[windows] panel closed after an error: renderer gone (crashed, exit code 11)',
     ]);
+    expect(win().calls).not.toContain('destroy');
+    expect(dock.panelClosed).not.toHaveBeenCalled();
+
+    runDeferred();
+    expect(win().calls).toContain('destroy');
+    expect(dock.panelClosed).toHaveBeenCalledOnce();
 
     panels.open('sessions');
     expect(FakeWindow.created).toHaveLength(2);
+  });
+
+  it('destroys it on the next task by default (setTimeout 0), as the canvas does', async () => {
+    FakeWindow.created = [];
+    const dock = { panelOpened: vi.fn(), panelClosed: vi.fn() };
+    const panels = createPanelWindows({
+      createWindow: (options) => new FakeWindow(options),
+      preload: PRELOAD,
+      env: PACKAGED,
+      dock,
+    });
+    panels.open('sessions');
+    const gone = FakeWindow.created[0] as FakeWindow;
+    gone.emitContents(
+      'render-process-gone',
+      {},
+      { reason: 'killed', exitCode: 9 },
+    );
+    expect(gone.calls).not.toContain('destroy');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(gone.calls).toContain('destroy');
+    expect(dock.panelClosed).toHaveBeenCalledOnce();
+  });
+
+  it('logs and destroys a window once, however many errors it reports before then', () => {
+    const { panels, win, deferred, runDeferred } = setup();
+    panels.open('sessions');
+    win().emitContents('did-fail-load', {}, -6, 'ERR_FILE', 'x', true);
+    win().emitContents(
+      'render-process-gone',
+      {},
+      { reason: 'crashed', exitCode: 11 },
+    );
+    expect(lines(error)).toHaveLength(1);
+    expect(deferred).toHaveLength(1);
+    runDeferred();
+    expect(win().calls.filter((call) => call === 'destroy')).toHaveLength(1);
+  });
+
+  it('does not show a window closed after an error, even if it becomes ready before it is destroyed', () => {
+    const { panels, focusApp, win } = setup();
+    panels.open('sessions');
+    win().emitContents(
+      'render-process-gone',
+      {},
+      { reason: 'crashed', exitCode: 11 },
+    );
+    win().emit('ready-to-show');
+    expect(win().calls).toStrictEqual([]);
+    expect(focusApp).not.toHaveBeenCalled();
+  });
+
+  it('opens a new panel while the old one waits to be destroyed, and the Dock count stays right', () => {
+    const { panels, dock, win, runDeferred } = setup();
+    panels.open('sessions');
+    const gone = win();
+    gone.emitContents(
+      'render-process-gone',
+      {},
+      { reason: 'crashed', exitCode: 11 },
+    );
+
+    panels.open('packs');
+    const next = win();
+    expect(next).not.toBe(gone);
+    runDeferred();
+
+    expect(gone.calls).toContain('destroy');
+    expect(panels.isOpen()).toBe(true);
+    expect(dock.panelOpened).toHaveBeenCalledTimes(2);
+    expect(dock.panelClosed).toHaveBeenCalledOnce();
+    // close() reaches the new panel, not the destroyed one.
+    panels.close();
+    expect(next.calls).toContain('close');
   });
 });
 

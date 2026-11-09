@@ -104,6 +104,16 @@ D3 只在面板關著時做：面板開著的話，它的 renderer 也會被一�
 | G4 | 再啟動一次 app | 不開第二個實例，改打開主面板 | 未驗證（沒有 Windows 機器） |
 | G5 | 看紀錄 | 有 `canvas ready (renderer webgl, …)`；沒有 `canvas window is at …, not the requested …` 的位置警告（高 DPI 螢幕最容易出現） | 未驗證（沒有 Windows 機器） |
 
+## H. 收尾 story 追加（Epic 1 回顧 A2、A7；`spec-epic-1-retro-closeout.md`）
+
+收尾 story commit 後，用重新打包的版本驗。
+
+| # | 做什麼 | 應該看到 | 結果 |
+|---|---|---|---|
+| H1 | 打開面板，面板在前景時按 ⌘H | 面板關閉、Dock 圖示消失；桌面上的畫布仍在（點擊照常穿透）；應用程式選單（app 名稱那一欄）只有「關閉面板 ⌘H」與「結束」，沒有「隱藏」「隱藏其他」「顯示全部」 | 待驗 |
+| H2 | 面板切到「舞台設定」後，點 Dock 圖示，或在 Finder 對 app 點兩下 | 面板帶到前景，仍停在舞台設定；紀錄 `app activated: bringing the open panel to the front`，沒有 `panel switched to sessions` | 待驗 |
+| H3 | 關掉面板後，在 Finder 對 app 點兩下 | 打開主面板（管理 session）；紀錄 `app activated: opening the main panel` | 待驗 |
+
 ## 自動檢查已涵蓋，不用手動
 
 - **Story 1.1**：版本鎖定、目錄結構、typecheck、lint：CI（macOS＋Windows）。
