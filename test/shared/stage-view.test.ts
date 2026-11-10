@@ -43,12 +43,15 @@ const CANVAS = {
 const POWER = { suspended: false, locked: false };
 
 const VIEW: StageView = {
-  settings: { rev: 0, values: { canvasDisplayId: null } },
+  settings: { rev: 0, values: { ...SETTINGS_DEFAULTS, canvasDisplayId: null } },
   displays: [DISPLAY],
   canvas: CANVAS,
   power: POWER,
 };
-const NEXT_SETTINGS = { rev: 4, values: { canvasDisplayId: 69733632 } };
+const NEXT_SETTINGS = {
+  rev: 4,
+  values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 69733632 },
+};
 
 describe('displayIdSchema', () => {
   it('accepts exactly what the canvasDisplayId setting accepts', () => {
@@ -175,7 +178,13 @@ describe('stageViewSchema', () => {
     ['an unknown section', { ...VIEW, actors: [] }],
     [
       'bad settings',
-      { ...VIEW, settings: { rev: 0, values: { canvasDisplayId: -1 } } },
+      {
+        ...VIEW,
+        settings: {
+          rev: 0,
+          values: { ...SETTINGS_DEFAULTS, canvasDisplayId: -1 },
+        },
+      },
     ],
     ['bad displays', { ...VIEW, displays: [{ ...DISPLAY, id: -1 }] }],
     ['null', null],

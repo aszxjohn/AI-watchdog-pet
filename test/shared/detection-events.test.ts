@@ -11,6 +11,7 @@ import {
   makeSessionKey,
   nativeIdSchema,
   sessionKeySchema,
+  syncReadySchema,
   VIA_CODES,
   viaSchema,
 } from '../../src/shared/detection-events';
@@ -245,6 +246,10 @@ describe('detectionEventSchema', () => {
     });
   });
 
+  it.each(DETECTION_EVENT_TYPES)('round-trips a replayed %s', (type) => {
+    expectRoundTrip(detectionEventSchema, { ...SAMPLES[type], replay: true });
+  });
+
   it('round-trips an event read from a registry', () => {
     expectRoundTrip(detectionEventSchema, {
       ...SAMPLES['approval.request'],
@@ -342,7 +347,15 @@ describe('detectionEventSchema', () => {
     ['an extra field', { ...SAMPLES.activity, message: 'hi' }],
     ['an error message', { ...SAMPLES.error, message: 'boom' }],
     ['tool.end with toolName', { ...SAMPLES['tool.end'], toolName: 'Bash' }],
-    ['a replay flag', { ...SAMPLES['turn.start'], replay: true }],
+    ['replay false', { ...SAMPLES['turn.start'], replay: false }],
+    ['replay undefined', { ...SAMPLES['turn.start'], replay: undefined }],
+    ['replay as a string', { ...SAMPLES['turn.end'], replay: 'true' }],
+    ['replay as a number', { ...SAMPLES.error, replay: 1 }],
+    [
+      'a replayed sync.ready',
+      { type: 'sync.ready', source: 'codex', replay: true },
+    ],
+    ['sync.ready', { type: 'sync.ready', source: 'codex' }],
     ['a negative ts', { ...SAMPLES['turn.start'], ts: -1 }],
     ['a fractional ts', { ...SAMPLES['turn.start'], ts: 1.5 }],
     ['an unsafe ts', { ...SAMPLES['turn.start'], ts: 2 ** 53 }],
@@ -373,5 +386,28 @@ describe('detectionEventSchema', () => {
     ['null', null],
   ])('rejects %s', (_label, value) => {
     expectRejected(detectionEventSchema, value);
+  });
+});
+
+describe('syncReadySchema', () => {
+  it.each(SOURCE_CODES)('round-trips sync.ready from %s', (source) => {
+    expectRoundTrip(syncReadySchema, { type: 'sync.ready', source });
+  });
+
+  it.each([
+    ['an unknown source', { type: 'sync.ready', source: 'claude' }],
+    ['no source', { type: 'sync.ready' }],
+    ['another type', { type: 'session.start', source: 'codex' }],
+    ['no type', { source: 'codex' }],
+    ['a replay flag', { type: 'sync.ready', source: 'codex', replay: true }],
+    [
+      'a session key',
+      { type: 'sync.ready', source: 'codex', sessionKey: `codex:${UUID}` },
+    ],
+    ['a ts', { type: 'sync.ready', source: 'codex', ts: COMMON.ts }],
+    ['a detection event', SAMPLES['session.start']],
+    ['null', null],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(syncReadySchema, value);
   });
 });

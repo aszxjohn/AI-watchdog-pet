@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stageViewDelta, stageViewSubscribe } from '../../src/shared/ipc';
+import { SETTINGS_DEFAULTS } from '../../src/shared/settings';
 import type {
   StageViewDelta,
   StageViewSnapshot,
@@ -18,7 +19,7 @@ function snapshot(rev: number, id: number | null = null): StageViewSnapshot {
   return {
     rev,
     view: {
-      settings: { rev, values: { canvasDisplayId: id } },
+      settings: { rev, values: { ...SETTINGS_DEFAULTS, canvasDisplayId: id } },
       displays: [],
       canvas: null,
       power: { suspended: false, locked: false },

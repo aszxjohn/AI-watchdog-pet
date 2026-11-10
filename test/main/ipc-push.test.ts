@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pushToRenderer, type PushTarget } from '../../src/main/ipc/push';
 import { stageViewDelta } from '../../src/shared/ipc';
 import type { StageViewDelta } from '../../src/shared/stage-view';
+import { SETTINGS_DEFAULTS } from '../../src/shared/settings';
 import { z } from '../../src/shared/zod-setup';
 import * as fake from '../helpers/fake-electron';
 
@@ -13,7 +14,9 @@ const OVERLAY_DEV_SERVER_URL = 'http://localhost:5174';
 const BOTH = ['panels', 'overlay'] as const;
 const DELTA: StageViewDelta = {
   rev: 1,
-  sections: { settings: { rev: 1, values: { canvasDisplayId: 7 } } },
+  sections: {
+    settings: { rev: 1, values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 7 } },
+  },
 };
 
 let warn: ReturnType<typeof vi.spyOn>;

@@ -87,9 +87,10 @@ export function makeSessionKey(
 const detectionIdSchema = z.string().min(1).max(DETECTION_ID_MAX_LENGTH);
 
 /**
- * When the AI tool wrote the fact, epoch milliseconds. It is only for
- * ordering and display; every duration the reducer measures uses the
- * monotonic clock at receipt (AD-22).
+ * When the AI tool wrote the fact, epoch milliseconds. It is for ordering
+ * and display; durations use the monotonic clock at receipt (AD-22). The one
+ * exception is a replayed event, whose monotonic time main/detection/sessions
+ * back-dates from `ts`.
  */
 export const eventTsSchema = z.int().nonnegative();
 
@@ -104,6 +105,12 @@ const commonFields = {
   ts: eventTsSchema,
   via: viaSchema,
   confidence: confidenceSchema,
+  /**
+   * Present, and true, only on events an adapter replays from records
+   * written before the stage started (AD-22). A replayed event rebuilds the
+   * session's conditions but produces no `done` and holds no `error`.
+   */
+  replay: z.literal(true).exactOptional(),
 };
 
 /**
@@ -244,3 +251,18 @@ export type DetectionEventOf<T extends DetectionEventType> = Extract<
   DetectionEvent,
   { type: T }
 >;
+
+/**
+ * An adapter's signal that it has finished replaying `source`'s records
+ * (AD-22). Not a detection event: it belongs to no session, and
+ * detectionEventSchema does not accept it.
+ */
+export const syncReadySchema = z.strictObject({
+  type: z.literal('sync.ready'),
+  source: sourceCodeSchema,
+});
+
+export type SyncReady = z.infer<typeof syncReadySchema>;
+
+/** What an adapter hands main/detection/sessions: an event or `sync.ready`. */
+export type AdapterOutput = DetectionEvent | SyncReady;

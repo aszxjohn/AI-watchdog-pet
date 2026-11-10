@@ -10,12 +10,16 @@ import {
   type CanvasReadyReport,
 } from '../../src/shared/ipc';
 import type { OverlayApi } from '../../src/shared/preload-api';
+import { SETTINGS_DEFAULTS } from '../../src/shared/settings';
 import type { StageViewSnapshot } from '../../src/shared/stage-view';
 
 const SNAPSHOT: StageViewSnapshot = {
   rev: 4,
   view: {
-    settings: { rev: 0, values: { canvasDisplayId: null } },
+    settings: {
+      rev: 0,
+      values: { ...SETTINGS_DEFAULTS, canvasDisplayId: null },
+    },
     displays: [],
     canvas: {
       displayId: 1,

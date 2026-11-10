@@ -30,6 +30,17 @@ const NOW = new Date(2026, 10, 5, 17, 4, 9).getTime();
 const BACKUP = 'settings.json.broken-20261105-170409';
 const DISPLAY_ID = 69733632;
 
+/** A complete set of values, none of them the default. */
+const CUSTOM_VALUES = {
+  canvasDisplayId: DISPLAY_ID,
+  doneMs: 8000,
+  idleMs: 600_000,
+  errorHoldMs: 45_000,
+  sessionExpireMs: 10_800_000,
+  discoveryWindowMs: 3_600_000,
+  syncTimeoutMs: 20_000,
+} as const;
+
 let dir: string;
 let file: string;
 let consoleSpies: ReturnType<typeof vi.spyOn>[];
@@ -112,14 +123,11 @@ describe('loading settings.json', () => {
   });
 
   it('reads a valid file as is, without backing it up or writing it', () => {
-    const text = writeFile({ schemaVersion: 1, canvasDisplayId: DISPLAY_ID });
+    const text = writeFile({ schemaVersion: 1, ...CUSTOM_VALUES });
 
     const store = load();
 
-    expect(store.get()).toStrictEqual({
-      rev: 0,
-      values: { canvasDisplayId: DISPLAY_ID },
-    });
+    expect(store.get()).toStrictEqual({ rev: 0, values: CUSTOM_VALUES });
     expect(files()).toStrictEqual(['settings.json']);
     expect(fs.readFileSync(file, 'utf8')).toBe(text);
   });
@@ -127,12 +135,12 @@ describe('loading settings.json', () => {
   it('reads a valid file saved with a UTF-8 BOM, without backing it up or writing it', () => {
     const text = writeFile(
       String.fromCharCode(0xfeff) +
-        JSON.stringify({ schemaVersion: 1, canvasDisplayId: DISPLAY_ID }),
+        JSON.stringify({ schemaVersion: 1, ...CUSTOM_VALUES }),
     );
 
     const store = load();
 
-    expect(store.get().values).toStrictEqual({ canvasDisplayId: DISPLAY_ID });
+    expect(store.get().values).toStrictEqual(CUSTOM_VALUES);
     expect(store.canWrite).toBe(true);
     expect(files()).toStrictEqual(['settings.json']);
     expect(fs.readFileSync(file, 'utf8')).toBe(text);
@@ -148,6 +156,46 @@ describe('loading settings.json', () => {
     expect(files()).toStrictEqual(['settings.json']);
     expect(fs.readFileSync(file, 'utf8')).toBe(text);
     expect(settingsLines()).toStrictEqual([]);
+  });
+
+  it('reads a file from before the detection timings: they take their defaults, nothing is backed up or written', () => {
+    const text = writeFile({ schemaVersion: 1, canvasDisplayId: DISPLAY_ID });
+
+    const store = load();
+
+    expect(store.get()).toStrictEqual({
+      rev: 0,
+      values: { ...SETTINGS_DEFAULTS, canvasDisplayId: DISPLAY_ID },
+    });
+    expect(store.canWrite).toBe(true);
+    vi.runAllTimers();
+    expect(files()).toStrictEqual(['settings.json']);
+    expect(fs.readFileSync(file, 'utf8')).toBe(text);
+    expect(settingsLines()).toStrictEqual([]);
+  });
+
+  it('fixes a detection timing outside its range like any bad field', () => {
+    const text = writeFile({
+      schemaVersion: 1,
+      ...CUSTOM_VALUES,
+      doneMs: 999,
+      sessionExpireMs: 86_400_001,
+    });
+
+    const store = load();
+
+    const expected = {
+      ...CUSTOM_VALUES,
+      doneMs: SETTINGS_DEFAULTS.doneMs,
+      sessionExpireMs: SETTINGS_DEFAULTS.sessionExpireMs,
+    };
+    expect(store.get().values).toStrictEqual(expected);
+    expect(files()).toStrictEqual(['settings.json', BACKUP]);
+    expect(fs.readFileSync(path.join(dir, BACKUP), 'utf8')).toBe(text);
+    expect(readFile()).toStrictEqual({ schemaVersion: 1, ...expected });
+    expect(logged('warn')).toStrictEqual([
+      `[settings] settings.json has bad fields (invalid: doneMs, sessionExpireMs); copied it to ${BACKUP}, using defaults for invalid fields, dropping unknown ones`,
+    ]);
   });
 
   describe('a broken file', () => {
@@ -236,6 +284,7 @@ describe('loading settings.json', () => {
       expect(files()).toStrictEqual(['settings.json', BACKUP]);
       expect(readFile()).toStrictEqual({
         schemaVersion: 1,
+        ...SETTINGS_DEFAULTS,
         canvasDisplayId: DISPLAY_ID,
       });
     });
@@ -291,7 +340,10 @@ describe('loading settings.json', () => {
         },
       });
 
-      expect(store.get().values).toStrictEqual({ canvasDisplayId: 5 });
+      expect(store.get().values).toStrictEqual({
+        ...SETTINGS_DEFAULTS,
+        canvasDisplayId: 5,
+      });
       expect(logged('info')).toContain(
         '[settings] migrated settings.json from schemaVersion 1 to 3',
       );
@@ -362,7 +414,7 @@ describe('loading settings.json', () => {
       expect(fs.readFileSync(path.join(dir, BACKUP), 'utf8')).toBe(text);
       expect(readFile()).toStrictEqual({
         schemaVersion: 2,
-        canvasDisplayId: null,
+        ...SETTINGS_DEFAULTS,
       });
       expect(settingsLines()).toStrictEqual([
         '[settings] migrated settings.json from schemaVersion 1 to 2',
@@ -393,6 +445,7 @@ describe('loading settings.json', () => {
       (_label, content, problems) => {
         const text = writeFile(content);
         const expected = {
+          ...SETTINGS_DEFAULTS,
           canvasDisplayId:
             typeof content.canvasDisplayId === 'number' &&
             content.canvasDisplayId >= 0
@@ -485,7 +538,7 @@ describe('patching', () => {
     expect(result).toStrictEqual({ rev: 1, merged: false });
     expect(store.get()).toStrictEqual({
       rev: 1,
-      values: { canvasDisplayId: DISPLAY_ID },
+      values: { ...SETTINGS_DEFAULTS, canvasDisplayId: DISPLAY_ID },
     });
     expect(onChange).toHaveBeenCalledExactlyOnceWith(store.get());
   });
@@ -514,7 +567,7 @@ describe('patching', () => {
     expect(result).toStrictEqual({ rev: 3, merged: true });
     expect(store.get()).toStrictEqual({
       rev: 3,
-      values: { canvasDisplayId: 3 },
+      values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 3 },
     });
   });
 
@@ -627,7 +680,11 @@ describe('writing settings.json', () => {
       file,
     );
     expect(files()).toStrictEqual(['settings.json']);
-    expect(readFile()).toStrictEqual({ schemaVersion: 1, canvasDisplayId: 3 });
+    expect(readFile()).toStrictEqual({
+      schemaVersion: 1,
+      ...SETTINGS_DEFAULTS,
+      canvasDisplayId: 3,
+    });
 
     vi.runAllTimers();
     expect(counting.writeFileSync).toHaveBeenCalledOnce();
@@ -643,7 +700,11 @@ describe('writing settings.json', () => {
     vi.advanceTimersByTime(SETTINGS_FLUSH_DEBOUNCE_MS);
 
     expect(counting.writeFileSync).toHaveBeenCalledTimes(2);
-    expect(readFile()).toStrictEqual({ schemaVersion: 1, canvasDisplayId: 2 });
+    expect(readFile()).toStrictEqual({
+      schemaVersion: 1,
+      ...SETTINGS_DEFAULTS,
+      canvasDisplayId: 2,
+    });
   });
 
   it('keeps the values in memory, removes the temp file and retries on the next flush when a write fails', () => {
@@ -673,7 +734,11 @@ describe('writing settings.json', () => {
     vi.advanceTimersByTime(SETTINGS_FLUSH_DEBOUNCE_MS);
 
     expect(files()).toStrictEqual(['settings.json']);
-    expect(readFile()).toStrictEqual({ schemaVersion: 1, canvasDisplayId: 2 });
+    expect(readFile()).toStrictEqual({
+      schemaVersion: 1,
+      ...SETTINGS_DEFAULTS,
+      canvasDisplayId: 2,
+    });
   });
 
   it('flushSync writes pending changes at once and cancels the timer', () => {
@@ -685,6 +750,7 @@ describe('writing settings.json', () => {
 
     expect(readFile()).toStrictEqual({
       schemaVersion: 1,
+      ...SETTINGS_DEFAULTS,
       canvasDisplayId: DISPLAY_ID,
     });
     vi.runAllTimers();
@@ -736,6 +802,7 @@ describe('writing settings.json', () => {
 
     expect(readFile()).toStrictEqual({
       schemaVersion: 1,
+      ...SETTINGS_DEFAULTS,
       canvasDisplayId: null,
     });
     expect(files()).toStrictEqual(['settings.json', BACKUP]);
@@ -754,6 +821,7 @@ describe('flushSettingsOnQuit', () => {
 
     expect(readFile()).toStrictEqual({
       schemaVersion: 1,
+      ...SETTINGS_DEFAULTS,
       canvasDisplayId: DISPLAY_ID,
     });
   });

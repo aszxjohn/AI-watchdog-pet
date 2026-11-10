@@ -29,6 +29,7 @@ import { localHourStamp, localIsoTimestamp } from './local-time';
 /** English codes only; the display layer translates. */
 export type RunLogCategory =
   | 'app'
+  | 'detection'
   | 'ipc'
   | 'settings'
   | 'stage-view'

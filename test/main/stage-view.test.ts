@@ -106,7 +106,10 @@ describe('StageView composition', () => {
           {
             rev: 1,
             sections: {
-              settings: { rev: 1, values: { canvasDisplayId: 69733632 } },
+              settings: {
+                rev: 1,
+                values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 69733632 },
+              },
             },
           },
         ],
@@ -116,7 +119,12 @@ describe('StageView composition', () => {
         args: [
           {
             rev: 2,
-            sections: { settings: { rev: 2, values: { canvasDisplayId: 5 } } },
+            sections: {
+              settings: {
+                rev: 2,
+                values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 5 },
+              },
+            },
           },
         ],
       },
@@ -265,7 +273,10 @@ describe('subscribers', () => {
     expect(again).toStrictEqual({
       rev: 1,
       view: {
-        settings: { rev: 1, values: { canvasDisplayId: 2 } },
+        settings: {
+          rev: 1,
+          values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 2 },
+        },
         ...WINDOWS_BEFORE_READY,
       },
     });

@@ -12,6 +12,7 @@ import {
 } from '../../src/panels/display-options';
 import type { IpcResult } from '../../src/shared/ipc';
 import {
+  SETTINGS_DEFAULTS,
   settingsPatchSchema,
   type SettingsPatch,
   type SettingsPatchResult,
@@ -42,7 +43,10 @@ function view(
   displays: StageDisplay[] = [BUILT_IN, EXTERNAL],
   rev = 3,
 ): Pick<StageView, 'settings' | 'displays'> {
-  return { settings: { rev, values: { canvasDisplayId } }, displays };
+  return {
+    settings: { rev, values: { ...SETTINGS_DEFAULTS, canvasDisplayId } },
+    displays,
+  };
 }
 
 describe('displayOptionLabel', () => {
@@ -339,7 +343,10 @@ describe('the StageView status line', () => {
       stageViewStatusText({
         rev: 9,
         view: {
-          settings: { rev: 2, values: { canvasDisplayId: 999 } },
+          settings: {
+            rev: 2,
+            values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 999 },
+          },
           displays: [BUILT_IN, EXTERNAL],
           canvas: { ...ON_BUILT_IN, fallback: true },
           power: { suspended: false, locked: false },

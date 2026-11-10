@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initRunLog } from '../../src/main/log/run-log';
 import { IPC_HANDLER_TIMEOUT_MS } from '../../src/shared/constants';
 import { appGetVersion, ipcResultSchema } from '../../src/shared/ipc';
+import { SETTINGS_DEFAULTS } from '../../src/shared/settings';
 import { z } from '../../src/shared/zod-setup';
 
 type Listener = (
@@ -371,7 +372,10 @@ describe('registerIpcHandler', () => {
     });
 
     describe("the stage's channels", () => {
-      const SETTINGS_STATE = { rev: 0, values: { canvasDisplayId: null } };
+      const SETTINGS_STATE = {
+        rev: 0,
+        values: { ...SETTINGS_DEFAULTS, canvasDisplayId: null },
+      };
       const SNAPSHOT = {
         rev: 0,
         view: {

@@ -103,3 +103,15 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-1-detection-event-contract-reducer.md`
   summary: 推測的 `approval.request`／`question.request` 若在同 id 的 `tool.end` 之後才送到判斷器，或 id 不在進行中的 tool 裡，會開出只有 `turn.end`／`session.end` 才能關的未決項目
   evidence: Story 2.1 審查 B4／E6（`src/main/detection/reducer.ts` 的 `withRequest`）。未驗證，若成立為 medium：沒有 turn 標記的來源會一直顯示「要你批准」。要在 Story 2.2 確認推測模組只對還開著的 tool 發出推測，且推測與 `tool.end` 的處理順序不會競態；否則在判斷器忽略 id 不在 `openTools` 裡的推測 request。
+- source_spec: none
+  summary: Story 2.2 的推測部分：各來源的能力表、`main/detection/inference`、`approvalInferMs`（預設 10 秒）設定欄位，以及推測 request 晚於 `tool.end` 送到的競態（上面 Story 2.1 審查 B4／E6 那一項）
+  evidence: 使用者 2026-11-09 選擇把 Story 2.2 拆成兩個：先做 session 生命週期、啟動補讀與計時設定，推測是獨立模組，接著另做；兩者都完成，Story 2.2 才算全部完成。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-session-lifecycle-replay.md`
+  summary: 同一個 session 的補讀事件若晚於即時事件送到，較舊的 `turn.start`／`tool.start` 會清掉即時的 `done`／`error`，較舊的 `session.end` 會結束正在跑的 session，較舊的 `session.meta` 會蓋掉新名稱
+  evidence: Story 2.2 審查 B1／E1／E2／E3（`src/main/detection/reducer.ts`、`src/main/detection/sessions.ts` 的 `apply`）。未驗證，若成立為 medium。Story 2.4 Claude Code 轉接器要合併狀態檔（即時）與 transcript（補讀），屆時二選一：約定每個來源先送完補讀再送即時事件，或由 `sessions` 忽略比該 session 最後一筆即時事件還舊的補讀。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-session-lifecycle-replay.md`
+  summary: 同步是一次性的，`syncTimeoutMs` 從 `createSessions` 起算；補讀超過期限、轉接器重啟或較晚啟動時，同步後才到的補讀會逐筆發布，狀態會亂跳
+  evidence: Story 2.2 審查 B2（`src/main/detection/sessions.ts` 的 `startedAt`、`syncDeadlinePassed`；`test/main/detection-sessions.test.ts` 有一個測試把逐筆發布定為預期）。未驗證，若成立為 medium。Story 2.3 接線時確認：`createSessions` 要在轉接器啟動前一刻建立，並決定轉接器重啟或同步後仍送補讀時要怎麼處理。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-session-lifecycle-replay.md`
+  summary: macOS 睡眠期間 `performance.now()` 與 Node 計時器都不前進，闔上筆電一整晚後，`idle`、逾時、`done`、`error` 都會晚一整晚
+  evidence: Story 2.2 審查 B4／E6。libuv 的 `uv_hrtime` 在 macOS 用 `mach_absolute_time`，睡眠時不增加。`sessions` 的 `now` 是注入的，所以 Story 2.3 接線時處理：`now` 用 `performance.now()` 加上睡眠偏移量，偏移量在 `powerMonitor` 的 resume 時以牆鐘差補上（`src/main/windows/power.ts` 已有 suspend／resume），然後呼叫 `retime()`；並在實機闔蓋確認。

@@ -1,4 +1,5 @@
 import type { Confidence, DetectionEvent } from '../../shared/detection-events';
+import type { DetectionTimings } from '../../shared/settings';
 import type { StateCode } from '../../shared/states';
 
 /**
@@ -8,26 +9,20 @@ import type { StateCode } from '../../shared/states';
  * timings. Only facts are kept, so a change of timings applies at once
  * without replaying any history.
  *
- * Every time here is the caller's monotonic clock in milliseconds, taken when
- * the event was received; an event's `ts` never takes part (AD-22). This
- * module reads no settings, starts no timers and writes no log; whoever
- * drives it schedules re-evaluation with `nextChangeAt`.
+ * Every time here is the caller's monotonic clock in milliseconds: when the
+ * event was received, or, for a replayed event (`replay: true`), that moment
+ * back-dated by the event's age (AD-22; main/detection/sessions works it
+ * out). The reducer itself never reads `ts`. A replayed event rebuilds the
+ * conditions only: its `turn.end` starts no `done` and its `error` holds no
+ * `error`.
+ *
+ * This module reads no settings, starts no timers and writes no log; whoever
+ * drives it schedules re-evaluation with `nextChangeAt`. The timings it is
+ * given (only `doneMs`, `idleMs` and `errorHoldMs` are read) must be finite
+ * positive numbers of milliseconds; nothing here checks it (NaN, for one,
+ * would make every session `idle` with no next change). The settings schema
+ * that supplies them guarantees it.
  */
-
-/**
- * The three durations the states depend on, passed in on every call. Each
- * must be a finite positive number of milliseconds; nothing here checks it
- * (NaN, for one, would make every session `idle` with no next change). The
- * settings schema that supplies them guarantees it.
- */
-export interface DetectionTimings {
-  /** How long a session stays `done` after `turn.end`. */
-  readonly doneMs: number;
-  /** How long after its last event a session counts as `waiting`, not `idle`. */
-  readonly idleMs: number;
-  /** How long `error` holds unless a turn or a tool starts first. */
-  readonly errorHoldMs: number;
-}
 
 /**
  * The facts about one session. Read-only: `reduceSession` returns a new
@@ -36,7 +31,11 @@ export interface DetectionTimings {
  * did not change, so those must never be mutated, not even through a cast.
  */
 export interface SessionConditions {
-  /** `session.end` arrived: everything is cleared and later events are ignored. */
+  /**
+   * `session.end` arrived: everything is cleared and later events are
+   * ignored. main/detection/sessions drops such conditions at once, so a
+   * later event with the same key starts a new session.
+   */
   readonly ended: boolean;
   /** Between `turn.start` and `turn.end`. */
   readonly inTurn: boolean;
@@ -50,13 +49,21 @@ export interface SessionConditions {
   readonly openApprovals: ReadonlyMap<string, Confidence>;
   /** Pending questions, kept the same way as approvals. */
   readonly openQuestions: ReadonlyMap<string, Confidence>;
-  /** When the last `turn.end` arrived; null once a turn starts again. */
+  /**
+   * When the last `turn.end` arrived; null once a turn starts again. A
+   * replayed `turn.end` leaves it as it was.
+   */
   readonly turnEndedAt: number | null;
-  /** When the last `error` arrived; null once a turn or a tool starts. */
+  /**
+   * When the last `error` arrived; null once a turn or a tool starts. A
+   * replayed `error` leaves it as it was.
+   */
   readonly errorAt: number | null;
   /**
    * When the last event arrived. `session.meta` does not count, except as a
    * session's first event: the conditions it creates start at that moment.
+   * It only moves forward: an event back-dated to before it (an older
+   * replayed record) leaves it as it was.
    */
   readonly lastEventAt: number;
 }
@@ -122,10 +129,11 @@ function withRequest(
 }
 
 /**
- * The conditions after `event`, received at monotonic time `now`. Pass
- * `undefined` for a session seen for the first time. Conditions open and
- * close only as AD-21's table says; an id that matches nothing open is
- * ignored, never thrown on.
+ * The conditions after `event`, which happened at monotonic time `now`
+ * (received then, or back-dated for a replayed event). Pass `undefined` for
+ * a session seen for the first time. Conditions open and close only as
+ * AD-21's table says; an id that matches nothing open is ignored, never
+ * thrown on.
  */
 export function reduceSession(
   current: SessionConditions | undefined,
@@ -137,7 +145,12 @@ export function reduceSession(
   }
   const base = current ?? emptyConditions(now, false);
   const update = (changes: Partial<SessionConditions>) =>
-    conditions({ ...base, ...changes, lastEventAt: now });
+    conditions({
+      ...base,
+      ...changes,
+      lastEventAt: Math.max(base.lastEventAt, now),
+    });
+  const replayed = event.replay === true;
 
   switch (event.type) {
     case 'session.meta':
@@ -152,13 +165,14 @@ export function reduceSession(
       return update({ inTurn: true, turnEndedAt: null, errorAt: null });
     case 'turn.end':
       // Whatever this turn left open was not written to the log; close it.
-      // `error` is not cleared.
+      // `error` is not cleared. A replayed turn ended before the stage
+      // started, so it starts no `done`.
       return update({
         inTurn: false,
         openTools: new Set(),
         openApprovals: new Map(),
         openQuestions: new Map(),
-        turnEndedAt: now,
+        ...(replayed ? {} : { turnEndedAt: now }),
       });
     case 'tool.start':
       return update({
@@ -197,7 +211,8 @@ export function reduceSession(
         openQuestions: withoutRequest(base.openQuestions, event.requestId),
       });
     case 'error':
-      return update({ errorAt: now });
+      // A replayed error is history: it holds no `error`.
+      return update(replayed ? {} : { errorAt: now });
   }
 }
 

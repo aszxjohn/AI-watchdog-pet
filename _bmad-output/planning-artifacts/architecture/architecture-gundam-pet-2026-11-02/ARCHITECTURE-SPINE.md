@@ -283,7 +283,7 @@ graph LR
 - **Rule:**
   - session 結束只由 `main/detection/sessions` 決定：收到 `session.end`、轉接器回報行程已不存在（有 pid 的來源），或最後事件起超過 `sessionExpireMs`。轉接器不得自行用逾時合成 `session.end`。session 結束即角色放回池子（AD-12）。
   - 啟動補讀：轉接器只回報最後修改時間在 `discoveryWindowMs` 內的 session；補讀事件標 `replay: true`，補讀完成發 `sync.ready`（帶 source）。判斷器對 `replay` 事件只重建條件集合，不啟動推測計時、不產生 `done` 過場；`sync.ready` 之後才開始計時。
-  - 所有計時以收到事件時的單調時鐘為準；事件 `ts` 只用於排序與顯示。
+  - 所有計時以收到事件時的單調時鐘為準；事件 `ts` 只用於排序與顯示。例外：補讀事件（`replay: true`）的時間以 `ts` 回推為單調時間（收到時的單調時間減去牆鐘與 `ts` 的差，`ts` 在未來時差值以 0 計），讓啟動時的 `idle`／逾時依實際時間判斷（2026-11-09 使用者決定，Story 2.2）。
   - `main/pool` 在所有來源 `sync.ready`（或 `syncTimeoutMs` 到期）前不建立新分配；之後丟棄沒有被重新回報的持久化分配與顯示／釋放紀錄。
   - 推測只在 `main/detection/inference` 一處做。每個轉接器在 `src/shared` 宣告能力表（approval、question 各為 `exact` 或 `none`，並列出該工具的「提問類」工具名稱）；只對 `none` 的項目推測：工具開始後超過 `approvalInferMs` 沒結束，提問類工具產生 `question.request`，其他產生 `approval.request`；一律 `via: inferred`、以 `toolCallId` 關聯，收到同 id 的 exact 事件或 `tool.end` 就取代或關閉。
   - 已知限制：跑很久的工具（build、測試）會被推測成 `approval`；推測狀態在畫面上用另一種標記樣式（AD-9）。

@@ -31,6 +31,29 @@ export const settingsFieldSchemas = {
    * primary display. Story 1.6 applies it.
    */
   canvasDisplayId: z.int().nonnegative().nullable(),
+  /**
+   * The detection timings (AD-21, AD-22), whole milliseconds. How long a
+   * session stays `done` after `turn.end`.
+   */
+  doneMs: z.int().min(1000).max(60_000),
+  /** How long after its last event a session counts as `waiting`, not `idle`. */
+  idleMs: z.int().min(60_000).max(3_600_000),
+  /** How long `error` holds unless a turn or a tool starts first. */
+  errorHoldMs: z.int().min(1000).max(600_000),
+  /** A session with no event for this long ends (main/detection/sessions). */
+  sessionExpireMs: z.int().min(3_600_000).max(86_400_000),
+  /**
+   * At start, adapters replay only records modified within this long. It
+   * should be at least `sessionExpireMs` (the defaults are equal): when it
+   * is smaller, a session that had not expired at restart is not found
+   * again. Nothing checks it.
+   */
+  discoveryWindowMs: z.int().min(600_000).max(86_400_000),
+  /**
+   * How long after detection starts every source counts as synced, whether
+   * or not it has sent `sync.ready`.
+   */
+  syncTimeoutMs: z.int().min(1000).max(60_000),
 } as const;
 
 export type SettingsField = keyof typeof settingsFieldSchemas;
@@ -48,7 +71,28 @@ export type SettingsValues = z.infer<typeof settingsValuesSchema>;
 /** The value each field takes when it is missing or invalid. */
 export const SETTINGS_DEFAULTS: Readonly<SettingsValues> = Object.freeze({
   canvasDisplayId: null,
+  doneMs: 5000,
+  idleMs: 300_000,
+  errorHoldMs: 30_000,
+  sessionExpireMs: 7_200_000,
+  discoveryWindowMs: 7_200_000,
+  syncTimeoutMs: 10_000,
 });
+
+/**
+ * The detection timings, as main/settings holds them. Any SettingsValues is
+ * one, so main/detection can be handed the current settings values as they
+ * are.
+ */
+export type DetectionTimings = Pick<
+  SettingsValues,
+  | 'doneMs'
+  | 'idleMs'
+  | 'errorHoldMs'
+  | 'sessionExpireMs'
+  | 'discoveryWindowMs'
+  | 'syncTimeoutMs'
+>;
 
 /** settings.json as main/settings writes it. */
 export const settingsFileSchema = z.strictObject({

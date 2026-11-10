@@ -12,6 +12,7 @@ import {
   settingsRevSchema,
   settingsStateSchema,
   settingsValuesSchema,
+  type DetectionTimings,
 } from '../../src/shared/settings';
 import { expectRejected, expectRoundTrip } from './schema-helpers';
 
@@ -23,7 +24,15 @@ function setDisplay(value: unknown) {
 
 describe('settings fields', () => {
   it('lists exactly the fields that have a schema, in order', () => {
-    expect([...SETTINGS_FIELDS]).toStrictEqual(['canvasDisplayId']);
+    expect([...SETTINGS_FIELDS]).toStrictEqual([
+      'canvasDisplayId',
+      'doneMs',
+      'idleMs',
+      'errorHoldMs',
+      'sessionExpireMs',
+      'discoveryWindowMs',
+      'syncTimeoutMs',
+    ]);
     expect(Object.keys(settingsFieldSchemas)).toStrictEqual([
       ...SETTINGS_FIELDS,
     ]);
@@ -33,8 +42,21 @@ describe('settings fields', () => {
   it('defaults cover every field, pass the schema and cannot be changed', () => {
     expect(Object.keys(SETTINGS_DEFAULTS)).toStrictEqual([...SETTINGS_FIELDS]);
     expectRoundTrip(settingsValuesSchema, SETTINGS_DEFAULTS);
-    expect(SETTINGS_DEFAULTS.canvasDisplayId).toBeNull();
+    expect(SETTINGS_DEFAULTS).toStrictEqual({
+      canvasDisplayId: null,
+      doneMs: 5000,
+      idleMs: 300_000,
+      errorHoldMs: 30_000,
+      sessionExpireMs: 7_200_000,
+      discoveryWindowMs: 7_200_000,
+      syncTimeoutMs: 10_000,
+    });
     expect(Object.isFrozen(SETTINGS_DEFAULTS)).toBe(true);
+  });
+
+  it('the defaults are detection timings as they are', () => {
+    const timings: DetectionTimings = SETTINGS_DEFAULTS;
+    expect(timings.doneMs).toBe(5000);
   });
 
   it('starts at schemaVersion 1', () => {
@@ -66,16 +88,70 @@ describe('canvasDisplayId schema', () => {
   });
 });
 
+/** Each detection timing: its schema's range and its default (Story 2.2). */
+const TIMINGS = [
+  ['doneMs', 1000, 60_000, 5000],
+  ['idleMs', 60_000, 3_600_000, 300_000],
+  ['errorHoldMs', 1000, 600_000, 30_000],
+  ['sessionExpireMs', 3_600_000, 86_400_000, 7_200_000],
+  ['discoveryWindowMs', 600_000, 86_400_000, 7_200_000],
+  ['syncTimeoutMs', 1000, 60_000, 10_000],
+] as const;
+
+describe.each(TIMINGS)('%s schema', (field, min, max, fallback) => {
+  const schema = settingsFieldSchemas[field];
+
+  it(`defaults to ${fallback}`, () => {
+    expect(SETTINGS_DEFAULTS[field]).toBe(fallback);
+  });
+
+  it.each([[min], [min + 1], [fallback], [max - 1], [max]])(
+    'round-trips %j',
+    (value) => {
+      expectRoundTrip(schema, value);
+    },
+  );
+
+  it.each([
+    ['one below the minimum', min - 1],
+    ['one above the maximum', max + 1],
+    ['zero', 0],
+    ['a negative number', -fallback],
+    ['a fraction', fallback + 0.5],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['a numeric string', String(fallback)],
+    ['null', null],
+    ['undefined', undefined],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(schema, value);
+  });
+
+  it('is set by a patch op within its range only', () => {
+    expectRoundTrip(settingsOpSchema, { op: 'set', field, value: max });
+    expectRejected(settingsOpSchema, { op: 'set', field, value: max + 1 });
+    expectRejected(settingsOpSchema, { op: 'set', field, value: null });
+  });
+});
+
 describe('settingsValuesSchema', () => {
   it('round-trips a complete set of values', () => {
-    expectRoundTrip(settingsValuesSchema, { canvasDisplayId: DISPLAY_ID });
+    expectRoundTrip(settingsValuesSchema, {
+      ...SETTINGS_DEFAULTS,
+      canvasDisplayId: DISPLAY_ID,
+    });
   });
 
   it.each([
     ['a missing field', {}],
-    ['an unknown field', { canvasDisplayId: null, theme: 'dark' }],
-    ['a field of the wrong type', { canvasDisplayId: 'main' }],
-    ['schemaVersion (file only)', { schemaVersion: 1, canvasDisplayId: null }],
+    ['only canvasDisplayId', { canvasDisplayId: null }],
+    ['an unknown field', { ...SETTINGS_DEFAULTS, theme: 'dark' }],
+    [
+      'a field of the wrong type',
+      { ...SETTINGS_DEFAULTS, canvasDisplayId: 'main' },
+    ],
+    ['a timing out of range', { ...SETTINGS_DEFAULTS, idleMs: 59_999 }],
+    ['schemaVersion (file only)', { schemaVersion: 1, ...SETTINGS_DEFAULTS }],
     ['an array', [null]],
     ['null', null],
   ])('rejects %s', (_label, value) => {
@@ -87,15 +163,15 @@ describe('settingsFileSchema', () => {
   it('round-trips the file main writes', () => {
     expectRoundTrip(settingsFileSchema, {
       schemaVersion: SETTINGS_SCHEMA_VERSION,
-      canvasDisplayId: null,
+      ...SETTINGS_DEFAULTS,
     });
   });
 
   it.each([
-    ['no schemaVersion', { canvasDisplayId: null }],
-    ['another schemaVersion', { schemaVersion: 2, canvasDisplayId: null }],
+    ['no schemaVersion', { ...SETTINGS_DEFAULTS }],
+    ['another schemaVersion', { schemaVersion: 2, ...SETTINGS_DEFAULTS }],
     ['a missing field', { schemaVersion: 1 }],
-    ['an unknown field', { schemaVersion: 1, canvasDisplayId: null, x: 1 }],
+    ['an unknown field', { schemaVersion: 1, ...SETTINGS_DEFAULTS, x: 1 }],
   ])('rejects %s', (_label, value) => {
     expectRejected(settingsFileSchema, value);
   });
@@ -105,7 +181,7 @@ describe('settingsStateSchema', () => {
   it('round-trips a rev with its values', () => {
     expectRoundTrip(settingsStateSchema, {
       rev: 4,
-      values: { canvasDisplayId: DISPLAY_ID },
+      values: { ...SETTINGS_DEFAULTS, canvasDisplayId: DISPLAY_ID },
     });
   });
 
@@ -113,7 +189,10 @@ describe('settingsStateSchema', () => {
     ['a negative rev', { rev: -1, values: SETTINGS_DEFAULTS }],
     ['a fractional rev', { rev: 0.5, values: SETTINGS_DEFAULTS }],
     ['no values', { rev: 0 }],
-    ['bad values', { rev: 0, values: { canvasDisplayId: -1 } }],
+    [
+      'bad values',
+      { rev: 0, values: { ...SETTINGS_DEFAULTS, canvasDisplayId: -1 } },
+    ],
     ['an extra key', { rev: 0, values: SETTINGS_DEFAULTS, merged: false }],
   ])('rejects %s', (_label, value) => {
     expectRejected(settingsStateSchema, value);

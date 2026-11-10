@@ -7,7 +7,10 @@ import {
   watchDisplays,
   type ScreenEvent,
 } from '../../src/main/windows/stage-sources';
-import type { SettingsState } from '../../src/shared/settings';
+import {
+  SETTINGS_DEFAULTS,
+  type SettingsState,
+} from '../../src/shared/settings';
 import { stageViewSchema } from '../../src/shared/stage-view';
 
 vi.mock('electron', () => import('../helpers/fake-electron'));
@@ -61,7 +64,10 @@ describe('createWindowsStageSource', () => {
     expect(source.get()).toStrictEqual(initialWindowsSections());
     expect(
       stageViewSchema.safeParse({
-        settings: { rev: 0, values: { canvasDisplayId: null } },
+        settings: {
+          rev: 0,
+          values: { ...SETTINGS_DEFAULTS, canvasDisplayId: null },
+        },
         ...source.get(),
       }).success,
     ).toBe(true);
@@ -141,9 +147,12 @@ function fakeScreen(initial: ScreenDisplay[], primaryId = 1) {
   return screen;
 }
 
-/** A fake settings store holding only canvasDisplayId. */
+/** A fake settings store; only canvasDisplayId changes. */
 function fakeSettings(canvasDisplayId: number | null = null) {
-  let state: SettingsState = { rev: 0, values: { canvasDisplayId } };
+  let state: SettingsState = {
+    rev: 0,
+    values: { ...SETTINGS_DEFAULTS, canvasDisplayId },
+  };
   const listeners: ((state: SettingsState) => void)[] = [];
   return {
     get: () => state,
@@ -152,7 +161,10 @@ function fakeSettings(canvasDisplayId: number | null = null) {
       return () => {};
     },
     set(value: number | null) {
-      state = { rev: state.rev + 1, values: { canvasDisplayId: value } };
+      state = {
+        rev: state.rev + 1,
+        values: { ...SETTINGS_DEFAULTS, canvasDisplayId: value },
+      };
       for (const listener of listeners) {
         listener(state);
       }

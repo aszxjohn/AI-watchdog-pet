@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  type DetectionTimings,
   evaluate,
   nextChangeAt,
   reduceSession,
@@ -12,10 +11,18 @@ import {
   detectionEventSchema,
   type Via,
 } from '../../src/shared/detection-events';
+import {
+  type DetectionTimings,
+  SETTINGS_DEFAULTS,
+} from '../../src/shared/settings';
 import type { StateCode } from '../../src/shared/states';
 
-/** The I/O matrix's example timings. */
+/**
+ * The I/O matrix's example timings. The reducer reads only these three; the
+ * other detection timings stay at their defaults.
+ */
 const TIMINGS: DetectionTimings = {
+  ...SETTINGS_DEFAULTS,
   doneMs: 5000,
   idleMs: 300_000,
   errorHoldMs: 30_000,
@@ -460,6 +467,119 @@ describe('I/O matrix', () => {
     ]) {
       expect(reduceSession(ended, later, 100)).toBe(ended);
     }
+  });
+});
+
+describe('replayed events (Story 2.2)', () => {
+  /** The same event, marked as replayed. */
+  const replayed = (live: DetectionEvent) =>
+    detectionEventSchema.parse({ ...live, replay: true });
+
+  it('a replayed turn.end closes the turn but starts no done', () => {
+    expectStates([
+      [0, replayed(turnStart())],
+      [1, replayed(toolStart('a'))],
+      [2, replayed(approvalRequest('a'))],
+      [3, replayed(questionRequest('q'))],
+      [3, 'approval'],
+      [4, replayed(turnEnd())],
+      [4, 'waiting'],
+      [300_003, 'waiting'],
+      [300_004, 'idle'],
+    ]);
+    expect(
+      snapshot(
+        feed([
+          [0, replayed(turnStart())],
+          [1, replayed(toolStart('a'))],
+          [2, replayed(approvalRequest('a'))],
+          [4, replayed(turnEnd())],
+        ]),
+      ),
+    ).toMatchObject({
+      inTurn: false,
+      openTools: [],
+      openApprovals: [],
+      openQuestions: [],
+      turnEndedAt: null,
+      lastEventAt: 4,
+    });
+  });
+
+  it('a replayed turn.end leaves a live done as it was', () => {
+    const conditions = feed([
+      [0, turnEnd()],
+      [1, replayed(turnEnd())],
+    ]);
+    expect(conditions.turnEndedAt).toBe(0);
+    expect(evaluate(conditions, 4999, TIMINGS).state).toBe('done');
+    expect(evaluate(conditions, 5000, TIMINGS).state).toBe('waiting');
+  });
+
+  it('a replayed error holds no error and only moves the last-event time', () => {
+    const before = feed([[0, turnEnd()]]);
+    const after = reduceSession(before, replayed(error()), 10);
+    expect(snapshot(after)).toStrictEqual({
+      ...snapshot(before),
+      lastEventAt: 10,
+    });
+    expectStates([
+      [0, replayed(error())],
+      [0, 'waiting'],
+    ]);
+  });
+
+  it('a replayed error leaves a live error as it was', () => {
+    const conditions = feed([
+      [0, error()],
+      [5, replayed(error())],
+    ]);
+    expect(conditions.errorAt).toBe(0);
+    expect(evaluate(conditions, 29_999, TIMINGS).state).toBe('error');
+    expect(evaluate(conditions, 30_000, TIMINGS).state).toBe('waiting');
+  });
+
+  it('other replayed events rebuild the conditions like live ones', () => {
+    expectStates([
+      [0, replayed(error())],
+      [1, replayed(turnStart())],
+      [1, 'thinking'],
+      [2, replayed(toolStart('a'))],
+      [2, 'working'],
+      [3, replayed(questionRequest('a', 'inferred'))],
+      [3, 'decision (inferred)'],
+      [4, replayed(toolEnd('a'))],
+      [4, 'thinking'],
+      [5, replayed(approvalRequest('r'))],
+      [5, 'approval'],
+      [6, replayed(approvalResolved('r'))],
+      [6, 'thinking'],
+    ]);
+  });
+});
+
+describe('the last-event time only moves forward', () => {
+  it('an event dated before the last one leaves it as it was', () => {
+    const conditions = feed([
+      [1000, turnStart()],
+      [400, activity()],
+    ]);
+    expect(conditions.lastEventAt).toBe(1000);
+    expect(nextChangeAt(conditions, 1000, TIMINGS)).toBe(301_000);
+  });
+
+  it('a later event still moves it', () => {
+    const conditions = feed([
+      [400, turnStart()],
+      [1000, activity()],
+    ]);
+    expect(conditions.lastEventAt).toBe(1000);
+  });
+
+  it('a first event dated in the past starts the conditions then', () => {
+    expect(reduceSession(undefined, activity(), -600_000).lastEventAt).toBe(
+      -600_000,
+    );
   });
 });
 
@@ -1008,6 +1128,7 @@ describe('timings', () => {
     ).toBe('waiting');
     expect(
       evaluate(conditions, 3000, {
+        ...TIMINGS,
         doneMs: 3000,
         idleMs: 3000,
         errorHoldMs: 3000,

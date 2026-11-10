@@ -15,6 +15,7 @@ import {
   stageViewSubscribe,
 } from '../../src/shared/ipc';
 import { z } from '../../src/shared/zod-setup';
+import { SETTINGS_DEFAULTS } from '../../src/shared/settings';
 import { expectRejected, expectRoundTrip } from './schema-helpers';
 
 describe('isIpcChannelName', () => {
@@ -178,7 +179,10 @@ describe('parseIpcResult', () => {
 });
 
 describe('settings and StageView contracts', () => {
-  const STATE = { rev: 2, values: { canvasDisplayId: null } };
+  const STATE = {
+    rev: 2,
+    values: { ...SETTINGS_DEFAULTS, canvasDisplayId: null },
+  };
   const PATCH = {
     baseRev: 2,
     ops: [{ op: 'set', field: 'canvasDisplayId', value: 7 }],
