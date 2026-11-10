@@ -22,12 +22,20 @@
  * one from three hours ago expires without being published. Live events use
  * the time they arrive.
  *
+ * Inference (AD-22). Each time a published session is evaluated, the
+ * requests main/detection/inference guesses at for it are fed to the
+ * reducer first, at that moment, stamped with the wall clock. The rule
+ * lives only there; this module calls it, applies what it returns and
+ * folds `nextInferenceAt` into its one timer. An unsynced source is not
+ * guessed at; once it syncs, a replayed tool call is timed from its
+ * back-dated start. A guess already made stays when the timings change.
+ *
  * One timer. It is set for the earliest of every published session's
- * `nextChangeAt` and expiry time, and of the sync deadline while an
- * unsynced source has a session. When it fires, and after anything else
- * that may change the list (an event, `sync.ready`, retime()), every
- * session is evaluated again, subscribers hear about it only if the list
- * changed, and the timer is set again.
+ * `nextChangeAt`, `nextInferenceAt` and expiry time, and of the sync
+ * deadline while an unsynced source has a session. When it fires, and
+ * after anything else that may change the list (an event, `sync.ready`,
+ * retime()), every session is evaluated again, subscribers hear about it
+ * only if the list changed, and the timer is set again.
  *
  * Times come only from the injected clocks and timers. An output that fails
  * the shared schemas is dropped and logged by field path only, never by
@@ -42,10 +50,19 @@ import {
   syncReadySchema,
 } from '../../shared/detection-events';
 import type { DetectionTimings } from '../../shared/settings';
-import type { SourceCode } from '../../shared/sources';
+import {
+  SOURCE_CAPABILITIES,
+  type SourceCapability,
+  type SourceCode,
+} from '../../shared/sources';
 import type { StateCode } from '../../shared/states';
 import type { z } from '../../shared/zod-setup';
 import { errorCode, logEvent, type ConsoleLevel } from '../log/run-log';
+import {
+  type InferenceSubject,
+  inferRequests,
+  nextInferenceAt,
+} from './inference';
 import {
   evaluate,
   nextChangeAt,
@@ -73,12 +90,20 @@ export interface SessionsOptions {
   readonly timings: () => DetectionTimings;
   /** A monotonic clock in ms (default `performance.now`). */
   readonly now?: () => number;
-  /** The wall clock in epoch ms (default `Date.now`); only dates replays. */
+  /**
+   * The wall clock in epoch ms (default `Date.now`): dates replays and
+   * stamps the `ts` of inferred requests.
+   */
   readonly wallNow?: () => number;
   /** Runs `run` once after `delayMs` (default `setTimeout`). */
   readonly setTimer?: (run: () => void, delayMs: number) => unknown;
   /** Cancels a timer setTimer returned (default `clearTimeout`). */
   readonly clearTimer?: (handle: unknown) => void;
+  /**
+   * What each source can read, for inference (default: its entry in
+   * SOURCE_CAPABILITIES).
+   */
+  readonly capabilityOf?: (source: SourceCode) => SourceCapability;
 }
 
 export interface Sessions {
@@ -194,6 +219,7 @@ export function createSessions({
   clearTimer = (handle) => {
     clearTimeout(handle as ReturnType<typeof setTimeout>);
   },
+  capabilityOf = (source) => SOURCE_CAPABILITIES[source],
 }: SessionsOptions): Sessions {
   const startedAt = now();
   /** Every session not ended, synced or not, in first-seen order. */
@@ -289,12 +315,41 @@ export function createSessions({
   }
 
   /**
-   * Brings everything up to monotonic time `at`: the sync deadline, expiry
-   * and every published state; then sets the timer and, if the list
-   * changed, tells the listeners.
+   * `session`'s conditions with the requests inference guesses at by `at`
+   * applied, and the inference subject for them.
+   */
+  function infer(
+    sessionKey: SessionKey,
+    session: Tracked,
+    at: number,
+    t: DetectionTimings,
+    wall: number,
+  ): InferenceSubject {
+    const subject: InferenceSubject = {
+      sessionKey,
+      source: session.source,
+      conditions: session.conditions,
+      capability: capabilityOf(session.source),
+    };
+    let conditions = session.conditions;
+    for (const request of inferRequests(subject, at, t, wall)) {
+      conditions = reduceSession(conditions, request, at);
+    }
+    if (conditions === session.conditions) {
+      return subject;
+    }
+    tracked.set(sessionKey, { ...session, conditions });
+    return { ...subject, conditions };
+  }
+
+  /**
+   * Brings everything up to monotonic time `at`: the sync deadline, expiry,
+   * inference and every published state; then sets the timer and, if the
+   * list changed, tells the listeners.
    */
   function settle(at: number): void {
     const t = timings();
+    const wall = wallNow();
     const syncDeadline = startedAt + t.syncTimeoutMs;
     if (!syncDeadlinePassed && at >= syncDeadline) {
       syncDeadlinePassed = true;
@@ -311,7 +366,9 @@ export function createSessions({
         tracked.delete(sessionKey);
         continue;
       }
-      const { state, confidence } = evaluate(session.conditions, at, t);
+      const subject = infer(sessionKey, session, at, t, wall);
+      const { conditions } = subject;
+      const { state, confidence } = evaluate(conditions, at, t);
       list.push(
         Object.freeze({
           sessionKey,
@@ -324,7 +381,8 @@ export function createSessions({
       wakeAt = earliest(
         wakeAt,
         expiresAt,
-        nextChangeAt(session.conditions, at, t),
+        nextChangeAt(conditions, at, t),
+        nextInferenceAt(subject, at, t),
       );
     }
     arm(wakeAt, at);

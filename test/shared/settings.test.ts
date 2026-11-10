@@ -29,6 +29,7 @@ describe('settings fields', () => {
       'doneMs',
       'idleMs',
       'errorHoldMs',
+      'approvalInferMs',
       'sessionExpireMs',
       'discoveryWindowMs',
       'syncTimeoutMs',
@@ -47,6 +48,7 @@ describe('settings fields', () => {
       doneMs: 5000,
       idleMs: 300_000,
       errorHoldMs: 30_000,
+      approvalInferMs: 10_000,
       sessionExpireMs: 7_200_000,
       discoveryWindowMs: 7_200_000,
       syncTimeoutMs: 10_000,
@@ -57,6 +59,7 @@ describe('settings fields', () => {
   it('the defaults are detection timings as they are', () => {
     const timings: DetectionTimings = SETTINGS_DEFAULTS;
     expect(timings.doneMs).toBe(5000);
+    expect(timings.approvalInferMs).toBe(10_000);
   });
 
   it('starts at schemaVersion 1', () => {
@@ -93,6 +96,7 @@ const TIMINGS = [
   ['doneMs', 1000, 60_000, 5000],
   ['idleMs', 60_000, 3_600_000, 300_000],
   ['errorHoldMs', 1000, 600_000, 30_000],
+  ['approvalInferMs', 1000, 600_000, 10_000],
   ['sessionExpireMs', 3_600_000, 86_400_000, 7_200_000],
   ['discoveryWindowMs', 600_000, 86_400_000, 7_200_000],
   ['syncTimeoutMs', 1000, 60_000, 10_000],

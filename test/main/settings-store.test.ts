@@ -36,6 +36,7 @@ const CUSTOM_VALUES = {
   doneMs: 8000,
   idleMs: 600_000,
   errorHoldMs: 45_000,
+  approvalInferMs: 20_000,
   sessionExpireMs: 10_800_000,
   discoveryWindowMs: 3_600_000,
   syncTimeoutMs: 20_000,
@@ -166,6 +167,23 @@ describe('loading settings.json', () => {
     expect(store.get()).toStrictEqual({
       rev: 0,
       values: { ...SETTINGS_DEFAULTS, canvasDisplayId: DISPLAY_ID },
+    });
+    expect(store.canWrite).toBe(true);
+    vi.runAllTimers();
+    expect(files()).toStrictEqual(['settings.json']);
+    expect(fs.readFileSync(file, 'utf8')).toBe(text);
+    expect(settingsLines()).toStrictEqual([]);
+  });
+
+  it('reads a file from before approvalInferMs: it takes 10000, nothing is backed up or written', () => {
+    const { approvalInferMs: _added, ...before } = CUSTOM_VALUES;
+    const text = writeFile({ schemaVersion: 1, ...before });
+
+    const store = load();
+
+    expect(store.get()).toStrictEqual({
+      rev: 0,
+      values: { ...before, approvalInferMs: 10_000 },
     });
     expect(store.canWrite).toBe(true);
     vi.runAllTimers();

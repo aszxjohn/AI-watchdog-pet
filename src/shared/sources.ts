@@ -34,3 +34,65 @@ export const SOURCE_CODES = [
 export const sourceCodeSchema = z.enum(SOURCE_CODES);
 
 export type SourceCode = z.infer<typeof sourceCodeSchema>;
+
+/**
+ * How much of a kind of request a source's records show (AD-4): `exact` when
+ * they say the session is waiting on the user, `none` when they never do and
+ * main/detection/inference has to guess it.
+ */
+export type CapabilityLevel = 'exact' | 'none';
+
+/** What a source's adapter can and cannot read (AD-4, AD-22). */
+export interface SourceCapability {
+  /** Whether its records show a tool call waiting for the user's approval. */
+  readonly approval: CapabilityLevel;
+  /** Whether its records show the AI asking the user a question. */
+  readonly question: CapabilityLevel;
+  /**
+   * Tools that ask the user something by design, matched by exact
+   * `toolName`. A long-running one is guessed to be a question, not an
+   * approval.
+   */
+  readonly questionTools: readonly string[];
+}
+
+function capability(
+  approval: CapabilityLevel,
+  question: CapabilityLevel,
+  questionTools: readonly string[] = [],
+): SourceCapability {
+  return Object.freeze({
+    approval,
+    question,
+    questionTools: Object.freeze([...questionTools]),
+  });
+}
+
+/**
+ * Each source's capability, from AD-4's table of what is known to be
+ * unreadable. A `none` here is what main/detection/inference guesses at.
+ *
+ * - `claude-code`: both exact. Its question tools are the two that wait on
+ *   the user by design: `AskUserQuestion` asks a question, `ExitPlanMode`
+ *   asks the user to accept a plan. They matter once its status file is
+ *   unusable and it falls back to inference (Story 2.4).
+ * - `codex`: neither is written to its log. Question tools are filled in
+ *   from real records by Story 2.5.
+ * - `gemini`, `cursor`: approvals are not written; questions are.
+ * - `copilot`: questions are not written. Question tools come with its
+ *   adapter (Epic 6).
+ * - `demo`: the demo adapter emits every request itself.
+ */
+export const SOURCE_CAPABILITIES: Readonly<
+  Record<SourceCode, SourceCapability>
+> = Object.freeze({
+  'claude-code': capability('exact', 'exact', [
+    'AskUserQuestion',
+    'ExitPlanMode',
+  ]),
+  codex: capability('none', 'none'),
+  gemini: capability('none', 'exact'),
+  cursor: capability('none', 'exact'),
+  copilot: capability('exact', 'none'),
+  demo: capability('exact', 'exact'),
+});

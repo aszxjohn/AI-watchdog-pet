@@ -56,8 +56,8 @@ const sessionMeta = (displayName: string) =>
   event('session.meta', { displayName });
 const turnStart = () => event('turn.start');
 const turnEnd = () => event('turn.end');
-const toolStart = (toolCallId: string) =>
-  event('tool.start', { toolCallId, toolName: 'Bash' });
+const toolStart = (toolCallId: string, toolName = 'Bash') =>
+  event('tool.start', { toolCallId, toolName });
 const toolEnd = (toolCallId: string) => event('tool.end', { toolCallId });
 const approvalRequest = (requestId: string, via: Via = 'log') =>
   event('approval.request', { requestId }, via);
@@ -127,7 +127,7 @@ function expectStates(
 function snapshot(conditions: SessionConditions) {
   return {
     ...conditions,
-    openTools: [...conditions.openTools],
+    openTools: [...conditions.openTools].map(([id, tool]) => [id, { ...tool }]),
     openApprovals: [...conditions.openApprovals],
     openQuestions: [...conditions.openQuestions],
   };
@@ -555,6 +555,181 @@ describe('replayed events (Story 2.2)', () => {
       [6, replayed(approvalResolved('r'))],
       [6, 'thinking'],
     ]);
+  });
+});
+
+describe('open tools (Story 2.2 inference)', () => {
+  const replayed = (live: DetectionEvent) =>
+    detectionEventSchema.parse({ ...live, replay: true });
+
+  it('tool.start records when it started and which tool, not yet requested', () => {
+    const conditions = feed([
+      [100, toolStart('a')],
+      [200, toolStart('b', 'Read')],
+    ]);
+    expect(snapshot(conditions).openTools).toStrictEqual([
+      ['a', { startedAt: 100, toolName: 'Bash', requested: false }],
+      ['b', { startedAt: 200, toolName: 'Read', requested: false }],
+    ]);
+  });
+
+  it('a replayed tool.start starts at the back-dated time it is given', () => {
+    const conditions = reduceSession(
+      undefined,
+      replayed(toolStart('a')),
+      -180_000,
+    );
+    expect(conditions.openTools.get('a')?.startedAt).toBe(-180_000);
+  });
+
+  it('a repeated tool.start keeps the entry it found, but still clears error and moves the last-event time', () => {
+    const before = feed([
+      [0, toolStart('a')],
+      [5, error()],
+    ]);
+    const after = reduceSession(before, toolStart('a', 'Read'), 10);
+    expect(after.openTools).toBe(before.openTools);
+    expect(after.openTools.get('a')).toStrictEqual({
+      startedAt: 0,
+      toolName: 'Bash',
+      requested: false,
+    });
+    expect(after.errorAt).toBeNull();
+    expect(after.lastEventAt).toBe(10);
+  });
+
+  it('tool.end and turn.end drop the entry', () => {
+    const ended = feed([
+      [0, toolStart('a')],
+      [1, toolStart('b')],
+      [2, toolEnd('a')],
+    ]);
+    expect([...ended.openTools.keys()]).toStrictEqual(['b']);
+    expect(reduceSession(ended, turnEnd(), 3).openTools.size).toBe(0);
+  });
+
+  it.each<[string, DetectionEvent]>([
+    ['an exact approval', approvalRequest('a', 'log')],
+    ['a registry approval', approvalRequest('a', 'registry')],
+    ['an inferred approval', approvalRequest('a', 'inferred')],
+    ['an exact question', questionRequest('a', 'log')],
+    ['an inferred question', questionRequest('a', 'inferred')],
+  ])('%s with the tool call id marks the tool requested', (_label, request) => {
+    const conditions = feed([
+      [0, toolStart('a')],
+      [1, toolStart('b')],
+      [2, request],
+    ]);
+    expect(snapshot(conditions).openTools).toStrictEqual([
+      ['a', { startedAt: 0, toolName: 'Bash', requested: true }],
+      ['b', { startedAt: 1, toolName: 'Bash', requested: false }],
+    ]);
+  });
+
+  it('requested stays true once the request is resolved, and the tool keeps running', () => {
+    expectStates([
+      [0, toolStart('a')],
+      [10_000, approvalRequest('a', 'inferred')],
+      [10_000, 'approval (inferred)'],
+      [12_000, approvalResolved('a')],
+      [12_000, 'working'],
+    ]);
+    const conditions = feed([
+      [0, toolStart('a')],
+      [10_000, approvalRequest('a', 'inferred')],
+      [12_000, approvalResolved('a')],
+      [13_000, questionRequest('a')],
+      [14_000, questionResolved('a')],
+    ]);
+    expect(conditions.openTools.get('a')?.requested).toBe(true);
+    expect(conditions.openApprovals.size).toBe(0);
+    expect(conditions.openQuestions.size).toBe(0);
+  });
+
+  it('a request with another id leaves the open tools as they were', () => {
+    const before = feed([[0, toolStart('a')]]);
+    for (const request of [
+      approvalRequest('r'),
+      questionRequest('q', 'inferred'),
+    ]) {
+      expect(reduceSession(before, request, 1).openTools).toBe(
+        before.openTools,
+      );
+    }
+  });
+
+  it('a tool whose request is still pending when it starts is requested', () => {
+    const pending = feed([
+      [0, approvalRequest('a')],
+      [1, questionRequest('b', 'inferred')],
+      [2, toolStart('a')],
+      [3, toolStart('b')],
+    ]);
+    expect(pending.openTools.get('a')?.requested).toBe(true);
+    expect(pending.openTools.get('b')?.requested).toBe(true);
+    // One resolved before its tool started is not pending any more.
+    const resolved = feed([
+      [0, approvalRequest('a')],
+      [1, approvalResolved('a')],
+      [2, toolStart('a')],
+    ]);
+    expect(resolved.openTools.get('a')?.requested).toBe(false);
+  });
+});
+
+describe('inferred requests and the last-event time (Story 2.2 inference)', () => {
+  it('an inferred approval or question does not move it; an exact one does', () => {
+    let conditions = feed([[0, toolStart('a')]]);
+    conditions = reduceSession(
+      conditions,
+      approvalRequest('a', 'inferred'),
+      10_000,
+    );
+    expect(conditions.lastEventAt).toBe(0);
+    conditions = reduceSession(
+      conditions,
+      questionRequest('q', 'inferred'),
+      20_000,
+    );
+    expect(conditions.lastEventAt).toBe(0);
+    expect(nextChangeAt(conditions, 20_000, TIMINGS)).toBe(300_000);
+    expect(evaluate(conditions, 20_000, TIMINGS)).toStrictEqual({
+      state: 'approval',
+      confidence: 'inferred',
+    });
+
+    conditions = reduceSession(conditions, approvalRequest('a', 'log'), 30_000);
+    expect(conditions.lastEventAt).toBe(30_000);
+    conditions = reduceSession(
+      conditions,
+      questionRequest('q', 'registry'),
+      40_000,
+    );
+    expect(conditions.lastEventAt).toBe(40_000);
+  });
+
+  it("an inferred request as a session's first event starts the conditions then", () => {
+    expect(
+      reduceSession(undefined, approvalRequest('r', 'inferred'), 42)
+        .lastEventAt,
+    ).toBe(42);
+  });
+
+  it('the resolution of an inferred request is an event like any other', () => {
+    const conditions = feed([
+      [0, toolStart('a')],
+      [10_000, approvalRequest('a', 'inferred')],
+      [12_000, approvalResolved('a')],
+    ]);
+    expect(conditions.lastEventAt).toBe(12_000);
+  });
+
+  it('only requests are exempt: any other inferred event moves it', () => {
+    const before = feed([[0, toolStart('a')]]);
+    expect(
+      reduceSession(before, event('activity', {}, 'inferred'), 5000)
+        .lastEventAt,
+    ).toBe(5000);
   });
 });
 
@@ -1002,6 +1177,9 @@ describe('conditions are read-only', () => {
         expect(next).not.toBe(conditions);
       }
       expect(Object.isFrozen(next)).toBe(true);
+      for (const tool of next.openTools.values()) {
+        expect(Object.isFrozen(tool)).toBe(true);
+      }
       conditions = next;
     }
     const final = conditions as SessionConditions;

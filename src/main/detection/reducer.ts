@@ -27,8 +27,8 @@ import type { StateCode } from '../../shared/states';
 /**
  * The facts about one session. Read-only: `reduceSession` returns a new
  * object whenever something changes and never alters the one it was given.
- * The freeze is shallow, and successive objects share the Sets and Maps that
- * did not change, so those must never be mutated, not even through a cast.
+ * The freeze is shallow, and successive objects share the Maps that did not
+ * change, so those must never be mutated, not even through a cast.
  */
 export interface SessionConditions {
   /**
@@ -39,8 +39,12 @@ export interface SessionConditions {
   readonly ended: boolean;
   /** Between `turn.start` and `turn.end`. */
   readonly inTurn: boolean;
-  /** Tool calls that started and have not ended, by `toolCallId`. */
-  readonly openTools: ReadonlySet<string>;
+  /**
+   * Tool calls that started and have not ended, by `toolCallId`, in the
+   * order their `tool.start` arrived (a back-dated replayed one can arrive
+   * after a live one). A repeated `tool.start` keeps the entry it found.
+   */
+  readonly openTools: ReadonlyMap<string, OpenTool>;
   /**
    * Pending approvals by `requestId`, each with the best confidence any of
    * its `approval.request` events had (an exact request outranks an inferred
@@ -60,12 +64,27 @@ export interface SessionConditions {
    */
   readonly errorAt: number | null;
   /**
-   * When the last event arrived. `session.meta` does not count, except as a
-   * session's first event: the conditions it creates start at that moment.
-   * It only moves forward: an event back-dated to before it (an older
-   * replayed record) leaves it as it was.
+   * When the last event arrived. `session.meta` and inferred requests do not
+   * count (an inferred request is the stage's guess, not something the
+   * session did), except as a session's first event: the conditions it
+   * creates start at that moment. It only moves forward: an event back-dated
+   * to before it (an older replayed record) leaves it as it was.
    */
   readonly lastEventAt: number;
+}
+
+/** One open tool call. Frozen, like the conditions holding it. */
+export interface OpenTool {
+  /** When its `tool.start` happened (back-dated if replayed). */
+  readonly startedAt: number;
+  readonly toolName: string;
+  /**
+   * An `approval.request` or `question.request` with its id, of any
+   * confidence, arrived while it was open, or was still pending when it
+   * started. Once true it stays true, even after the request is resolved,
+   * so main/detection/inference guesses at a tool call at most once.
+   */
+  readonly requested: boolean;
 }
 
 /** A session's state right now, and how sure the stage is of it. */
@@ -86,7 +105,7 @@ function emptyConditions(now: number, ended: boolean): SessionConditions {
   return conditions({
     ended,
     inTurn: false,
-    openTools: new Set(),
+    openTools: new Map(),
     openApprovals: new Map(),
     openQuestions: new Map(),
     turnEndedAt: null,
@@ -95,12 +114,54 @@ function emptyConditions(now: number, ended: boolean): SessionConditions {
   });
 }
 
-/** The set with `id` removed; the same set when `id` is not in it. */
-function withoutTool(tools: ReadonlySet<string>, id: string) {
+function openTool(fields: OpenTool): OpenTool {
+  return Object.freeze(fields);
+}
+
+/**
+ * The tools with `id` started at `now`; the same map when `id` is already
+ * open. A request with its id may already be pending (it arrived first).
+ */
+function withTool(
+  base: SessionConditions,
+  id: string,
+  toolName: string,
+  now: number,
+): ReadonlyMap<string, OpenTool> {
+  if (base.openTools.has(id)) {
+    return base.openTools;
+  }
+  return new Map(base.openTools).set(
+    id,
+    openTool({
+      startedAt: now,
+      toolName,
+      requested: base.openApprovals.has(id) || base.openQuestions.has(id),
+    }),
+  );
+}
+
+/** The tools with `id` marked requested; the same map when nothing changes. */
+function withToolRequested(
+  tools: ReadonlyMap<string, OpenTool>,
+  id: string,
+): ReadonlyMap<string, OpenTool> {
+  const tool = tools.get(id);
+  if (tool === undefined || tool.requested) {
+    return tools;
+  }
+  return new Map(tools).set(id, openTool({ ...tool, requested: true }));
+}
+
+/** The map with `id` removed; the same map when `id` is not in it. */
+function withoutTool(
+  tools: ReadonlyMap<string, OpenTool>,
+  id: string,
+): ReadonlyMap<string, OpenTool> {
   if (!tools.has(id)) {
     return tools;
   }
-  const next = new Set(tools);
+  const next = new Map(tools);
   next.delete(id);
   return next;
 }
@@ -144,11 +205,17 @@ export function reduceSession(
     return current;
   }
   const base = current ?? emptyConditions(now, false);
+  // An inferred request is not the session's own doing: it does not move
+  // the last-event time (so it neither delays `idle` nor the expiry).
+  const moves = !(
+    event.confidence === 'inferred' &&
+    (event.type === 'approval.request' || event.type === 'question.request')
+  );
   const update = (changes: Partial<SessionConditions>) =>
     conditions({
       ...base,
       ...changes,
-      lastEventAt: Math.max(base.lastEventAt, now),
+      lastEventAt: moves ? Math.max(base.lastEventAt, now) : base.lastEventAt,
     });
   const replayed = event.replay === true;
 
@@ -169,14 +236,14 @@ export function reduceSession(
       // started, so it starts no `done`.
       return update({
         inTurn: false,
-        openTools: new Set(),
+        openTools: new Map(),
         openApprovals: new Map(),
         openQuestions: new Map(),
         ...(replayed ? {} : { turnEndedAt: now }),
       });
     case 'tool.start':
       return update({
-        openTools: new Set(base.openTools).add(event.toolCallId),
+        openTools: withTool(base, event.toolCallId, event.toolName, now),
         errorAt: null,
       });
     case 'tool.end':
@@ -188,6 +255,7 @@ export function reduceSession(
       });
     case 'approval.request':
       return update({
+        openTools: withToolRequested(base.openTools, event.requestId),
         openApprovals: withRequest(
           base.openApprovals,
           event.requestId,
@@ -200,6 +268,7 @@ export function reduceSession(
       });
     case 'question.request':
       return update({
+        openTools: withToolRequested(base.openTools, event.requestId),
         openQuestions: withRequest(
           base.openQuestions,
           event.requestId,

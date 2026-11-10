@@ -40,6 +40,12 @@ export const settingsFieldSchemas = {
   idleMs: z.int().min(60_000).max(3_600_000),
   /** How long `error` holds unless a turn or a tool starts first. */
   errorHoldMs: z.int().min(1000).max(600_000),
+  /**
+   * A tool call still running this long after it started, on a source whose
+   * records cannot show the request, is guessed to be waiting for approval
+   * (a question, for its question tools; main/detection/inference).
+   */
+  approvalInferMs: z.int().min(1000).max(600_000),
   /** A session with no event for this long ends (main/detection/sessions). */
   sessionExpireMs: z.int().min(3_600_000).max(86_400_000),
   /**
@@ -74,6 +80,7 @@ export const SETTINGS_DEFAULTS: Readonly<SettingsValues> = Object.freeze({
   doneMs: 5000,
   idleMs: 300_000,
   errorHoldMs: 30_000,
+  approvalInferMs: 10_000,
   sessionExpireMs: 7_200_000,
   discoveryWindowMs: 7_200_000,
   syncTimeoutMs: 10_000,
@@ -89,6 +96,7 @@ export type DetectionTimings = Pick<
   | 'doneMs'
   | 'idleMs'
   | 'errorHoldMs'
+  | 'approvalInferMs'
   | 'sessionExpireMs'
   | 'discoveryWindowMs'
   | 'syncTimeoutMs'

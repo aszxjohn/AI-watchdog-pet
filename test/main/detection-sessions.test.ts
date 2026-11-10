@@ -3,6 +3,7 @@ import {
   createSessions,
   type DetectedSession,
   type Sessions,
+  type SessionsOptions,
 } from '../../src/main/detection/sessions';
 import {
   type AdapterOutput,
@@ -15,7 +16,11 @@ import {
   type DetectionTimings,
   SETTINGS_DEFAULTS,
 } from '../../src/shared/settings';
-import type { SourceCode } from '../../src/shared/sources';
+import {
+  SOURCE_CAPABILITIES,
+  type SourceCapability,
+  type SourceCode,
+} from '../../src/shared/sources';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -124,13 +129,14 @@ function detectionLines(): string[] {
 }
 
 /** Sessions on the fake clock, with a listener recording every change. */
-function start(): Sessions {
+function start(options: Partial<SessionsOptions> = {}): Sessions {
   const sessions = createSessions({
     timings: () => timings,
     now: clock.now,
     wallNow: clock.wallNow,
     setTimer: clock.setTimer,
     clearTimer: clock.clearTimer,
+    ...options,
   });
   sessions.onChange((list) => {
     notifications.push(list);
@@ -485,6 +491,300 @@ describe('I/O matrix', () => {
       dropped('(root)'),
     ]);
     expect(detectionLines().join('\n')).not.toContain('secret');
+  });
+});
+
+/** A tool call starting, on codex unless `who` says otherwise. */
+function toolStart(toolCallId = 'a', toolName = 'Bash', who: Who = {}) {
+  return ev('tool.start', { toolCallId, toolName }, who);
+}
+
+/** Codex with a question tool, as Story 2.5 may fill it in. */
+const CODEX_ASKING: SourceCapability = {
+  approval: 'none',
+  question: 'none',
+  questionTools: ['ask_user'],
+};
+
+describe('inference I/O matrix', () => {
+  it('a tool not over after approvalInferMs: working before, approval (inferred) at it', () => {
+    const sessions = start();
+    sessions.receive(syncReady());
+    sessions.receive(toolStart());
+    expect(clock.pending()).toStrictEqual([10_000]);
+
+    clock.advanceTo(9999);
+    expect(states(sessions.list())).toStrictEqual(['codex:s1 working']);
+    clock.advanceTo(10_000);
+    expect(states(sessions.list())).toStrictEqual([
+      'codex:s1 approval (inferred)',
+    ]);
+    expect(heard()).toStrictEqual([
+      ['codex:s1 working'],
+      ['codex:s1 approval (inferred)'],
+    ]);
+    // The guess is not the session's last event: idle still counts from 0.
+    expect(clock.pending()).toStrictEqual([300_000]);
+  });
+
+  it('tool.end at 9 seconds: no approval', () => {
+    const sessions = start();
+    sessions.receive(syncReady());
+    sessions.receive(toolStart());
+    clock.advanceTo(9000);
+
+    sessions.receive(ev('tool.end', { toolCallId: 'a' }));
+
+    expect(clock.pending()).toStrictEqual([309_000]);
+    clock.advanceTo(60_000);
+    expect(heard()).toStrictEqual([['codex:s1 working'], ['codex:s1 waiting']]);
+  });
+
+  it('tool.end after the guess: the approval goes', () => {
+    const sessions = start();
+    sessions.receive(syncReady());
+    sessions.receive(toolStart());
+    clock.advanceTo(12_000);
+
+    sessions.receive(ev('tool.end', { toolCallId: 'a' }));
+
+    expect(heard()).toStrictEqual([
+      ['codex:s1 working'],
+      ['codex:s1 approval (inferred)'],
+      ['codex:s1 waiting'],
+    ]);
+  });
+
+  it('an exact approval.request with the same id after the guess: still approval, now exact', () => {
+    const sessions = start();
+    sessions.receive(syncReady());
+    sessions.receive(toolStart());
+    clock.advanceTo(10_500);
+
+    sessions.receive(ev('approval.request', { requestId: 'a' }));
+
+    expect(heard()).toStrictEqual([
+      ['codex:s1 working'],
+      ['codex:s1 approval (inferred)'],
+      ['codex:s1 approval'],
+    ]);
+  });
+
+  it('an exact request with the same id within approvalInferMs: no guess', () => {
+    const sessions = start();
+    sessions.receive(syncReady());
+    sessions.receive(toolStart());
+    sessions.receive(toolStart('b', 'Bash', { id: 's2' }));
+    clock.advanceTo(2000);
+    sessions.receive(ev('approval.request', { requestId: 'a' }));
+    sessions.receive(ev('approval.request', { requestId: 'b' }, { id: 's2' }));
+    clock.advanceTo(3000);
+    sessions.receive(ev('approval.resolved', { requestId: 'b' }, { id: 's2' }));
+
+    clock.advanceTo(60_000);
+
+    // s1's exact approval stays exact; s2's tool keeps running unguessed.
+    expect(states(sessions.list())).toStrictEqual([
+      'codex:s1 approval',
+      'codex:s2 working',
+    ]);
+    expect(heard()).toStrictEqual([
+      ['codex:s1 working'],
+      ['codex:s1 working', 'codex:s2 working'],
+      ['codex:s1 approval', 'codex:s2 working'],
+      ['codex:s1 approval', 'codex:s2 approval'],
+      ['codex:s1 approval', 'codex:s2 working'],
+    ]);
+    expect(clock.pending()).toStrictEqual([302_000]);
+  });
+
+  it('approval.resolved after the guess while the tool keeps running: working, and no second guess', () => {
+    const sessions = start();
+    sessions.receive(syncReady());
+    sessions.receive(toolStart());
+    clock.advanceTo(15_000);
+
+    sessions.receive(ev('approval.resolved', { requestId: 'a' }));
+
+    expect(states(sessions.list())).toStrictEqual(['codex:s1 working']);
+    expect(clock.pending()).toStrictEqual([315_000]);
+    clock.advanceTo(200_000);
+    expect(heard()).toStrictEqual([
+      ['codex:s1 working'],
+      ['codex:s1 approval (inferred)'],
+      ['codex:s1 working'],
+    ]);
+  });
+
+  it('a question tool, questions not readable: decision (inferred) at approvalInferMs', () => {
+    const sessions = start({
+      capabilityOf: (source) =>
+        source === 'codex' ? CODEX_ASKING : SOURCE_CAPABILITIES[source],
+    });
+    sessions.receive(syncReady());
+    sessions.receive(toolStart('ask', 'ask_user'));
+    sessions.receive(toolStart('a', 'Bash', { id: 's2' }));
+
+    clock.advanceTo(9999);
+    expect(states(sessions.list())).toStrictEqual([
+      'codex:s1 working',
+      'codex:s2 working',
+    ]);
+    clock.advanceTo(10_000);
+    expect(states(sessions.list())).toStrictEqual([
+      'codex:s1 decision (inferred)',
+      'codex:s2 approval (inferred)',
+    ]);
+  });
+
+  it('claude-code (exact): a tool running for 10 seconds stays working', () => {
+    const sessions = start();
+    const who = { source: 'claude-code', id: 'c1' } as const;
+    sessions.receive(syncReady('claude-code'));
+    sessions.receive(toolStart('a', 'Bash', who));
+    sessions.receive(toolStart('q', 'AskUserQuestion', who));
+    expect(clock.pending()).toStrictEqual([300_000]);
+
+    clock.advanceTo(200_000);
+
+    expect(heard()).toStrictEqual([['claude-code:c1 working']]);
+  });
+
+  it('a replayed tool.start 3 minutes ago, never ended: approval (inferred) when sync.ready publishes it', () => {
+    const sessions = start();
+    sessions.receive(replay(ev('turn.start'), 3 * MINUTE + 1000));
+    sessions.receive(replay(toolStart(), 3 * MINUTE));
+
+    sessions.receive(syncReady());
+
+    expect(heard()).toStrictEqual([['codex:s1 approval (inferred)']]);
+    // idle 5 minutes after the replayed tool.start, not after the guess.
+    expect(clock.pending()).toStrictEqual([2 * MINUTE]);
+  });
+
+  it('before sync.ready: a tool past approvalInferMs is not guessed at or published', () => {
+    timings = { ...timings, syncTimeoutMs: 60_000 };
+    const sessions = start();
+    sessions.receive(toolStart());
+    expect(clock.pending()).toStrictEqual([60_000]);
+
+    clock.advanceTo(30_000);
+    expect(sessions.list()).toStrictEqual([]);
+    expect(heard()).toStrictEqual([]);
+    // Only the sync deadline: no timer for the guess.
+    expect(clock.pending()).toStrictEqual([60_000]);
+
+    sessions.receive(syncReady());
+    expect(heard()).toStrictEqual([['codex:s1 approval (inferred)']]);
+  });
+
+  it('approvalInferMs changed to 30 seconds at 5 seconds: approval only at 30 seconds', () => {
+    const sessions = start();
+    sessions.receive(syncReady());
+    sessions.receive(toolStart());
+    clock.advanceTo(5000);
+
+    timings = { ...timings, approvalInferMs: 30_000 };
+    sessions.retime();
+
+    expect(clock.pending()).toStrictEqual([30_000]);
+    clock.advanceTo(29_999);
+    expect(states(sessions.list())).toStrictEqual(['codex:s1 working']);
+    clock.advanceTo(30_000);
+    expect(heard()).toStrictEqual([
+      ['codex:s1 working'],
+      ['codex:s1 approval (inferred)'],
+    ]);
+  });
+});
+
+describe('inference', () => {
+  it('a threshold lowered below a running tool call guesses at once', () => {
+    const sessions = start();
+    sessions.receive(syncReady());
+    sessions.receive(toolStart());
+    clock.advanceTo(5000);
+
+    timings = { ...timings, approvalInferMs: 3000 };
+    sessions.retime();
+
+    expect(states(sessions.list())).toStrictEqual([
+      'codex:s1 approval (inferred)',
+    ]);
+  });
+
+  it('a guess already made stays when the threshold goes up', () => {
+    const sessions = start();
+    sessions.receive(syncReady());
+    sessions.receive(toolStart());
+    clock.advanceTo(15_000);
+
+    timings = { ...timings, approvalInferMs: 60_000 };
+    sessions.retime();
+    clock.advanceTo(30_000);
+
+    expect(heard()).toStrictEqual([
+      ['codex:s1 working'],
+      ['codex:s1 approval (inferred)'],
+    ]);
+  });
+
+  it('shares the one timer with every other change', () => {
+    const sessions = start();
+    sessions.receive(syncReady());
+    sessions.receive(ev('turn.end'));
+    clock.advanceTo(2000);
+    sessions.receive(toolStart('a', 'Bash', { id: 's2' }));
+    clock.advanceTo(3000);
+    sessions.receive(toolStart('b', 'Bash', { id: 's2' }));
+
+    const due: number[][] = [];
+    for (const at of [3000, 5000, 12_000, 13_000]) {
+      clock.advanceTo(at);
+      due.push(clock.pending());
+    }
+
+    expect(due).toStrictEqual([
+      [5000], // s1: done ends
+      [12_000], // s2: tool a guessed at
+      [13_000], // s2: tool b guessed at
+      [300_000], // s1: idle
+    ]);
+    expect(states(sessions.list())).toStrictEqual([
+      'codex:s1 waiting',
+      'codex:s2 approval (inferred)',
+    ]);
+  });
+
+  it('a guess does not keep a session from expiring', () => {
+    const sessions = start();
+    sessions.receive(syncReady());
+    sessions.receive(toolStart());
+    clock.advanceTo(10_000);
+    expect(states(sessions.list())).toStrictEqual([
+      'codex:s1 approval (inferred)',
+    ]);
+
+    clock.advanceTo(2 * HOUR - 1);
+    expect(sessions.list()).toHaveLength(1);
+    clock.advanceTo(2 * HOUR);
+    expect(sessions.list()).toStrictEqual([]);
+  });
+
+  it('uses SOURCE_CAPABILITIES by default: gemini and cursor are guessed at, demo is not', () => {
+    const sessions = start();
+    for (const source of ['gemini', 'cursor', 'demo'] as const) {
+      sessions.receive(syncReady(source));
+      sessions.receive(toolStart('a', 'Bash', { source, id: 'x' }));
+    }
+
+    clock.advanceTo(10_000);
+
+    expect(states(sessions.list())).toStrictEqual([
+      'gemini:x approval (inferred)',
+      'cursor:x approval (inferred)',
+      'demo:x working',
+    ]);
   });
 });
 

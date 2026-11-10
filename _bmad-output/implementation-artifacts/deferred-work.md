@@ -115,3 +115,21 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-2-session-lifecycle-replay.md`
   summary: macOS 睡眠期間 `performance.now()` 與 Node 計時器都不前進，闔上筆電一整晚後，`idle`、逾時、`done`、`error` 都會晚一整晚
   evidence: Story 2.2 審查 B4／E6。libuv 的 `uv_hrtime` 在 macOS 用 `mach_absolute_time`，睡眠時不增加。`sessions` 的 `now` 是注入的，所以 Story 2.3 接線時處理：`now` 用 `performance.now()` 加上睡眠偏移量，偏移量在 `powerMonitor` 的 resume 時以牆鐘差補上（`src/main/windows/power.ts` 已有 suspend／resume），然後呼叫 `retime()`；並在實機闔蓋確認。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-inference.md`
+  summary: 擋掉轉接器送來的 `via: inferred` 事件（推測只能由 `main/detection/inference` 產生），並讓判斷器忽略 id 不在進行中 tool 裡的推測 request
+  evidence: Story 2.2 推測部分的規格約 2,500 token，使用者 2026-11-10 選擇拆開。這兩項是防護：推測放在 `sessions` 的重算裡、只對還開著的 tool 推測，所以 2.1 審查 B4／E6 的競態在推測模組這邊不會發生；剩下的風險只有轉接器自己送出 `via: inferred`。目前沒有任何轉接器，建議在 Story 2.3 接上第一個轉接器（`demo`）時一起做。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-inference.md`
+  summary: 上一輪的 `turn.end` 漏寫、工具還開著時收到新的 `turn.start`，舊工具會被推測，新的一輪顯示 `approval` 而不是 `thinking`
+  evidence: Story 2.2 推測部分審查 E2。判斷器依 AD-21 只在 `turn.end` 清空工具。未驗證，若成立為 medium。在轉接器 story（2.4～2.7）以真實紀錄確認各來源會不會寫出沒有 `turn.end` 的下一個 `turn.start`；會的話，決定 `turn.start` 是否清掉上一輪的工具，或推測略過 `turn.start` 之前開始的工具。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-inference.md`
+  summary: 同步期限過後才補讀到的 `tool.start`，在它的 `tool.end` 補讀到之前就被推測，發布 `approval` 後又撤回
+  evidence: Story 2.2 推測部分審查 E3。與 2.2 上半審查 B2（同步是一次性的）同源。未驗證，若成立為 medium。Story 2.3 接線時一起決定補讀超過期限時的處理。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-inference.md`
+  summary: 推測 `approval` 之後，同 id 的 exact `question.request` 才到，推測的 `approval` 優先序較高，仍顯示 `approval`（`inferred`）
+  evidence: Story 2.2 推測部分審查 E4。要同時滿足 approval 為 `none`、question 為 `exact`、工具不在提問類清單、question 晚於門檻才寫入（例如 cursor 延遲寫入）。未驗證，若成立為 medium。Story 2.6／2.7 依真實紀錄補提問類清單並確認時機；若會發生，依 AD-22「同 id 的 exact 事件取代推測」，讓 exact 的另一種 request 關掉同 id 的推測。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-inference.md`
+  summary: 能力表沒有「本來就會跑很久的工具」排除清單；`claude-code` 退回推測時，subagent、WebFetch 等都會被推測成 `approval`
+  evidence: Story 2.2 推測部分審查 B1。原型（shelved 的 SessionWatcher）有 `Agent`、`Task`、`WebSearch`、`WebFetch` 等慢工具清單。未驗證，若成立為 medium；只有 Story 2.4 讓 `claude-code` 在狀態檔失效時退回推測才會遇到，由 2.4 決定是否在能力表加排除清單。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-inference.md`
+  summary: 能力表沒有表達「讀不到每個工具的結束」與「寫入延遲」；cursor 若只在 `turn.end` 關工具，幾乎每個超過 10 秒的 turn 都會被推測成 `approval`
+  evidence: Story 2.2 推測部分審查 B4。AD-4 寫 cursor 沒有 tool_result、以 step 為單位延遲寫入。未驗證，若成立為 medium。Story 2.7 確認 cursor 轉接器能否發出每個工具的 `tool.end`；不能的話，能力表加欄位、或該來源改用較長的門檻或不推測。
