@@ -69,6 +69,8 @@ describe('createWindowsStageSource', () => {
           values: { ...SETTINGS_DEFAULTS, canvasDisplayId: null },
         },
         ...source.get(),
+        sessions: [],
+        adapters: [],
       }).success,
     ).toBe(true);
   });

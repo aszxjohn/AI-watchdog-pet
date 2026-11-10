@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createDetection } from '../../src/main/detection/detection';
 import { registerSettingsHandlers } from '../../src/main/settings/ipc';
 import {
   loadSettings,
@@ -66,7 +67,8 @@ function startMain() {
   settings = loadSettings({ file: path.join(dir, 'settings.json') });
   const windows = createWindowsStageSource();
   registerSettingsHandlers(settings);
-  registerStageViewHandlers(createStageView({ settings, windows }));
+  const detection = createDetection({ settings });
+  registerStageViewHandlers(createStageView({ settings, windows, detection }));
   registerCanvasReadyHandler();
   return { settings, windows };
 }
@@ -102,6 +104,8 @@ describe('overlay preload', () => {
         displays: [],
         canvas: null,
         power: { suspended: false, locked: false },
+        sessions: [],
+        adapters: [],
       },
     });
 

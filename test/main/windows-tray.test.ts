@@ -4,6 +4,7 @@ import {
   buildApplicationMenu,
   buildTrayMenu,
   CLOSE_PANEL_LABEL,
+  DEMO_OFF_LABEL,
   QUIT_LABEL,
   trayMenuTemplate,
   type ApplicationMenuActions,
@@ -21,6 +22,8 @@ import {
   trayIconStyle,
 } from '../../src/main/windows/tray-icon';
 import type { PanelPageId } from '../../src/shared/panels';
+import { DEMO_MODE_LABEL } from '../../src/shared/sources';
+import { STATE_CODES, type StateCode } from '../../src/shared/states';
 
 // Stand-ins for electron's Menu, Tray and nativeImage.
 const fake = vi.hoisted(() => {
@@ -123,21 +126,35 @@ function click(item: { click?: unknown } | undefined): void {
 function actions() {
   return {
     openPage: vi.fn<(page: PanelPageId) => void>(),
+    setDemo: vi.fn<(state: StateCode | null) => void>(),
     quit: vi.fn<() => void>(),
   };
 }
 
+/** The 示範模式 submenu's items. */
+function demoItems(handlers = actions()) {
+  const submenu = trayMenuTemplate(handlers).find(
+    (item) => item.id === 'demo',
+  )?.submenu;
+  if (!Array.isArray(submenu)) {
+    throw new Error('no 示範模式 submenu');
+  }
+  return submenu;
+}
+
 describe('tray menu template', () => {
-  it('lists 管理 session, 角色包, 舞台設定, a separator and 結束', () => {
+  it('lists 管理 session, 角色包, 舞台設定, 示範模式, a separator and 結束', () => {
     const template = trayMenuTemplate(actions());
     expect(template.map((item) => item.type ?? item.label)).toStrictEqual([
       '管理 session',
       '角色包',
       '舞台設定',
+      '示範模式',
       'separator',
       '結束',
     ]);
     expect(QUIT_LABEL).toBe('結束');
+    expect(DEMO_MODE_LABEL).toBe('示範模式');
   });
 
   it.each([
@@ -155,11 +172,12 @@ describe('tray menu template', () => {
 
   it('結束 quits', () => {
     const handlers = actions();
-    const item = trayMenuTemplate(handlers)[4];
+    const item = trayMenuTemplate(handlers)[5];
     expect(item?.id).toBe('quit');
     click(item);
     expect(handlers.quit).toHaveBeenCalledOnce();
     expect(handlers.openPage).not.toHaveBeenCalled();
+    expect(handlers.setDemo).not.toHaveBeenCalled();
   });
 
   it('is what buildTrayMenu builds', () => {
@@ -170,6 +188,62 @@ describe('tray menu template', () => {
     expect(menu.built.map((item) => item.label)).toStrictEqual(
       trayMenuTemplate(handlers).map((item) => item.label),
     );
+  });
+});
+
+describe('the 示範模式 submenu', () => {
+  it('is one radio group: 關閉, then the 8 states in STATE_CODES order by their Chinese names', () => {
+    const items = demoItems();
+    expect(items.map((item) => [item.id, item.type, item.label])).toStrictEqual(
+      [
+        ['demo-off', 'radio', '關閉'],
+        ['demo-waiting', 'radio', '等你回覆'],
+        ['demo-thinking', 'radio', '思考中'],
+        ['demo-working', 'radio', '工作中'],
+        ['demo-approval', 'radio', '要你批准'],
+        ['demo-decision', 'radio', '要你決定'],
+        ['demo-done', 'radio', '做完了'],
+        ['demo-idle', 'radio', '休息中'],
+        ['demo-error', 'radio', '出錯了'],
+      ],
+    );
+    expect(DEMO_OFF_LABEL).toBe('關閉');
+  });
+
+  it('starts with 關閉 checked: demo mode is off at every start', () => {
+    expect(demoItems().map((item) => item.checked)).toStrictEqual([
+      true,
+      ...STATE_CODES.map(() => false),
+    ]);
+  });
+
+  it('關閉 turns demo mode off', () => {
+    const handlers = actions();
+    click(demoItems(handlers)[0]);
+    expect(handlers.setDemo.mock.calls).toStrictEqual([[null]]);
+    expect(handlers.openPage).not.toHaveBeenCalled();
+  });
+
+  it.each(STATE_CODES.map((state, index) => [state, index + 1] as const))(
+    '%s shows that state on the demo session',
+    (state, index) => {
+      const handlers = actions();
+      click(demoItems(handlers)[index]);
+      expect(handlers.setDemo.mock.calls).toStrictEqual([[state]]);
+      expect(handlers.quit).not.toHaveBeenCalled();
+    },
+  );
+
+  it('sits after the pages and before the separator and 結束', () => {
+    const ids = trayMenuTemplate(actions()).map((item) => item.id ?? item.type);
+    expect(ids).toStrictEqual([
+      'open-sessions',
+      'open-packs',
+      'open-settings',
+      'demo',
+      'separator',
+      'quit',
+    ]);
   });
 });
 
@@ -185,7 +259,14 @@ describe('createTray', () => {
       (tray.contextMenu as { built: { label?: string }[] }).built.map(
         (item) => item.label,
       ),
-    ).toStrictEqual(['管理 session', '角色包', '舞台設定', undefined, '結束']);
+    ).toStrictEqual([
+      '管理 session',
+      '角色包',
+      '舞台設定',
+      '示範模式',
+      undefined,
+      '結束',
+    ]);
     expect(info).toHaveBeenCalledWith('[windows] tray icon created');
   });
 

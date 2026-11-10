@@ -1,11 +1,16 @@
 /**
  * main/stage-view (AD-20): composes StageView from the modules that own the
  * data (main/settings: `settings`; main/windows: `displays`, `canvas`,
- * `power`) and owns nothing but its own rev and the subscriber list.
+ * `power`; main/detection: `sessions`, `adapters`) and owns nothing but its
+ * own rev and the subscriber list.
  *
  * - Every change of a source becomes one delta, `rev` + 1, pushed to every
  *   subscriber through pushToRenderer. A delta replaces whole sections and
  *   carries only the sections that change reported.
+ * - A delta is checked against the shared schema first. One that fails is
+ *   dropped and logged as an error, by section name and field path only
+ *   (never a value): the view and `rev` stay as they were, so a later valid
+ *   delta still goes out with the next rev.
  * - Subscribers are keyed by webContents id. Subscribing again (a renderer
  *   reload) answers a fresh snapshot without registering the webContents a
  *   second time. A destroyed webContents leaves the list, on its
@@ -16,11 +21,14 @@ import { stageViewDelta, stageViewSubscribe } from '../../shared/ipc';
 import type { SettingsState } from '../../shared/settings';
 import {
   applyStageViewDelta,
+  stageViewSectionsSchema,
   type StageView,
+  type StageViewDetectionSections,
   type StageViewSections,
   type StageViewSnapshot,
   type StageViewWindowsSections,
 } from '../../shared/stage-view';
+import type { z } from '../../shared/zod-setup';
 import type { ChannelRenderers } from '../ipc/origin';
 import { pushToRenderer, type PushTarget } from '../ipc/push';
 import { registerIpcHandler } from '../ipc/register';
@@ -45,6 +53,16 @@ export interface StageViewSources {
       listener: (sections: Partial<StageViewWindowsSections>) => void,
     ): () => void;
   };
+  /**
+   * main/detection. `onChange` hears only the sections that changed (never
+   * an empty object).
+   */
+  readonly detection: {
+    get(): StageViewDetectionSections;
+    onChange(
+      listener: (sections: Partial<StageViewDetectionSections>) => void,
+    ): () => void;
+  };
 }
 
 /** The parts of a WebContents a subscriber needs. */
@@ -61,11 +79,32 @@ export interface StageViewHub {
   subscriberCount(): number;
 }
 
+/**
+ * The sections and field paths a failed check names, for the log: each
+ * issue's path (`sessions.0.state`; just the section for a rule on the
+ * whole section), the names of unknown sections, or `(root)`. Never a
+ * value.
+ */
+function failedPaths(issues: z.ZodError['issues']): string {
+  const paths = new Set<string>();
+  for (const issue of issues) {
+    const named =
+      issue.code === 'unrecognized_keys'
+        ? issue.keys.map((key) => [...issue.path, key])
+        : [issue.path];
+    for (const path of named) {
+      paths.add(path.length === 0 ? '(root)' : path.map(String).join('.'));
+    }
+  }
+  return [...paths].join(', ');
+}
+
 export function createStageView(sources: StageViewSources): StageViewHub {
   let rev = 0;
   let view: StageView = {
     settings: sources.settings.get(),
     ...sources.windows.get(),
+    ...sources.detection.get(),
   };
   const subscribers = new Map<number, StageViewSubscriber>();
 
@@ -74,7 +113,17 @@ export function createStageView(sources: StageViewSources): StageViewHub {
   }
 
   function publish(sections: StageViewSections): void {
-    if (Object.keys(sections).length === 0) {
+    const names = Object.keys(sections);
+    if (names.length === 0) {
+      return;
+    }
+    const checked = stageViewSectionsSchema.safeParse(sections);
+    if (!checked.success) {
+      logEvent(
+        'stage-view',
+        `dropped a delta that fails the schema (sections: ${names.join(', ')}; fields: ${failedPaths(checked.error.issues)}); rev stays ${rev}`,
+        'error',
+      );
       return;
     }
     rev += 1;
@@ -97,6 +146,9 @@ export function createStageView(sources: StageViewSources): StageViewHub {
     publish({ settings });
   });
   sources.windows.onChange((sections) => {
+    publish(sections);
+  });
+  sources.detection.onChange((sections) => {
     publish(sections);
   });
 

@@ -661,12 +661,19 @@ describe('open tools (Story 2.2 inference)', () => {
   it('a tool whose request is still pending when it starts is requested', () => {
     const pending = feed([
       [0, approvalRequest('a')],
-      [1, questionRequest('b', 'inferred')],
+      [1, questionRequest('b')],
       [2, toolStart('a')],
       [3, toolStart('b')],
     ]);
     expect(pending.openTools.get('a')?.requested).toBe(true);
     expect(pending.openTools.get('b')?.requested).toBe(true);
+    // An inferred request before its tool started was ignored (Story 2.3).
+    const guessedEarly = feed([
+      [0, questionRequest('c', 'inferred')],
+      [1, toolStart('c')],
+    ]);
+    expect(guessedEarly.openTools.get('c')?.requested).toBe(false);
+    expect(guessedEarly.openQuestions.size).toBe(0);
     // One resolved before its tool started is not pending any more.
     const resolved = feed([
       [0, approvalRequest('a')],
@@ -677,9 +684,92 @@ describe('open tools (Story 2.2 inference)', () => {
   });
 });
 
+describe('an inferred request with no open tool call (Story 2.3)', () => {
+  it.each<[string, Step[], DetectionEvent]>([
+    [
+      'an approval for a tool call that already ended',
+      [
+        [0, turnStart()],
+        [0, toolStart('a')],
+        [5, toolEnd('a')],
+      ],
+      approvalRequest('a', 'inferred'),
+    ],
+    [
+      'a question for a tool call that never started',
+      [
+        [0, turnStart()],
+        [0, toolStart('a')],
+      ],
+      questionRequest('b', 'inferred'),
+    ],
+    [
+      'an approval after turn.end closed every tool call',
+      [
+        [0, turnStart()],
+        [0, toolStart('a')],
+        [5, turnEnd()],
+      ],
+      approvalRequest('a', 'inferred'),
+    ],
+    [
+      'an approval in a session with no tool call at all',
+      [[0, sessionStart()]],
+      approvalRequest('a', 'inferred'),
+    ],
+  ])('%s returns the very same conditions', (_label, steps, request) => {
+    const before = feed(steps);
+    const after = reduceSession(before, request, 10_000);
+    expect(after).toBe(before);
+    expect(evaluate(after, 10_000, TIMINGS).state).not.toMatch(
+      /approval|decision/,
+    );
+  });
+
+  it("as a session's first event it creates empty conditions, no request", () => {
+    const conditions = reduceSession(
+      undefined,
+      approvalRequest('a', 'inferred'),
+      42,
+    );
+    expect(snapshot(conditions)).toStrictEqual({
+      ended: false,
+      inTurn: false,
+      openTools: [],
+      openApprovals: [],
+      openQuestions: [],
+      turnEndedAt: null,
+      errorAt: null,
+      lastEventAt: 42,
+    });
+  });
+
+  it('an exact request with no open tool call still opens (AD-21 unchanged)', () => {
+    expectStates([
+      [0, sessionStart()],
+      [1, approvalRequest('r')],
+      [1, 'approval'],
+      [2, approvalResolved('r')],
+      [2, questionRequest('q', 'registry')],
+      [2, 'decision'],
+    ]);
+  });
+
+  it('an inferred request for an open tool call still opens', () => {
+    expectStates([
+      [0, toolStart('a')],
+      [10_000, approvalRequest('a', 'inferred')],
+      [10_000, 'approval (inferred)'],
+    ]);
+  });
+});
+
 describe('inferred requests and the last-event time (Story 2.2 inference)', () => {
   it('an inferred approval or question does not move it; an exact one does', () => {
-    let conditions = feed([[0, toolStart('a')]]);
+    let conditions = feed([
+      [0, toolStart('a')],
+      [0, toolStart('q')],
+    ]);
     conditions = reduceSession(
       conditions,
       approvalRequest('a', 'inferred'),
@@ -763,6 +853,7 @@ describe('confidence', () => {
     [
       'an approval with only an inferred request is inferred',
       [
+        [0, toolStart('r')],
         [0, approvalRequest('r', 'inferred')],
         [0, 'approval (inferred)'],
       ],
@@ -770,6 +861,7 @@ describe('confidence', () => {
     [
       'an exact request is not downgraded by a later inferred one',
       [
+        [0, toolStart('r')],
         [0, approvalRequest('r', 'registry')],
         [1, approvalRequest('r', 'inferred')],
         [1, 'approval'],
@@ -778,6 +870,7 @@ describe('confidence', () => {
     [
       'one exact approval among inferred ones makes the state exact',
       [
+        [0, toolStart('a')],
         [0, approvalRequest('a', 'inferred')],
         [1, approvalRequest('b', 'log')],
         [1, 'approval'],
@@ -818,6 +911,7 @@ describe('confidence', () => {
     [
       'an exact approval outranks an inferred question',
       [
+        [0, toolStart('q')],
         [0, questionRequest('q', 'inferred')],
         [1, approvalRequest('r', 'log')],
         [1, 'approval'],
@@ -826,6 +920,7 @@ describe('confidence', () => {
     [
       'an inferred approval outranks an exact question and stays inferred',
       [
+        [0, toolStart('r')],
         [0, questionRequest('q', 'log')],
         [1, approvalRequest('r', 'inferred')],
         [1, 'approval (inferred)'],

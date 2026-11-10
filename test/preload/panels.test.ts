@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createDetection } from '../../src/main/detection/detection';
 import { registerIpcHandler } from '../../src/main/ipc/register';
 import { registerSettingsHandlers } from '../../src/main/settings/ipc';
 import {
@@ -48,7 +49,11 @@ function startMain(): SettingsStore {
   settings = loadSettings({ file: path.join(dir, 'settings.json') });
   registerSettingsHandlers(settings);
   registerStageViewHandlers(
-    createStageView({ settings, windows: createWindowsStageSource() }),
+    createStageView({
+      settings,
+      windows: createWindowsStageSource(),
+      detection: createDetection({ settings }),
+    }),
   );
   return settings;
 }
@@ -105,6 +110,8 @@ describe('panels preload', () => {
         displays: [],
         canvas: null,
         power: { suspended: false, locked: false },
+        sessions: [],
+        adapters: [],
       },
     });
 

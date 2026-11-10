@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ADAPTER_HEALTH_CODES,
+  ADAPTER_HEALTH_DISPLAY_NAMES,
+  adapterHealthSchema,
+  DEMO_MODE_LABEL,
   SOURCE_CAPABILITIES,
   SOURCE_CODES,
+  SOURCE_DISPLAY_NAMES,
   sourceCodeSchema,
 } from '../../src/shared/sources';
 import { expectRejected, expectRoundTrip } from './schema-helpers';
@@ -64,5 +69,65 @@ describe('SOURCE_CAPABILITIES', () => {
     expect(Object.isFrozen(SOURCE_CAPABILITIES)).toBe(true);
     expect(Object.isFrozen(capability)).toBe(true);
     expect(Object.isFrozen(capability.questionTools)).toBe(true);
+  });
+});
+
+describe('SOURCE_DISPLAY_NAMES', () => {
+  it('names every source, in the same order; demo is 示範', () => {
+    expect(Object.keys(SOURCE_DISPLAY_NAMES)).toStrictEqual([...SOURCE_CODES]);
+    expect(SOURCE_DISPLAY_NAMES).toStrictEqual({
+      'claude-code': 'Claude Code',
+      codex: 'Codex CLI',
+      gemini: 'Gemini CLI',
+      cursor: 'Cursor',
+      copilot: 'Copilot CLI',
+      demo: '示範',
+    });
+    expect(Object.isFrozen(SOURCE_DISPLAY_NAMES)).toBe(true);
+  });
+
+  it('calls demo mode 示範模式', () => {
+    expect(DEMO_MODE_LABEL).toBe('示範模式');
+  });
+
+  it('gives each source a different name', () => {
+    const names = Object.values(SOURCE_DISPLAY_NAMES);
+    expect(new Set(names).size).toBe(names.length);
+  });
+});
+
+describe('adapter health', () => {
+  it('has exactly the codes ok, degraded and missing', () => {
+    expect([...ADAPTER_HEALTH_CODES]).toStrictEqual([
+      'ok',
+      'degraded',
+      'missing',
+    ]);
+  });
+
+  it.each(ADAPTER_HEALTH_CODES)('round-trips %s', (code) => {
+    expectRoundTrip(adapterHealthSchema, code);
+  });
+
+  it.each([
+    ['an unknown code', 'broken'],
+    ['a display name', '正常'],
+    ['wrong case', 'OK'],
+    ['empty string', ''],
+    ['null', null],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(adapterHealthSchema, value);
+  });
+
+  it('names each code in Chinese: 正常, 部分可用, 找不到', () => {
+    expect(Object.keys(ADAPTER_HEALTH_DISPLAY_NAMES)).toStrictEqual([
+      ...ADAPTER_HEALTH_CODES,
+    ]);
+    expect(ADAPTER_HEALTH_DISPLAY_NAMES).toStrictEqual({
+      ok: '正常',
+      degraded: '部分可用',
+      missing: '找不到',
+    });
+    expect(Object.isFrozen(ADAPTER_HEALTH_DISPLAY_NAMES)).toBe(true);
   });
 });

@@ -3,7 +3,11 @@
  * cannot add to them.
  *
  * - The tray menu: one item per panel page (labels from
- *   src/shared/panels.ts), a separator, then 結束.
+ *   src/shared/panels.ts), the 示範模式 submenu, a separator, then 結束.
+ *   示範模式 is one group of radio items: 關閉 (checked at start: demo mode
+ *   is off at every start), then the 8 states in STATE_CODES order, by
+ *   their Chinese names (src/shared/states.ts). Electron moves the check
+ *   mark itself when one is clicked.
  * - The application menu: on macOS only the app menu (關閉面板 ⌘H, 結束),
  *   Edit (copy and paste in the panel) and Window (minimize, zoom, close ⌘W,
  *   bring all to front); no View menu, so no reload or DevTools items,
@@ -18,6 +22,12 @@
 import { Menu, type MenuItemConstructorOptions } from 'electron';
 import { PRODUCT_NAME } from '../../shared/constants';
 import { PANEL_PAGES, type PanelPageId } from '../../shared/panels';
+import { DEMO_MODE_LABEL } from '../../shared/sources';
+import {
+  STATE_CODES,
+  STATE_DISPLAY_NAMES,
+  type StateCode,
+} from '../../shared/states';
 
 /** Label of the quit item. */
 export const QUIT_LABEL = '結束';
@@ -25,11 +35,41 @@ export const QUIT_LABEL = '結束';
 /** Label of the app menu item that closes the panel (⌘H). */
 export const CLOSE_PANEL_LABEL = '關閉面板';
 
+/** Label of the demo mode item that turns it off. */
+export const DEMO_OFF_LABEL = '關閉';
+
 export interface TrayMenuActions {
   /** Opens the panel on `page` (or switches the open panel to it). */
   openPage(page: PanelPageId): void;
+  /** Demo mode: shows `state` on the demo session; null turns it off. */
+  setDemo(state: StateCode | null): void;
   /** Quits the app. */
   quit(): void;
+}
+
+function demoSubmenu(actions: TrayMenuActions): MenuItemConstructorOptions[] {
+  return [
+    {
+      id: 'demo-off',
+      type: 'radio',
+      label: DEMO_OFF_LABEL,
+      checked: true,
+      click: () => {
+        actions.setDemo(null);
+      },
+    },
+    ...STATE_CODES.map(
+      (state): MenuItemConstructorOptions => ({
+        id: `demo-${state}`,
+        type: 'radio',
+        label: STATE_DISPLAY_NAMES[state],
+        checked: false,
+        click: () => {
+          actions.setDemo(state);
+        },
+      }),
+    ),
+  ];
 }
 
 export function trayMenuTemplate(
@@ -45,6 +85,7 @@ export function trayMenuTemplate(
         },
       }),
     ),
+    { id: 'demo', label: DEMO_MODE_LABEL, submenu: demoSubmenu(actions) },
     { type: 'separator' },
     {
       id: 'quit',

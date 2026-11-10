@@ -494,6 +494,71 @@ describe('I/O matrix', () => {
   });
 });
 
+describe('an inferred event from an adapter (Story 2.3)', () => {
+  it.each<[string, () => DetectionEvent]>([
+    [
+      'an approval request',
+      () => ev('approval.request', { requestId: 'a' }, { via: 'inferred' }),
+    ],
+    [
+      'a question request',
+      () => ev('question.request', { requestId: 'a' }, { via: 'inferred' }),
+    ],
+    ['an activity', () => ev('activity', {}, { via: 'inferred' })],
+    ['a session end', () => ev('session.end', {}, { via: 'inferred' })],
+  ])(
+    'drops %s and logs its type and source only; the session is untouched',
+    (_label, make) => {
+      const sessions = start();
+      sessions.receive(syncReady());
+      sessions.receive(ev('tool.start', { toolCallId: 'a', toolName: 'Bash' }));
+      const before = sessions.list();
+      const event = make();
+
+      sessions.receive(event);
+
+      expect(sessions.list()).toBe(before);
+      expect(states(sessions.list())).toStrictEqual(['codex:s1 working']);
+      expect(heard()).toHaveLength(1);
+      expect(detectionLines()).toStrictEqual([
+        `[detection] dropped an inferred ${event.type} from the codex adapter (only inference may guess)`,
+      ]);
+    },
+  );
+
+  it('starts no session', () => {
+    const sessions = start();
+    sessions.receive(syncReady());
+    sessions.receive(
+      ev('approval.request', { requestId: 'a' }, { via: 'inferred' }),
+    );
+    expect(sessions.list()).toStrictEqual([]);
+    expect(heard()).toStrictEqual([]);
+  });
+
+  it("does not move the session's last-event time", () => {
+    const sessions = start();
+    sessions.receive(syncReady());
+    sessions.receive(ev('turn.start'));
+    sessions.receive(ev('turn.end'));
+    clock.advanceTo(timings.idleMs - 1);
+    sessions.receive(ev('activity', {}, { via: 'inferred' }));
+    clock.advanceTo(timings.idleMs);
+    expect(states(sessions.list())).toStrictEqual(['codex:s1 idle']);
+  });
+
+  it("inference's own guesses still apply", () => {
+    const sessions = start();
+    sessions.receive(syncReady());
+    sessions.receive(ev('tool.start', { toolCallId: 'a', toolName: 'Bash' }));
+    clock.advanceTo(timings.approvalInferMs);
+    expect(states(sessions.list())).toStrictEqual([
+      'codex:s1 approval (inferred)',
+    ]);
+    expect(detectionLines()).toStrictEqual([]);
+  });
+});
+
 /** A tool call starting, on codex unless `who` says otherwise. */
 function toolStart(toolCallId = 'a', toolName = 'Bash', who: Who = {}) {
   return ev('tool.start', { toolCallId, toolName }, who);
@@ -824,18 +889,20 @@ describe('subscribers', () => {
   it('hear a new display name and a confidence change', () => {
     const sessions = start();
     sessions.receive(syncReady());
-    sessions.receive(
-      ev('approval.request', { requestId: 'r' }, { via: 'inferred' }),
-    );
+    sessions.receive(ev('tool.start', { toolCallId: 'r', toolName: 'Bash' }));
+    // codex cannot read approvals: inference guesses one.
+    clock.advanceTo(timings.approvalInferMs);
     sessions.receive(ev('session.meta', { displayName: 'gundam-pet' }));
     sessions.receive(ev('approval.request', { requestId: 'r' }));
 
     expect(heard()).toStrictEqual([
+      ['codex:s1 working'],
       ['codex:s1 approval (inferred)'],
       ['codex:s1 approval (inferred)'],
       ['codex:s1 approval'],
     ]);
     expect(notifications.map((list) => list[0]?.displayName)).toStrictEqual([
+      null,
       null,
       'gundam-pet',
       'gundam-pet',

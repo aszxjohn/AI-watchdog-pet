@@ -4,8 +4,9 @@
  *
  * The page comes from the URL fragment (`#/<page id>`, src/shared/panels.ts):
  * main opens the window on a page by loading that fragment, and the links on
- * the left change it. 舞台設定 lists the displays for the canvas; the other
- * pages show 即將推出 for now.
+ * the left change it. 管理 session lists the detected sessions and the
+ * running adapters' health; 舞台設定 lists the displays for the canvas;
+ * 角色包 shows 即將推出 for now.
  *
  * Renderer state only ever comes from StageView (AD-20): a setting changes
  * through `settings.patch`, and the page shows the new choice once StageView
@@ -24,6 +25,18 @@ import {
   type DisplayChoiceState,
 } from './display-options';
 import { currentHashPage, followHashPage } from './hash-page';
+import {
+  ADAPTERS_HEADING,
+  adapterRows,
+  DEMO_MODE_HINT,
+  INFERRED_LABEL,
+  INFERRED_TITLE,
+  NO_ADAPTERS_TEXT,
+  NO_SESSIONS_TEXT,
+  SESSION_COLUMNS,
+  SESSIONS_HEADING,
+  sessionRows,
+} from './session-rows';
 
 interface StatusLine {
   readonly text: string;
@@ -183,6 +196,84 @@ function StageSettings({
   );
 }
 
+/**
+ * 管理 session: the sessions main/detection publishes and the health of
+ * each running adapter, read from StageView only. Text and order come from
+ * session-rows.ts; an inferred state carries a 推測 mark.
+ */
+function Sessions({ snapshot }: { snapshot: StageViewSnapshot | null }) {
+  if (snapshot === null) {
+    return <p className="coming-soon">讀取中…</p>;
+  }
+  const rows = sessionRows(snapshot.view);
+  const adapters = adapterRows(snapshot.view);
+
+  return (
+    <>
+      <section className="sessions" aria-labelledby="sessions-heading">
+        <h2 id="sessions-heading">{SESSIONS_HEADING}</h2>
+        {rows.length === 0 ? (
+          <div className="sessions-empty">
+            <p>{NO_SESSIONS_TEXT}</p>
+            <p className="hint">{DEMO_MODE_HINT}</p>
+          </div>
+        ) : (
+          <table className="session-table">
+            <thead>
+              <tr>
+                {SESSION_COLUMNS.map((column) => (
+                  <th key={column} scope="col">
+                    {column}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.key} data-state={row.stateCode}>
+                  <td>{row.source}</td>
+                  <td>{row.name}</td>
+                  <td>
+                    <span
+                      className={
+                        row.inferred
+                          ? 'session-state is-inferred'
+                          : 'session-state'
+                      }
+                    >
+                      {row.state}
+                    </span>
+                    {row.inferred ? (
+                      <span className="inferred-mark" title={INFERRED_TITLE}>
+                        {INFERRED_LABEL}
+                      </span>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+      <section className="adapters" aria-labelledby="adapters-heading">
+        <h2 id="adapters-heading">{ADAPTERS_HEADING}</h2>
+        {adapters.length === 0 ? (
+          <p className="coming-soon">{NO_ADAPTERS_TEXT}</p>
+        ) : (
+          <ul className="adapter-list">
+            {adapters.map((adapter) => (
+              <li key={adapter.key} data-health={adapter.healthCode}>
+                <span>{adapter.source}</span>
+                <span className="adapter-health">{adapter.health}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </>
+  );
+}
+
 export function App({ awp }: { awp: PanelsApi | undefined }) {
   const page = useHashPage();
   const version = useVersionLine(awp);
@@ -210,6 +301,8 @@ export function App({ awp }: { awp: PanelsApi | undefined }) {
         <h1>{current?.label}</h1>
         {page === 'settings' ? (
           <StageSettings awp={awp} snapshot={stageView.snapshot} />
+        ) : page === 'sessions' ? (
+          <Sessions snapshot={stageView.snapshot} />
         ) : (
           <p className="coming-soon">即將推出</p>
         )}

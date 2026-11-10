@@ -27,7 +27,11 @@ const state = vi.hoisted(() => {
     resolveReady: () => {},
     ready: Promise.resolve(),
     trayActions: undefined as
-      | { openPage(page: string): void; quit(): void }
+      | {
+          openPage(page: string): void;
+          setDemo(state: string | null): void;
+          quit(): void;
+        }
       | undefined,
     /** What main.ts passed to buildApplicationMenu. */
     menuActions: undefined as { closePanel(): void } | undefined,
@@ -36,6 +40,8 @@ const state = vi.hoisted(() => {
     /** What main.ts passed to watchDisplays and watchPower. */
     displaysOptions: undefined as Record<string, unknown> | undefined,
     powerArgs: undefined as unknown[] | undefined,
+    /** What main.ts passed to watchSleep. */
+    sleepArgs: undefined as unknown[] | undefined,
     reset() {
       s.squirrel = false;
       s.lock = true;
@@ -52,6 +58,7 @@ const state = vi.hoisted(() => {
       s.panelOptions = undefined;
       s.displaysOptions = undefined;
       s.powerArgs = undefined;
+      s.sleepArgs = undefined;
       s.ready = new Promise<void>((resolve) => {
         s.resolveReady = resolve;
       });
@@ -196,6 +203,26 @@ vi.mock('../../src/main/windows/stage-sources', () => ({
   },
 }));
 
+vi.mock('../../src/main/detection/detection', () => ({
+  createDetection: (options: { settings: unknown }) => {
+    state.order.push(
+      `createDetection settings=${JSON.stringify(options.settings)}`,
+    );
+    return {
+      fake: 'detection',
+      setDemo: (demoState: string | null) => {
+        state.order.push(`detection.setDemo ${String(demoState)}`);
+      },
+      stop: record('detection.stop'),
+    };
+  },
+  watchSleep: (...args: unknown[]) => {
+    state.sleepArgs = args;
+    state.order.push('watchSleep');
+    state.maybeFail('watchSleep');
+  },
+}));
+
 vi.mock('../../src/main/windows/power', () => ({
   watchPower: (...args: unknown[]) => {
     state.powerArgs = args;
@@ -277,7 +304,11 @@ vi.mock('../../src/main/windows/menu', () => ({
 vi.mock('../../src/main/windows/tray', () => ({
   createTray: (
     platform: string,
-    actions: { openPage(page: string): void; quit(): void },
+    actions: {
+      openPage(page: string): void;
+      setDemo(state: string | null): void;
+      quit(): void;
+    },
   ) => {
     state.order.push(`createTray ${platform}`);
     state.trayActions = actions;
@@ -308,6 +339,7 @@ function readySteps(): string[] {
     `createTray ${process.platform}`,
     'watchDisplays',
     'watchPower',
+    'watchSleep',
   ];
 }
 
@@ -384,7 +416,8 @@ describe('the primary instance', () => {
       'initRunLog /fake/userData/logs',
       'loadSettings',
       'createWindowsStageSource',
-      'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"}',
+      'createDetection settings={"fake":"settings"}',
+      'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} detection={"fake":"detection"}',
       'registerIpcHandler app:get-version ["panels"]',
       'registerSettingsHandlers',
       'registerStageViewHandlers',
@@ -398,7 +431,7 @@ describe('the primary instance', () => {
     expect(state.logs[0]).toMatch(/^app: start version=1\.0\.0 /);
   });
 
-  it('once ready: session guards, application menu, app:// handler, Dock hidden, tray, then the canvas and the power watch; no panel', async () => {
+  it('once ready: session guards, application menu, app:// handler, Dock hidden, tray, then the canvas and the power and sleep watch; no panel', async () => {
     await startMain();
     state.order = [];
     await becomeReady();
@@ -414,6 +447,7 @@ describe('the primary instance', () => {
     ['tray', 'createTray'],
     ['canvas', 'watchDisplays'],
     ['power', 'watchPower'],
+    ['sleep', 'watchSleep'],
   ])(
     'once ready, a failing startup step (%s) is logged with its errorCode and the other steps still run, the tray included',
     async (step, call) => {
@@ -480,15 +514,33 @@ describe('the primary instance', () => {
       { fake: 'powerMonitor' },
       { fake: 'windows-source' },
     ]);
+    expect(state.sleepArgs).toStrictEqual([
+      { fake: 'powerMonitor' },
+      expect.objectContaining({ fake: 'detection' }),
+    ]);
   });
 
-  it('stops rebuilding the canvas once the app is quitting', async () => {
+  it('stops rebuilding the canvas, and stops detection, once the app is quitting', async () => {
     await startMain();
     const beforeQuit = state.listeners.get('before-quit') ?? [];
-    expect(beforeQuit).toHaveLength(1);
+    expect(beforeQuit).toHaveLength(2);
     state.order = [];
-    beforeQuit[0]?.();
-    expect(state.order).toStrictEqual(['canvas.stop']);
+    emit('before-quit');
+    expect(state.order).toStrictEqual(['canvas.stop', 'detection.stop']);
+  });
+
+  it('stops detection on quit even when canvas.stop throws', async () => {
+    state.failing.add('canvas.stop');
+    await startMain();
+    state.order = [];
+    for (const listener of state.listeners.get('before-quit') ?? []) {
+      try {
+        listener();
+      } catch {
+        // Electron logs a throwing listener and calls the next one.
+      }
+    }
+    expect(state.order).toStrictEqual(['canvas.stop', 'detection.stop']);
   });
 
   it('keeps running when every window is closed', async () => {
@@ -590,13 +642,20 @@ describe('the primary instance', () => {
     },
   );
 
-  it('wires the tray menu to the panel and to quit', async () => {
+  it('wires the tray menu to the panel, demo mode and quit', async () => {
     await startMain();
     await becomeReady();
     state.order = [];
     state.trayActions?.openPage('packs');
+    state.trayActions?.setDemo('approval');
+    state.trayActions?.setDemo(null);
     state.trayActions?.quit();
-    expect(state.order).toStrictEqual(['panels.open packs', 'app.quit']);
+    expect(state.order).toStrictEqual([
+      'panels.open packs',
+      'detection.setDemo approval',
+      'detection.setDemo null',
+      'app.quit',
+    ]);
   });
 
   it("wires the application menu's 關閉面板 (⌘H) to closing the panel", async () => {

@@ -194,6 +194,8 @@ describe('settings and StageView contracts', () => {
       displays: [],
       canvas: null,
       power: { suspended: false, locked: false },
+      sessions: [],
+      adapters: [],
     },
   };
   const DELTA = { rev: 6, sections: { settings: STATE } };

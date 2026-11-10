@@ -28,6 +28,8 @@ const SNAPSHOT: StageViewSnapshot = {
       fallback: false,
     },
     power: { suspended: false, locked: false },
+    sessions: [],
+    adapters: [],
   },
 };
 

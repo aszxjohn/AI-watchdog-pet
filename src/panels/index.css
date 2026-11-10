@@ -8,6 +8,7 @@
   --accent: #0a66d8;
   --accent-fg: #ffffff;
   --error: #c62828;
+  --inferred: #b25e00;
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
     'PingFang TC', 'Microsoft JhengHei', sans-serif;
@@ -24,6 +25,7 @@
     --accent: #3b8cff;
     --accent-fg: #ffffff;
     --error: #ff6b6b;
+    --inferred: #ffb454;
   }
 }
 
@@ -142,5 +144,72 @@ body {
 }
 
 .status-line.is-error {
+  color: var(--error);
+}
+
+.panel-page h2 {
+  margin: 20px 0 8px;
+  font-size: 15px;
+}
+
+.sessions-empty p {
+  margin: 0 0 6px;
+}
+
+.hint {
+  color: var(--muted);
+}
+
+.session-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.session-table th,
+.session-table td {
+  padding: 6px 12px 6px 0;
+  /* A native id shown as a name can be 256 characters with no space. */
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.session-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.session-state.is-inferred {
+  font-style: italic;
+  color: var(--inferred);
+}
+
+.inferred-mark {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border: 1px dashed var(--inferred);
+  border-radius: 4px;
+  color: var(--inferred);
+  font-size: 12px;
+}
+
+.adapter-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.adapter-list li {
+  display: flex;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.adapter-health {
+  color: var(--muted);
+}
+
+.adapter-list li:not([data-health='ok']) .adapter-health {
   color: var(--error);
 }

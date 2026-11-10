@@ -1,4 +1,11 @@
+import {
+  confidenceSchema,
+  DETECTION_ID_MAX_LENGTH,
+  sessionKeySchema,
+} from './detection-events';
 import { settingsStateSchema } from './settings';
+import { adapterHealthSchema, sourceCodeSchema } from './sources';
+import { stateCodeSchema } from './states';
 import { z } from './zod-setup';
 
 /**
@@ -7,7 +14,8 @@ import { z } from './zod-setup';
  * then deltas. Sections and their owners:
  *
  * - `settings`: main/settings;
- * - `displays`, `canvas`, `power`: main/windows (Story 1.6).
+ * - `displays`, `canvas`, `power`: main/windows (Story 1.6);
+ * - `sessions`, `adapters`: main/detection (Story 2.3).
  */
 
 /**
@@ -85,11 +93,60 @@ export const stagePowerSchema = z.strictObject({
 
 export type StagePower = z.infer<typeof stagePowerSchema>;
 
+/**
+ * One detected session, as main/detection/sessions publishes it: its key,
+ * source, display name (null until the source names it; the panel then
+ * shows the native id), state, and whether that state is inferred. The key
+ * starts with `<source>:`.
+ */
+export const stageSessionSchema = z
+  .strictObject({
+    sessionKey: sessionKeySchema,
+    source: sourceCodeSchema,
+    displayName: z.string().min(1).max(DETECTION_ID_MAX_LENGTH).nullable(),
+    state: stateCodeSchema,
+    confidence: confidenceSchema,
+  })
+  .refine((session) => session.sessionKey.startsWith(`${session.source}:`), {
+    message: 'sessionKey starts with the session source',
+    path: ['sessionKey'],
+  });
+
+export type StageSession = z.infer<typeof stageSessionSchema>;
+
+/** `sessions`: every published session, keys unique. */
+export const stageSessionsSchema = z
+  .array(stageSessionSchema)
+  .refine(
+    (sessions) =>
+      new Set(sessions.map((s) => s.sessionKey)).size === sessions.length,
+    { message: 'session keys are unique' },
+  );
+
+/** One running adapter and its health. */
+export const stageAdapterSchema = z.strictObject({
+  source: sourceCodeSchema,
+  health: adapterHealthSchema,
+});
+
+export type StageAdapter = z.infer<typeof stageAdapterSchema>;
+
+/** `adapters`: one entry per running adapter, sources unique. */
+export const stageAdaptersSchema = z
+  .array(stageAdapterSchema)
+  .refine(
+    (adapters) =>
+      new Set(adapters.map((a) => a.source)).size === adapters.length,
+    { message: 'adapter sources are unique' },
+  );
+
 export const stageViewSchema = z.strictObject({
   settings: settingsStateSchema,
   displays: stageDisplaysSchema,
   canvas: stageCanvasSchema,
   power: stagePowerSchema,
+  sessions: stageSessionsSchema,
+  adapters: stageAdaptersSchema,
 });
 
 export type StageView = z.infer<typeof stageViewSchema>;
@@ -100,6 +157,12 @@ export type StageViewSectionName = keyof StageView;
 export type StageViewWindowsSections = Pick<
   StageView,
   'displays' | 'canvas' | 'power'
+>;
+
+/** The sections main/detection owns. */
+export type StageViewDetectionSections = Pick<
+  StageView,
+  'sessions' | 'adapters'
 >;
 
 /** The answer to `stage-view:subscribe`: the whole view at `rev`. */
@@ -121,6 +184,8 @@ export const stageViewSectionsSchema = z
     displays: stageDisplaysSchema.exactOptional(),
     canvas: stageCanvasSchema.exactOptional(),
     power: stagePowerSchema.exactOptional(),
+    sessions: stageSessionsSchema.exactOptional(),
+    adapters: stageAdaptersSchema.exactOptional(),
   })
   .refine((sections) => Object.keys(sections).length > 0, {
     message: 'a delta carries at least one section',

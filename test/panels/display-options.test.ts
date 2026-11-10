@@ -350,6 +350,8 @@ describe('the StageView status line', () => {
           displays: [BUILT_IN, EXTERNAL],
           canvas: { ...ON_BUILT_IN, fallback: true },
           power: { suspended: false, locked: false },
+          sessions: [],
+          adapters: [],
         },
       }),
     ).toBe('StageView rev 9｜畫布螢幕：主螢幕（暫用主螢幕）');

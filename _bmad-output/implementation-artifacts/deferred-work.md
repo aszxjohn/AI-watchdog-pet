@@ -133,3 +133,27 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-2-inference.md`
   summary: 能力表沒有表達「讀不到每個工具的結束」與「寫入延遲」；cursor 若只在 `turn.end` 關工具，幾乎每個超過 10 秒的 turn 都會被推測成 `approval`
   evidence: Story 2.2 推測部分審查 B4。AD-4 寫 cursor 沒有 tool_result、以 step 為單位延遲寫入。未驗證，若成立為 medium。Story 2.7 確認 cursor 轉接器能否發出每個工具的 `tool.end`；不能的話，能力表加欄位、或該來源改用較長的門檻或不推測。
+- source_spec: none
+  summary: Story 2.3 的端到端測試：Playwright `_electron` 以 `demo` 轉接器為事件來源，斷言所有 renderer 只發出 `app://`、`pack://`（與開發時的 Vite dev server）的請求〔NFR5〕，並在 CI 加入建置步驟、檢查 preload 產物只 require `electron`
+  evidence: 使用者 2026-11-10 選擇把 Story 2.3 拆開，先做偵測接線、示範模式與「管理 session」面板頁。端到端測試是獨立的測試基礎設施（要裝 @playwright/test 1.64.1、改 CI），可以單獨交付；Story 2.3 的第三條驗收條件（沒有角色包時照常運作、端到端測試）留給這一項。
+- source_spec: none
+  summary: 第一次使用的引導（Epic 1 回顧 A9）：認得出的選單列圖示，以及「關掉面板後 app 仍在選單列執行」的提示
+  evidence: 使用者 2026-11-10 選擇把 Story 2.3 拆開，先做偵測接線、示範模式與「管理 session」面板頁。引導與 session 面板互不依賴，可以單獨交付。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-demo-sessions-panel.md`
+  summary: 「同步是一次性的」與「同步期限過後才補讀到的事件會逐筆發布、推測後又撤回」兩項，從 Story 2.3 改到 Story 2.4 決定
+  evidence: Story 2.2 審查 B2 與 2.2 推測部分審查 E3 原本排在 2.3 接線時確認。2.3 只有示範轉接器，它不補讀、啟動就送 `sync.ready`，所以遇不到；第一個會補讀的是 2.4 的 Claude Code 轉接器，要在那時決定轉接器重啟、補讀超過 `syncTimeoutMs` 時的處理。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-demo-sessions-panel.md`
+  summary: Epic 2 驗收前，在畫布上做一個「方塊角色空殼」代表示範 session，對它按右鍵跳出選單選 8 種狀態（呼叫示範轉接器的 `setState`），供驗收用；Epic 3 角色上畫布後，右鍵角色選單沿用同一個機制
+  evidence: 使用者 2026-11-10 決定示範模式不輪播，改成「指定狀態」，最終的選擇方式是對畫布上的角色按右鍵。Story 2.3 時畫布上還沒有角色，所以 2.3 先做機制並暫時從系統匣選；要做方塊與右鍵，需要畫布繪製、滑鼠穿透切換與畫布到 main 的請求通道，範圍另計。FR21「示範模式輪播 8 狀態」與 Story 3.x「示範假 session 照池子分配」的寫法要隨之更新。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-demo-sessions-panel.md`
+  summary: 系統匣「示範模式」的勾選由 Electron 自己管，不跟偵測的實際狀態同步；方塊角色空殼的右鍵選單成為第二個入口後，兩邊會不一致
+  evidence: Story 2.3 審查 B5。`src/main/windows/menu.ts` 的子選單一開始勾「關閉」，之後不再依偵測狀態重建。未驗證，若成立為 medium。做方塊角色空殼時一起處理：依 `detection.onChange` 更新勾選，或重建系統匣選單；右鍵選單要呼叫 `detection.setDemo`，不要直接呼叫轉接器的 `setState`。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-demo-sessions-panel.md`
+  summary: StageView 的 `adapters` 沒有「同步中」狀態；補讀期間面板會顯示「目前沒有偵測到 session」，轉接器卻顯示正常
+  evidence: Story 2.3 審查 B11。來源送出 `sync.ready`（或 `syncTimeoutMs` 到期）前，它的 session 不會發布。未驗證，若成立為 medium。示範轉接器不補讀，遇不到；Story 2.4（第一個會補讀的轉接器）決定要不要加同步中的顯示。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-demo-sessions-panel.md`
+  summary: 「管理 session」頁的「推測」標示與空狀態提示沒有渲染層的測試，示範模式也產生不了推測狀態
+  evidence: Story 2.3 審查 VG1。`test/panels/session-rows.test.ts` 只驗證 `row.inferred` 與字串常數，`src/panels/App.tsx` 在 Node 環境的測試中從未執行。端到端測試（Playwright，已記在上面）要包含：以帶推測狀態的 session 確認「推測」標示有出現、精確狀態沒有，以及空清單時的提示。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-demo-sessions-panel.md`
+  summary: `idleMs` 不小於 `sessionExpireMs` 時，任何 session 都會先逾時、不可能變成「休息中」；設定沒有交叉檢查
+  evidence: Story 2.3 審查 B1／E1。設定範圍允許 `idleMs` 與 `sessionExpireMs` 都是 1 小時。Story 2.9 做計時值設定頁時決定是否要求 `idleMs < sessionExpireMs`（面板擋下，`main/settings` 寫入時再驗一次）。

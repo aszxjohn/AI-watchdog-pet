@@ -7,23 +7,26 @@
  *    rename a broken settings.json or write to the running instance's log
  *    before exiting. Only the second instance says why, on the console.
  * 2. The primary instance registers the `app` and `pack` schemes (before
- *    `ready`), then starts the run log, settings, StageView (settings plus
- *    main/windows' displays, canvas and power sections) and the IPC
- *    handlers, and guards every window webContents.
+ *    `ready`), then starts the run log, settings, detection (demo mode off),
+ *    StageView (settings, main/windows' displays, canvas and power sections,
+ *    and main/detection's sessions and adapters) and the IPC handlers, and
+ *    guards every window webContents.
  * 3. Once ready: the session guards, the application menu, the `app://`
  *    handler, the Dock icon hidden, the tray icon, then the stage: the
  *    canvas on the chosen display (following display and settings changes)
- *    and the sleep / lock watch. Each step that throws is logged as an error
- *    with its errorCode and the next one still runs, so a failure in any
- *    other step does not stop the tray from being created; only the session
- *    guards are different: without them no window may open, so the app says
- *    why and exits. Anything else that throws once ready is logged too.
+ *    and the sleep / lock watch (sleep also goes to detection's clock).
+ *    Each step that throws is logged as an error with its errorCode and the
+ *    next one still runs, so a failure in any other step does not stop the
+ *    tray from being created; only the session guards are different:
+ *    without them no window may open, so the app says why and exits.
+ *    Anything else that throws once ready is logged too.
  * 4. No panel opens at startup; the tray menu opens it on a page. A second
  *    launch and macOS `activate` bring an open panel to the front on the
  *    page it shows, or open the main panel when none is open; a failure
  *    there is logged too.
  * 5. Closing every window keeps the app running; only the tray menu's 結束
  *    quits, and settings still waiting for their debounce are written first.
+ *    Quitting stops the canvas and detection.
  */
 import {
   app,
@@ -40,6 +43,7 @@ import started from 'electron-squirrel-startup';
 import { PRODUCT_NAME } from '../shared/constants';
 import { appGetVersion } from '../shared/ipc';
 import { MAIN_PANEL_PAGE } from '../shared/panels';
+import { createDetection, watchSleep } from './detection/detection';
 import { registerIpcHandler } from './ipc/register';
 import { errorCode, initRunLog, logEvent } from './log/run-log';
 import { registerSettingsHandlers } from './settings/ipc';
@@ -143,7 +147,14 @@ function startPrimaryInstance(): void {
   // main/windows owns the displays, canvas and power sections; until ready
   // they are empty, null and false.
   const stageSources = createWindowsStageSource();
-  const stageView = createStageView({ settings, windows: stageSources });
+  // main/detection owns the sessions and adapters sections. It needs no
+  // Electron API, so it starts here: syncTimeoutMs counts from now.
+  const detection = createDetection({ settings });
+  const stageView = createStageView({
+    settings,
+    windows: stageSources,
+    detection,
+  });
 
   registerIpcHandler(appGetVersion, ['panels'], () => app.getVersion());
   registerSettingsHandlers(settings);
@@ -185,6 +196,11 @@ function startPrimaryInstance(): void {
   // Quitting closes the canvas with every other window; do not rebuild it.
   app.on('before-quit', () => {
     canvas.stop();
+  });
+  // Detection stops too: no more timers, no more StageView pushes. Its own
+  // listener, so a throwing canvas.stop() cannot skip it.
+  app.on('before-quit', () => {
+    detection.stop();
   });
 
   /**
@@ -257,6 +273,9 @@ function startPrimaryInstance(): void {
           openPage: (page) => {
             panels.open(page);
           },
+          setDemo: (state) => {
+            detection.setDemo(state);
+          },
           quit: () => {
             app.quit();
           },
@@ -267,6 +286,11 @@ function startPrimaryInstance(): void {
       });
       startupStep('power', () => {
         watchPower(powerMonitor, stageSources);
+      });
+      // Its own step, so a failing watchPower cannot leave detection's
+      // clock without sleep compensation.
+      startupStep('sleep', () => {
+        watchSleep(powerMonitor, detection);
       });
     })
     .catch((error: unknown) => {

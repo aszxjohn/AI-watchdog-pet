@@ -96,3 +96,47 @@ export const SOURCE_CAPABILITIES: Readonly<
   copilot: capability('exact', 'none'),
   demo: capability('exact', 'exact'),
 });
+
+/**
+ * Display names of the sources, defined only here. Code compares source
+ * codes; these strings are for the display layer only.
+ */
+export const SOURCE_DISPLAY_NAMES: Readonly<Record<SourceCode, string>> =
+  Object.freeze({
+    'claude-code': 'Claude Code',
+    codex: 'Codex CLI',
+    gemini: 'Gemini CLI',
+    cursor: 'Cursor',
+    copilot: 'Copilot CLI',
+    demo: '示範',
+  });
+
+/**
+ * What demo mode (the `demo` source's adapter) is called wherever the user
+ * turns it on: the tray menu and the panel's hint.
+ */
+export const DEMO_MODE_LABEL = '示範模式';
+
+/**
+ * How a running adapter is doing (AD-21), published by main/detection in
+ * StageView's `adapters` section:
+ *
+ * - `ok`: it reads what it should;
+ * - `degraded`: it runs but reads less than it should (records it cannot
+ *   parse, a status file it cannot use), and fills in what it can;
+ * - `missing`: the AI tool's records are not where they should be.
+ */
+export const ADAPTER_HEALTH_CODES = ['ok', 'degraded', 'missing'] as const;
+
+export const adapterHealthSchema = z.enum(ADAPTER_HEALTH_CODES);
+
+export type AdapterHealth = z.infer<typeof adapterHealthSchema>;
+
+/** Chinese display names of the health codes, defined only here. */
+export const ADAPTER_HEALTH_DISPLAY_NAMES: Readonly<
+  Record<AdapterHealth, string>
+> = Object.freeze({
+  ok: '正常',
+  degraded: '部分可用',
+  missing: '找不到',
+});

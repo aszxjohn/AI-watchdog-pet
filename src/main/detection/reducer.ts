@@ -67,7 +67,8 @@ export interface SessionConditions {
    * When the last event arrived. `session.meta` and inferred requests do not
    * count (an inferred request is the stage's guess, not something the
    * session did), except as a session's first event: the conditions it
-   * creates start at that moment. It only moves forward: an event back-dated
+   * creates start at that moment (an inferred request then matches no open
+   * tool call, so it creates nothing else). It only moves forward: an event back-dated
    * to before it (an older replayed record) leaves it as it was.
    */
   readonly lastEventAt: number;
@@ -194,7 +195,9 @@ function withRequest(
  * (received then, or back-dated for a replayed event). Pass `undefined` for
  * a session seen for the first time. Conditions open and close only as
  * AD-21's table says; an id that matches nothing open is ignored, never
- * thrown on.
+ * thrown on. An inferred `approval.request` or `question.request` whose id
+ * is not an open tool call returns the conditions it was given (fresh empty
+ * ones for a session seen for the first time).
  */
 export function reduceSession(
   current: SessionConditions | undefined,
@@ -205,12 +208,18 @@ export function reduceSession(
     return current;
   }
   const base = current ?? emptyConditions(now, false);
+  const inferredRequest =
+    event.confidence === 'inferred' &&
+    (event.type === 'approval.request' || event.type === 'question.request');
+  // main/detection/inference guesses only at a tool call that is open. An
+  // inferred request whose id matches no open tool call (it arrived after
+  // the tool's end) is ignored: it opens and changes nothing.
+  if (inferredRequest && !base.openTools.has(event.requestId)) {
+    return base;
+  }
   // An inferred request is not the session's own doing: it does not move
   // the last-event time (so it neither delays `idle` nor the expiry).
-  const moves = !(
-    event.confidence === 'inferred' &&
-    (event.type === 'approval.request' || event.type === 'question.request')
-  );
+  const moves = !inferredRequest;
   const update = (changes: Partial<SessionConditions>) =>
     conditions({
       ...base,

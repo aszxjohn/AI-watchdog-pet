@@ -383,6 +383,8 @@ describe('registerIpcHandler', () => {
           displays: [],
           canvas: null,
           power: { suspended: false, locked: false },
+          sessions: [],
+          adapters: [],
         },
       };
       const PATCH = {

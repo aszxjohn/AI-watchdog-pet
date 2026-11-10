@@ -23,6 +23,8 @@ function snapshot(rev: number, id: number | null = null): StageViewSnapshot {
       displays: [],
       canvas: null,
       power: { suspended: false, locked: false },
+      sessions: [],
+      adapters: [],
     },
   };
 }

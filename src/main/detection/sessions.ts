@@ -109,7 +109,9 @@ export interface SessionsOptions {
 export interface Sessions {
   /**
    * Checks one adapter output against the shared schemas and applies it;
-   * one that fails is dropped and logged. Never throws.
+   * one that fails is dropped and logged, and so is an event with
+   * `via: 'inferred'` (only main/detection/inference guesses, and its
+   * guesses never come through here). Never throws.
    */
   receive(output: AdapterOutput): void;
   /**
@@ -399,6 +401,15 @@ export function createSessions({
       }
       const parsed = parse(output);
       if (parsed === undefined) {
+        return;
+      }
+      if (parsed.type !== 'sync.ready' && parsed.via === 'inferred') {
+        // Only main/detection/inference guesses (AD-22); an adapter reports
+        // facts. Logged by type and source only.
+        log(
+          `dropped an inferred ${parsed.type} from the ${parsed.source} adapter (only inference may guess)`,
+          'warn',
+        );
         return;
       }
       const at = now();

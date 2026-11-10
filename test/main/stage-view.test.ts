@@ -20,6 +20,7 @@ import { SETTINGS_DEFAULTS } from '../../src/shared/settings';
 import {
   stageViewDeltaSchema,
   stageViewSnapshotSchema,
+  type StageViewDetectionSections,
 } from '../../src/shared/stage-view';
 import * as fake from '../helpers/fake-electron';
 
@@ -28,7 +29,36 @@ vi.mock('electron', () => import('../helpers/fake-electron'));
 let dir: string;
 let settings: SettingsStore;
 let windows: WindowsStageSource;
+let detection: ReturnType<typeof fakeDetection>;
 let hub: StageViewHub;
+
+/**
+ * A stand-in for main/detection's sections: update() replaces the sections
+ * given and tells the listeners, as main/detection does (any value, so a
+ * test can hand StageView one that fails the schema).
+ */
+function fakeDetection() {
+  let sections: StageViewDetectionSections = { sessions: [], adapters: [] };
+  const listeners = new Set<
+    (changed: Partial<StageViewDetectionSections>) => void
+  >();
+  return {
+    get: () => sections,
+    onChange(listener: (changed: Partial<StageViewDetectionSections>) => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    update(changed: Record<string, unknown>) {
+      const typed = changed as Partial<StageViewDetectionSections>;
+      sections = { ...sections, ...typed };
+      for (const listener of listeners) {
+        listener(typed);
+      }
+    },
+  };
+}
 
 /** main/windows' sections before ready. */
 const WINDOWS_BEFORE_READY = {
@@ -36,6 +66,16 @@ const WINDOWS_BEFORE_READY = {
   canvas: null,
   power: { suspended: false, locked: false },
 };
+/** main/detection's sections with no session and no adapter. */
+const NO_DETECTION = { sessions: [], adapters: [] };
+const DEMO_SESSION = {
+  sessionKey: 'demo:1',
+  source: 'demo',
+  displayName: '示範',
+  state: 'approval',
+  confidence: 'exact',
+};
+const DEMO_ADAPTER = { source: 'demo', health: 'ok' };
 const DISPLAY = {
   id: 1,
   label: 'Built-in Retina Display',
@@ -58,7 +98,8 @@ beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awp-stage-view-'));
   settings = loadSettings({ file: path.join(dir, 'settings.json') });
   windows = createWindowsStageSource();
-  hub = createStageView({ settings, windows });
+  detection = fakeDetection();
+  hub = createStageView({ settings, windows, detection });
 });
 
 afterEach(() => {
@@ -87,6 +128,7 @@ describe('StageView composition', () => {
       view: {
         settings: { rev: 0, values: SETTINGS_DEFAULTS },
         ...WINDOWS_BEFORE_READY,
+        ...NO_DETECTION,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(snapshot).success).toBe(true);
@@ -134,7 +176,11 @@ describe('StageView composition', () => {
     }
     expect(hub.snapshot()).toStrictEqual({
       rev: 2,
-      view: { settings: settings.get(), ...WINDOWS_BEFORE_READY },
+      view: {
+        settings: settings.get(),
+        ...WINDOWS_BEFORE_READY,
+        ...NO_DETECTION,
+      },
     });
   });
 
@@ -142,7 +188,7 @@ describe('StageView composition', () => {
     setDisplay(1);
     setDisplay(2);
 
-    const later = createStageView({ settings, windows });
+    const later = createStageView({ settings, windows, detection });
 
     expect(later.snapshot().rev).toBe(0);
     expect(later.snapshot().view.settings.rev).toBe(2);
@@ -178,7 +224,7 @@ describe("main/windows' sections", () => {
   it('starts from what the windows source has', () => {
     windows.update({ displays: [DISPLAY], canvas: CANVAS });
 
-    const later = createStageView({ settings, windows });
+    const later = createStageView({ settings, windows, detection });
 
     expect(later.snapshot()).toStrictEqual({
       rev: 0,
@@ -187,6 +233,7 @@ describe("main/windows' sections", () => {
         displays: [DISPLAY],
         canvas: CANVAS,
         power: WINDOWS_BEFORE_READY.power,
+        ...NO_DETECTION,
       },
     });
   });
@@ -215,6 +262,7 @@ describe("main/windows' sections", () => {
         displays: [DISPLAY],
         canvas: CANVAS,
         power: { suspended: true, locked: false },
+        ...NO_DETECTION,
       },
     });
   });
@@ -262,6 +310,152 @@ describe("main/windows' sections", () => {
   });
 });
 
+describe("main/detection's sections", () => {
+  it('starts from what main/detection has', () => {
+    detection.update({ sessions: [DEMO_SESSION], adapters: [DEMO_ADAPTER] });
+
+    const later = createStageView({ settings, windows, detection });
+
+    expect(later.snapshot()).toStrictEqual({
+      rev: 0,
+      view: {
+        settings: settings.get(),
+        ...WINDOWS_BEFORE_READY,
+        sessions: [DEMO_SESSION],
+        adapters: [DEMO_ADAPTER],
+      },
+    });
+    expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
+      true,
+    );
+  });
+
+  it('pushes one delta per change, carrying only the sections that changed', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    detection.update({ sessions: [DEMO_SESSION], adapters: [DEMO_ADAPTER] });
+    detection.update({
+      sessions: [{ ...DEMO_SESSION, state: 'done' }],
+    });
+    detection.update({ sessions: [], adapters: [] });
+
+    expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
+      {
+        rev: 1,
+        sections: { sessions: [DEMO_SESSION], adapters: [DEMO_ADAPTER] },
+      },
+      { rev: 2, sections: { sessions: [{ ...DEMO_SESSION, state: 'done' }] } },
+      { rev: 3, sections: { sessions: [], adapters: [] } },
+    ]);
+    for (const { args } of subscriber.sent) {
+      expect(stageViewDeltaSchema.safeParse(args[0]).success).toBe(true);
+    }
+    expect(hub.snapshot().view).toMatchObject(NO_DETECTION);
+  });
+
+  it('keeps one rev across settings, windows and detection changes', () => {
+    setDisplay(5);
+    detection.update({ adapters: [DEMO_ADAPTER] });
+    windows.update({ canvas: CANVAS });
+
+    expect(hub.snapshot().rev).toBe(3);
+  });
+});
+
+describe('a delta that fails the schema (I/O matrix: 壞增量)', () => {
+  /** Every `[stage-view]` console line logged as an error. */
+  function errorLines(): string[] {
+    return vi
+      .mocked(console.error)
+      .mock.calls.map((call: unknown[]) => String(call[0]))
+      .filter((line) => line.startsWith('[stage-view] '));
+  }
+
+  it.each<[string, Record<string, unknown>, string]>([
+    [
+      'a session in an unknown state',
+      { sessions: [{ ...DEMO_SESSION, state: 'sleeping' }] },
+      'sessions; fields: sessions.0.state',
+    ],
+    [
+      'two sessions with one key',
+      { sessions: [DEMO_SESSION, { ...DEMO_SESSION, state: 'done' }] },
+      'sessions; fields: sessions',
+    ],
+    [
+      'a session whose key is not of its source',
+      { sessions: [{ ...DEMO_SESSION, source: 'codex' }] },
+      'sessions; fields: sessions.0.sessionKey',
+    ],
+    [
+      'an unknown health',
+      { adapters: [{ source: 'demo', health: 'broken' }] },
+      'adapters; fields: adapters.0.health',
+    ],
+    [
+      'a good section next to a bad one',
+      {
+        sessions: [DEMO_SESSION],
+        adapters: [DEMO_ADAPTER, DEMO_ADAPTER],
+      },
+      'sessions, adapters; fields: adapters',
+    ],
+  ])(
+    'drops %s: nothing pushed, rev and view unchanged, one error naming sections and fields only',
+    (_label, sections, named) => {
+      const subscriber = contents(1);
+      hub.subscribe(subscriber);
+      const before = hub.snapshot();
+
+      detection.update(sections);
+
+      expect(subscriber.sent).toStrictEqual([]);
+      expect(hub.snapshot()).toStrictEqual(before);
+      expect(errorLines()).toStrictEqual([
+        `[stage-view] dropped a delta that fails the schema (sections: ${named}); rev stays 0`,
+      ]);
+      expect(errorLines().join('\n')).not.toMatch(/sleeping|broken|示範/);
+    },
+  );
+
+  it('the next valid delta goes out with the next rev', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    detection.update({ sessions: [{ ...DEMO_SESSION, confidence: 'maybe' }] });
+    detection.update({ sessions: [DEMO_SESSION] });
+    setDisplay(4);
+
+    expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
+      { rev: 1, sections: { sessions: [DEMO_SESSION] } },
+      {
+        rev: 2,
+        sections: {
+          settings: {
+            rev: 1,
+            values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 4 },
+          },
+        },
+      },
+    ]);
+    expect(hub.snapshot().view.sessions).toStrictEqual([DEMO_SESSION]);
+  });
+
+  it('checks the windows sections too', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    windows.update({ displays: [DISPLAY, { ...DISPLAY }] });
+
+    expect(subscriber.sent).toStrictEqual([]);
+    expect(hub.snapshot().rev).toBe(0);
+    expect(errorLines()).toStrictEqual([
+      '[stage-view] dropped a delta that fails the schema (sections: displays; fields: displays); rev stays 0',
+    ]);
+  });
+});
+
 describe('subscribers', () => {
   it('answers a fresh snapshot to a second subscribe without registering the webContents again', () => {
     const subscriber = contents(1);
@@ -278,6 +472,7 @@ describe('subscribers', () => {
           values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 2 },
         },
         ...WINDOWS_BEFORE_READY,
+        ...NO_DETECTION,
       },
     });
     expect(hub.subscriberCount()).toBe(1);
