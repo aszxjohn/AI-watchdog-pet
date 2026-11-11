@@ -4,6 +4,10 @@
  * the `sessions` and `adapters` sections StageView publishes.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type {
+  AdapterContext,
+  DetectionAdapter,
+} from '../../src/main/detection/adapter';
 import {
   createDetection,
   type Detection,
@@ -608,6 +612,171 @@ describe('stop', () => {
     expect(heard).toStrictEqual([]);
     expect(clock.pendingCount()).toBe(0);
     expect(detectionLines()).toStrictEqual([]);
+  });
+});
+
+describe('source adapters', () => {
+  /** A source adapter that records its life and lets the test emit. */
+  function fakeAdapter(source: 'codex' | 'gemini' = 'codex') {
+    const life: string[] = [];
+    let context: AdapterContext | undefined;
+    const adapter: DetectionAdapter = {
+      source,
+      start(given) {
+        life.push('start');
+        context = given;
+      },
+      stop() {
+        life.push('stop');
+      },
+    };
+    const ctx = (): AdapterContext => {
+      if (context === undefined) {
+        throw new Error('not started');
+      }
+      return context;
+    };
+    return { adapter, life, ctx };
+  }
+
+  function startWith(...adapters: DetectionAdapter[]): Detection {
+    const detection = createDetection({
+      settings,
+      monotonic: clock.monotonic,
+      wall: clock.wall,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      adapters,
+    });
+    detection.onChange((sections) => {
+      heard.push(sections);
+    });
+    return detection;
+  }
+
+  it('none by default', () => {
+    expect(start().get().adapters).toStrictEqual([]);
+  });
+
+  it('each starts once, with the timings and the wall clock detection uses', () => {
+    const one = fakeAdapter('codex');
+    const two = fakeAdapter('gemini');
+    startWith(one.adapter, two.adapter);
+    expect([one.life, two.life]).toStrictEqual([['start'], ['start']]);
+    expect(one.ctx().timings()).toStrictEqual(settings.get().values);
+    expect(one.ctx().wallNow()).toBe(clock.wall());
+  });
+
+  it('has no row in adapters until it reports its health', () => {
+    const fake = fakeAdapter();
+    const detection = startWith(fake.adapter);
+    expect(detection.get().adapters).toStrictEqual([]);
+    fake.ctx().emit([], 'ok');
+    expect(detection.get().adapters).toStrictEqual([
+      { source: 'codex', health: 'ok' },
+    ]);
+    expect(heard).toStrictEqual([
+      { adapters: [{ source: 'codex', health: 'ok' }] },
+    ]);
+  });
+
+  it('one emit is one change: its outputs reach sessions in order, its health with them', () => {
+    const fake = fakeAdapter();
+    const detection = startWith(fake.adapter);
+    fake.ctx().emit([{ type: 'sync.ready', source: 'codex' }], 'ok');
+    heard = [];
+
+    fake
+      .ctx()
+      .emit(
+        [
+          codex('session.start'),
+          codex('turn.start'),
+          codex('tool.start', { toolCallId: 't1', toolName: 'Bash' }),
+          codex('tool.end', { toolCallId: 't1' }),
+          codex('turn.end'),
+        ],
+        'degraded',
+      );
+
+    expect(captured.outputs.map((output) => output.type)).toStrictEqual([
+      'sync.ready',
+      'session.start',
+      'turn.start',
+      'tool.start',
+      'tool.end',
+      'turn.end',
+    ]);
+    expect(heard).toHaveLength(1);
+    expect(heard[0]?.adapters).toStrictEqual([
+      { source: 'codex', health: 'degraded' },
+    ]);
+    expect(heard[0]?.sessions?.map((session) => session.state)).toStrictEqual([
+      'done',
+    ]);
+    expect(detection.get().adapters).toStrictEqual([
+      { source: 'codex', health: 'degraded' },
+    ]);
+  });
+
+  it('one that throws on start is logged by code and shown degraded; detection goes on', () => {
+    const broken: DetectionAdapter = {
+      source: 'codex',
+      start() {
+        throw Object.assign(new Error('x'), { code: 'EBROKEN' });
+      },
+      stop() {},
+    };
+    const detection = startWith(broken);
+    expect(detection.get().adapters).toStrictEqual([
+      { source: 'codex', health: 'degraded' },
+    ]);
+    detection.setDemo('working');
+    expect(states(detection)).toStrictEqual(['demo:1 working']);
+    expect(
+      vi.mocked(console.error).mock.calls.map((call) => String(call[0])),
+    ).toStrictEqual([
+      '[detection] the codex adapter failed to start (EBROKEN)',
+    ]);
+  });
+
+  it('one that throws on stop is logged by code; the others still stop', () => {
+    const first = fakeAdapter('codex');
+    const second = fakeAdapter('gemini');
+    first.adapter.stop = () => {
+      first.life.push('stop');
+      throw Object.assign(new Error('x'), { code: 'EBROKEN' });
+    };
+    const detection = startWith(first.adapter, second.adapter);
+
+    expect(() => {
+      detection.stop();
+    }).not.toThrow();
+
+    expect([first.life, second.life]).toStrictEqual([
+      ['start', 'stop'],
+      ['start', 'stop'],
+    ]);
+    expect(
+      vi.mocked(console.error).mock.calls.map((call) => String(call[0])),
+    ).toStrictEqual(['[detection] the codex adapter failed to stop (EBROKEN)']);
+  });
+
+  it('stop() stops each; what one emits afterwards is ignored', () => {
+    const fake = fakeAdapter();
+    const detection = startWith(fake.adapter);
+    fake.ctx().emit([{ type: 'sync.ready', source: 'codex' }], 'ok');
+    heard = [];
+
+    detection.stop();
+    detection.stop();
+    fake.ctx().emit([codex('turn.start')], 'degraded');
+
+    expect(fake.life).toStrictEqual(['start', 'stop']);
+    expect(heard).toStrictEqual([]);
+    expect(captured.outputs.map((output) => output.type)).toStrictEqual([
+      'sync.ready',
+    ]);
   });
 });
 

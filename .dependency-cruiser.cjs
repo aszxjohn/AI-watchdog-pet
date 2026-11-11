@@ -50,6 +50,19 @@ module.exports = {
       },
     },
     {
+      name: 'adapters-no-processes-or-electron',
+      comment:
+        "Adapters only read the AI tools' records (AD-21, Story 2.4): src/main/detection/adapters must not run commands or other processes or threads (child_process, worker_threads, cluster), nor reach Electron.",
+      severity: 'error',
+      from: { path: '^src/main/detection/adapters/' },
+      to: {
+        path: [
+          '^(node:)?(child_process|worker_threads|cluster)$',
+          '^(node_modules/)?electron(/|$)',
+        ],
+      },
+    },
+    {
       name: 'preload-only-electron-and-shared',
       comment:
         'Sandboxed preloads can load only electron and their own bundle (AD-2, AD-24): no Node built-ins, no other packages.',

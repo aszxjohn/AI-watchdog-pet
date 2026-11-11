@@ -50,17 +50,27 @@ describe('SOURCE_CAPABILITIES', () => {
   });
 
   it("follows AD-4's table of what is known to be unreadable", () => {
+    const none = { questionTools: [], noInferTools: [] };
     expect(SOURCE_CAPABILITIES).toStrictEqual({
       'claude-code': {
-        approval: 'exact',
-        question: 'exact',
+        approval: 'none',
+        question: 'none',
         questionTools: ['AskUserQuestion', 'ExitPlanMode'],
+        noInferTools: [
+          'Agent',
+          'Task',
+          'Workflow',
+          'WebSearch',
+          'Monitor',
+          'TaskOutput',
+          'ScheduleWakeup',
+        ],
       },
-      codex: { approval: 'none', question: 'none', questionTools: [] },
-      gemini: { approval: 'none', question: 'exact', questionTools: [] },
-      cursor: { approval: 'none', question: 'exact', questionTools: [] },
-      copilot: { approval: 'exact', question: 'none', questionTools: [] },
-      demo: { approval: 'exact', question: 'exact', questionTools: [] },
+      codex: { approval: 'none', question: 'none', ...none },
+      gemini: { approval: 'none', question: 'exact', ...none },
+      cursor: { approval: 'none', question: 'exact', ...none },
+      copilot: { approval: 'exact', question: 'none', ...none },
+      demo: { approval: 'exact', question: 'exact', ...none },
     });
   });
 
@@ -69,6 +79,7 @@ describe('SOURCE_CAPABILITIES', () => {
     expect(Object.isFrozen(SOURCE_CAPABILITIES)).toBe(true);
     expect(Object.isFrozen(capability)).toBe(true);
     expect(Object.isFrozen(capability.questionTools)).toBe(true);
+    expect(Object.isFrozen(capability.noInferTools)).toBe(true);
   });
 });
 

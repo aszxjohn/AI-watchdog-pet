@@ -52,3 +52,25 @@ export const CANVAS_REBUILD_LIMIT = 3;
 
 /** The sliding window CANVAS_REBUILD_LIMIT counts rebuilds in. */
 export const CANVAS_REBUILD_WINDOW_MS = 60_000;
+
+/**
+ * How much of a transcript an adapter replays when it starts reading a file
+ * that was already there (at start, a resumed session, a file that got
+ * smaller): only its last REPLAY_TAIL_BYTES (Story 2.4). The first, partial
+ * line of that tail is skipped.
+ */
+export const REPLAY_TAIL_BYTES = 2 * 1024 * 1024;
+
+/**
+ * An adapter that skips this many unreadable record lines in a row reports
+ * its health as `degraded`; the next readable record makes it `ok` again.
+ */
+export const BAD_LINE_STREAK_DEGRADED = 20;
+
+/**
+ * While an AI tool's records folder is missing (not there at start, or
+ * removed while running), its adapter checks for it this often; once it is
+ * there again, the adapter watches it and replays it as at start. A file
+ * watcher does not report a removed folder coming back.
+ */
+export const RECORDS_FOLDER_RECHECK_MS = 30_000;

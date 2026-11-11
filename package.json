@@ -50,6 +50,7 @@
     "vitest": "5.1.0"
   },
   "dependencies": {
+    "chokidar": "5.0.0",
     "electron-squirrel-startup": "^1.0.1",
     "pixi.js": "8.22.0",
     "react": "19.3.1",

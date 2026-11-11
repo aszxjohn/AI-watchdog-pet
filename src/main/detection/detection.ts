@@ -17,6 +17,9 @@
  * - Demo mode is off at every start and never saved. Turning it on starts
  *   the demo adapter (health `ok`); turning it off stops it, which ends its
  *   session.
+ * - The source adapters it is given (main.ts: Claude Code's) start with it
+ *   and stop with it. Each reports its health itself; what one read of
+ *   theirs produced reaches sessions as one change.
  * - One change, one notification: what a demo switch, a settings change or
  *   a resume does to the sections is heard once, when it is done. Listeners
  *   hear only the sections that changed.
@@ -27,6 +30,7 @@ import type { AdapterHealth, SourceCode } from '../../shared/sources';
 import type { StageViewDetectionSections } from '../../shared/stage-view';
 import type { StateCode } from '../../shared/states';
 import { errorCode, logEvent, type ConsoleLevel } from '../log/run-log';
+import type { AdapterContext, DetectionAdapter } from './adapter';
 import {
   createDemoAdapter,
   DEMO_SESSION_KEY,
@@ -53,6 +57,11 @@ export interface DetectionOptions {
   readonly setTimer?: (run: () => void, delayMs: number) => unknown;
   /** Cancels a timer setTimer returned (default `clearTimeout`). */
   readonly clearTimer?: (handle: unknown) => void;
+  /**
+   * The source adapters to run (default none): each starts when detection
+   * is created and stops with it.
+   */
+  readonly adapters?: readonly DetectionAdapter[];
 }
 
 export interface Detection {
@@ -70,8 +79,9 @@ export interface Detection {
   /** The system woke up. */
   resume(): void;
   /**
-   * Stops every adapter and the sessions' timer, with no further
-   * notification (the app is quitting). Afterwards nothing happens.
+   * Stops every adapter (closing their watchers) and the sessions' timer,
+   * with no further notification (the app is quitting). Afterwards nothing
+   * happens.
    */
   stop(): void;
 }
@@ -104,6 +114,7 @@ export function createDetection({
   clearTimer = (handle) => {
     clearTimeout(handle as ReturnType<typeof setTimeout>);
   },
+  adapters = [],
 }: DetectionOptions): Detection {
   const timings = (): DetectionTimings => settings.get().values;
   const clock = createSleepClock({ monotonic, wall });
@@ -177,6 +188,56 @@ export function createDetection({
 
   sessions.onChange(publish);
 
+  /** The source adapters started and not yet stopped. */
+  const running = new Set<DetectionAdapter>();
+
+  function startAdapter(adapter: DetectionAdapter): void {
+    const context: AdapterContext = {
+      emit(outputs, adapterHealth) {
+        if (stopped || !running.has(adapter)) {
+          return;
+        }
+        batch(() => {
+          if (adapterHealth !== undefined) {
+            health.set(adapter.source, adapterHealth);
+          }
+          for (const output of outputs) {
+            sessions.receive(output);
+          }
+        });
+      },
+      timings,
+      wallNow: wall,
+      setTimer,
+      clearTimer,
+    };
+    running.add(adapter);
+    try {
+      adapter.start(context);
+    } catch (error) {
+      log(
+        `the ${adapter.source} adapter failed to start (${errorCode(error)})`,
+        'error',
+      );
+      // It reads less than it should: nothing, until the app restarts.
+      batch(() => {
+        health.set(adapter.source, 'degraded');
+      });
+    }
+  }
+
+  function stopAdapter(adapter: DetectionAdapter): void {
+    running.delete(adapter);
+    try {
+      adapter.stop();
+    } catch (error) {
+      log(
+        `the ${adapter.source} adapter failed to stop (${errorCode(error)})`,
+        'error',
+      );
+    }
+  }
+
   settings.onChange(() => {
     if (stopped) {
       return;
@@ -186,6 +247,10 @@ export function createDetection({
       sessions.retime();
     });
   });
+
+  for (const adapter of adapters) {
+    startAdapter(adapter);
+  }
 
   return {
     get: () => sections,
@@ -250,6 +315,10 @@ export function createDetection({
       }
       stopped = true;
       sessions.stop();
+      // stopAdapter removes each from the set; a Set iterates on safely.
+      for (const adapter of running) {
+        stopAdapter(adapter);
+      }
       // Its session.end reaches a stopped sessions: nothing is published.
       demo?.stop();
       demo = undefined;

@@ -21,6 +21,8 @@ import type { OpenTool, SessionConditions } from './reducer';
  * - no request with its id is pending, and none has ever arrived while it
  *   was open (`OpenTool.requested`), so a guess that `approval.resolved`
  *   closed is not made again while the tool keeps running;
+ * - it is not one of the source's no-guess tools (`noInferTools`), which
+ *   run long by design;
  * - its kind is `none` in the source's capability: `question` for one of
  *   the source's question tools, `approval` for any other tool;
  * - `now >= startedAt + approvalInferMs`, half-open like the reducer's
@@ -36,7 +38,8 @@ import type { OpenTool, SessionConditions } from './reducer';
  * event.
  *
  * Known limitation (AD-22): a tool that simply runs long, a build or a test
- * run, is guessed to be waiting for approval.
+ * run, is guessed to be waiting for approval, unless the source lists it
+ * among its no-guess tools.
  */
 
 /** A request this module guesses at. */
@@ -65,11 +68,17 @@ interface Guess {
   readonly dueAt: number;
 }
 
-/** The kind of request to guess for `tool`, or null when its kind is read. */
+/**
+ * The kind of request to guess for `tool`; null when its kind is read or
+ * the tool is never guessed at.
+ */
 function kindToGuess(
   tool: OpenTool,
   capability: SourceCapability,
 ): RequestKind | null {
+  if (capability.noInferTools.includes(tool.toolName)) {
+    return null;
+  }
   const kind = capability.questionTools.includes(tool.toolName)
     ? 'question'
     : 'approval';

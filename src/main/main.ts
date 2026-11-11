@@ -7,7 +7,8 @@
  *    rename a broken settings.json or write to the running instance's log
  *    before exiting. Only the second instance says why, on the console.
  * 2. The primary instance registers the `app` and `pack` schemes (before
- *    `ready`), then starts the run log, settings, detection (demo mode off),
+ *    `ready`), then starts the run log, settings, detection (demo mode off;
+ *    the Claude Code adapter reading ~/.claude/projects),
  *    StageView (settings, main/windows' displays, canvas and power sections,
  *    and main/detection's sessions and adapters) and the IPC handlers, and
  *    guards every window webContents. The canvas's hover and right-click
@@ -30,7 +31,8 @@
  *    there is logged too.
  * 5. Closing every window keeps the app running; only the tray menu's 結束
  *    quits, and settings still waiting for their debounce are written first.
- *    Quitting stops the canvas and detection.
+ *    Quitting stops the canvas and detection (and with it the Claude Code
+ *    adapter's watcher).
  */
 import {
   app,
@@ -42,11 +44,13 @@ import {
   session,
 } from 'electron';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { PRODUCT_NAME } from '../shared/constants';
 import { appGetVersion } from '../shared/ipc';
 import { MAIN_PANEL_PAGE } from '../shared/panels';
+import { createClaudeCodeAdapter } from './detection/adapters/claude-code/claude-code';
 import { DEMO_SESSION_KEY } from './detection/adapters/demo/demo';
 import {
   createDetection,
@@ -164,8 +168,16 @@ function startPrimaryInstance(): void {
   // they are empty, null and false.
   const stageSources = createWindowsStageSource();
   // main/detection owns the sessions and adapters sections. It needs no
-  // Electron API, so it starts here: syncTimeoutMs counts from now.
-  const detection = createDetection({ settings });
+  // Electron API, so it starts here: syncTimeoutMs counts from now. The
+  // Claude Code adapter reads the real home folder's transcripts.
+  const detection = createDetection({
+    settings,
+    adapters: [
+      createClaudeCodeAdapter({
+        root: path.join(os.homedir(), '.claude', 'projects'),
+      }),
+    ],
+  });
   const stageView = createStageView({
     settings,
     windows: stageSources,
@@ -227,8 +239,9 @@ function startPrimaryInstance(): void {
   app.on('before-quit', () => {
     canvas.stop();
   });
-  // Detection stops too: no more timers, no more StageView pushes. Its own
-  // listener, so a throwing canvas.stop() cannot skip it.
+  // Detection stops too: no more timers, no more StageView pushes, and the
+  // Claude Code adapter's watcher closes. Its own listener, so a throwing
+  // canvas.stop() cannot skip it.
   app.on('before-quit', () => {
     detection.stop();
   });

@@ -8,6 +8,7 @@
   --accent: #0a66d8;
   --accent-fg: #ffffff;
   --error: #c62828;
+  --warning: #8a6100;
   --inferred: #b25e00;
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
@@ -25,6 +26,7 @@
     --accent: #3b8cff;
     --accent-fg: #ffffff;
     --error: #ff6b6b;
+    --warning: #e8c547;
     --inferred: #ffb454;
   }
 }
@@ -210,6 +212,11 @@ body {
   color: var(--muted);
 }
 
+/* 找不到: the error colour; 部分可用: a warning colour of its own. */
 .adapter-list li:not([data-health='ok']) .adapter-health {
   color: var(--error);
+}
+
+.adapter-list li[data-health='degraded'] .adapter-health {
+  color: var(--warning);
 }

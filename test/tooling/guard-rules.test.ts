@@ -243,6 +243,7 @@ describe('dependency-cruiser rules', () => {
     'renderers-not-to-main',
     'src-not-to-prototypes-or-test',
     'src-no-network-modules',
+    'adapters-no-processes-or-electron',
     'preload-only-electron-and-shared',
     'overlay-no-react',
     'react-only-in-panels',
@@ -296,6 +297,23 @@ describe('dependency-cruiser rules', () => {
         'dns',
         'node:dns/promises',
         'undici',
+      ),
+      'src/main/detection/adapters/fake/runs.ts': imports(
+        'child_process',
+        'worker_threads',
+        'cluster',
+        'electron',
+      ),
+      'src/main/detection/adapters/fake/runs-node.ts': imports(
+        'node:child_process',
+        'node:worker_threads',
+        'node:cluster',
+      ),
+      'src/main/runs.ts': imports(
+        'node:child_process',
+        'node:worker_threads',
+        'node:cluster',
+        'electron',
       ),
       'src/shared/to-builtin.ts': imports('node:fs'),
       'src/panels/to-electron.ts': imports('electron'),
@@ -438,6 +456,35 @@ describe('dependency-cruiser rules', () => {
     expect(targets('src-no-network-modules', 'src/main/network.ts')).toContain(
       module,
     );
+  });
+
+  it.each([
+    [
+      'src/main/detection/adapters/fake/runs.ts',
+      [
+        'child_process',
+        'cluster',
+        'node_modules/electron/index.js',
+        'worker_threads',
+      ],
+    ],
+    [
+      'src/main/detection/adapters/fake/runs-node.ts',
+      ['child_process', 'cluster', 'worker_threads'],
+    ],
+  ])(
+    'adapters-no-processes-or-electron rejects processes, threads and electron in an adapter (%s)',
+    (from, expected) => {
+      expect(
+        targets('adapters-no-processes-or-electron', from).sort(),
+      ).toStrictEqual(expected);
+    },
+  );
+
+  it('adapters-no-processes-or-electron leaves the rest of src/main alone', () => {
+    expect(
+      violations.filter((v) => v.from === 'src/main/runs.ts'),
+    ).toStrictEqual([]);
   });
 
   it('lets src/panels import react and react-dom', () => {

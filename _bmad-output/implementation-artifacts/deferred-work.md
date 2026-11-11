@@ -163,3 +163,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-epic-2-demo-square-shell.md`
   summary: `idleMs` 與 `sessionExpireMs` 設成相同值（都是 1 小時，範圍允許）時，示範模式選「休息中」，示範 session 會立刻逾時：方塊消失、系統匣勾選跳回「關閉」，示範轉接器卻還在跑
   evidence: 方塊空殼審查 E5／E6。Story 2.3 的「休息中」把時間回推 `idleMs`，逾時點是 `lastEventAt + sessionExpireMs`，兩者相等時就是現在。low，只在兩個設定都調到極端值時發生；可以讓示範轉接器回推時取 `min(idleMs, sessionExpireMs − 1 分鐘)` 之類的值，或在設定加上 `idleMs < sessionExpireMs` 的約束（Story 2.9 做計時值設定時一起決定）。
+- source_spec: none
+  summary: Story 2.4 的狀態檔部分：讀 `~/.claude/sessions/<pid>.json`（只讀檔名符合 `^\d+\.json$`、只取允許的 7 個欄位）取得精確的「要你批准」與行程結束（`session.end`），狀態檔不可用時健康標 `degraded` 並退回推測，`claude-code` 的能力表改成依狀態檔是否可用而定
+  evidence: 使用者 2026-11-10 選擇把 Story 2.4 拆成兩段，先做 transcript。2026-11-10 以結構調查（只看欄位名與代碼）確認：本機 9 個狀態檔的 `status` 只有 `idle`、`busy`，沒有任何 `waitingFor`，所以「等批准」時狀態檔長什麼樣子還沒有樣本。做這段之前，要使用者在非 auto 模式的 Claude Code session 停在批准畫面時取一份樣本。`/clear` 讓舊 session 結束、行程結束，也要靠這段的 `sessionId` 與 pid。

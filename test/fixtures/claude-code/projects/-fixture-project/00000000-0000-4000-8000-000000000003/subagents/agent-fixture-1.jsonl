@@ -1,0 +1,27 @@
+{"type":"user","isSidechain":true,"timestamp":"2026-01-27T21:57:47.490Z","uuid":"10000000-0000-4000-8000-000000000158","cwd":"/fixture/project","message":{"role":"user","content":""}}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:47.501Z","uuid":"10000000-0000-4000-8000-000000000159","cwd":"/fixture/project"}
+{"type":"user","isMeta":true,"isSidechain":true,"timestamp":"2026-01-27T21:57:47.501Z","uuid":"10000000-0000-4000-8000-000000000160","cwd":"/fixture/project","message":{"role":"user","content":""}}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:47.502Z","uuid":"10000000-0000-4000-8000-000000000161","cwd":"/fixture/project"}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:47.503Z","uuid":"10000000-0000-4000-8000-000000000162","cwd":"/fixture/project"}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:47.503Z","uuid":"10000000-0000-4000-8000-000000000163","cwd":"/fixture/project"}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:47.507Z","uuid":"10000000-0000-4000-8000-000000000164","cwd":"/fixture/project"}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:47.507Z","uuid":"10000000-0000-4000-8000-000000000165","cwd":"/fixture/project"}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:47.507Z","uuid":"10000000-0000-4000-8000-000000000166","cwd":"/fixture/project"}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:47.511Z","uuid":"10000000-0000-4000-8000-000000000167","cwd":"/fixture/project"}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:47.511Z","uuid":"10000000-0000-4000-8000-000000000168","cwd":"/fixture/project"}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:47.512Z","uuid":"10000000-0000-4000-8000-000000000169","cwd":"/fixture/project"}
+{"type":"assistant","isSidechain":true,"timestamp":"2026-01-27T21:57:50.117Z","uuid":"10000000-0000-4000-8000-000000000170","cwd":"/fixture/project","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"toolu_fixture_0026","name":"ToolSearch"}]}}
+{"type":"user","isSidechain":true,"timestamp":"2026-01-27T21:57:50.133Z","uuid":"10000000-0000-4000-8000-000000000171","cwd":"/fixture/project","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fixture_0026"}]}}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:50.142Z","uuid":"10000000-0000-4000-8000-000000000172","cwd":"/fixture/project"}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:50.145Z","uuid":"10000000-0000-4000-8000-000000000173","cwd":"/fixture/project"}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:50.146Z","uuid":"10000000-0000-4000-8000-000000000174","cwd":"/fixture/project"}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:50.146Z","uuid":"10000000-0000-4000-8000-000000000175","cwd":"/fixture/project"}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:50.146Z","uuid":"10000000-0000-4000-8000-000000000176","cwd":"/fixture/project"}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:57:51.747Z","uuid":"10000000-0000-4000-8000-000000000177","cwd":"/fixture/project"}
+{"type":"assistant","isSidechain":true,"timestamp":"2026-01-27T21:57:51.747Z","uuid":"10000000-0000-4000-8000-000000000178","cwd":"/fixture/project","message":{"role":"assistant","stop_reason":null,"content":[{"type":"thinking"}]}}
+{"type":"assistant","isSidechain":true,"timestamp":"2026-01-27T21:57:51.774Z","uuid":"10000000-0000-4000-8000-000000000179","cwd":"/fixture/project","message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":"toolu_fixture_0027","name":"mcp__fixture__tool"}]}}
+{"type":"user","isSidechain":true,"timestamp":"2026-01-27T21:58:00.532Z","uuid":"10000000-0000-4000-8000-000000000180","cwd":"/fixture/project","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fixture_0027"}]}}
+{"type":"attachment","isSidechain":true,"timestamp":"2026-01-27T21:58:00.544Z","uuid":"10000000-0000-4000-8000-000000000181","cwd":"/fixture/project"}
+{"type":"assistant","isSidechain":true,"timestamp":"2026-01-27T21:58:02.582Z","uuid":"10000000-0000-4000-8000-000000000182","cwd":"/fixture/project","message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":"toolu_fixture_0028","name":"mcp__fixture__tool"}]}}
+{"type":"user","isSidechain":true,"timestamp":"2026-01-27T21:58:08.847Z","uuid":"10000000-0000-4000-8000-000000000183","cwd":"/fixture/project","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fixture_0028"}]}}
+{"type":"user","isSidechain":true,"timestamp":"2026-01-27T21:58:08.850Z","uuid":"10000000-0000-4000-8000-000000000184","cwd":"/fixture/project","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}

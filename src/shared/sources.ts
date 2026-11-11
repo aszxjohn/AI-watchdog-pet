@@ -8,8 +8,10 @@ import { z } from './zod-setup';
  * - `claude-code`: the session UUID, which is the transcript's file name
  *   (`~/.claude/projects/<cwd>/<id>.jsonl`, where `<cwd>` is the working
  *   directory encoded as a folder name: `/Users/me/proj` becomes
- *   `-Users-me-proj`). A status file whose `sessionId` matches no transcript
- *   UUID produces no events.
+ *   `-Users-me-proj`). Subagent transcripts
+ *   (`~/.claude/projects/<cwd>/<id>/subagents/*.jsonl`) belong to session
+ *   `<id>`; the `sessionId` written inside records is not used. A status
+ *   file whose `sessionId` matches no transcript UUID produces no events.
  * - `codex`: the session id in its rollout log
  *   (`~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`).
  * - `gemini`: the session id in its chat log
@@ -54,17 +56,25 @@ export interface SourceCapability {
    * approval.
    */
   readonly questionTools: readonly string[];
+  /**
+   * Tools that run long by design (a subagent, a web search), matched by
+   * exact `toolName`. However long one runs, main/detection/inference
+   * guesses nothing for it: it stays `working`.
+   */
+  readonly noInferTools: readonly string[];
 }
 
 function capability(
   approval: CapabilityLevel,
   question: CapabilityLevel,
   questionTools: readonly string[] = [],
+  noInferTools: readonly string[] = [],
 ): SourceCapability {
   return Object.freeze({
     approval,
     question,
     questionTools: Object.freeze([...questionTools]),
+    noInferTools: Object.freeze([...noInferTools]),
   });
 }
 
@@ -72,10 +82,16 @@ function capability(
  * Each source's capability, from AD-4's table of what is known to be
  * unreadable. A `none` here is what main/detection/inference guesses at.
  *
- * - `claude-code`: both exact. Its question tools are the two that wait on
- *   the user by design: `AskUserQuestion` asks a question, `ExitPlanMode`
- *   asks the user to accept a plan. They matter once its status file is
- *   unusable and it falls back to inference (Story 2.4).
+ * - `claude-code`: neither, for now. Its transcripts never say that a tool
+ *   call waits for approval or that the AI waits for an answer; its status
+ *   file does, and makes both exact once read (the second part of Story
+ *   2.4). Until then both are guessed. Its question tools are the two that
+ *   wait on the user by design: `AskUserQuestion` asks a question,
+ *   `ExitPlanMode` asks the user to accept a plan. Its no-guess tools run
+ *   long by design: subagents (`Agent`, `Task`), workflows, web searches,
+ *   monitors, background task output and scheduled wake-ups (the
+ *   prototype's list, without `WebFetch`: its first fetch from a domain
+ *   asks for approval, so a long one is guessed at like any other tool).
  * - `codex`: neither is written to its log. Question tools are filled in
  *   from real records by Story 2.5.
  * - `gemini`, `cursor`: approvals are not written; questions are.
@@ -86,10 +102,20 @@ function capability(
 export const SOURCE_CAPABILITIES: Readonly<
   Record<SourceCode, SourceCapability>
 > = Object.freeze({
-  'claude-code': capability('exact', 'exact', [
-    'AskUserQuestion',
-    'ExitPlanMode',
-  ]),
+  'claude-code': capability(
+    'none',
+    'none',
+    ['AskUserQuestion', 'ExitPlanMode'],
+    [
+      'Agent',
+      'Task',
+      'Workflow',
+      'WebSearch',
+      'Monitor',
+      'TaskOutput',
+      'ScheduleWakeup',
+    ],
+  ),
   codex: capability('none', 'none'),
   gemini: capability('none', 'exact'),
   cursor: capability('none', 'exact'),

@@ -569,6 +569,7 @@ const CODEX_ASKING: SourceCapability = {
   approval: 'none',
   question: 'none',
   questionTools: ['ask_user'],
+  noInferTools: [],
 };
 
 describe('inference I/O matrix', () => {
@@ -702,17 +703,38 @@ describe('inference I/O matrix', () => {
     ]);
   });
 
-  it('claude-code (exact): a tool running for 10 seconds stays working', () => {
+  it('demo (exact): a tool running for 10 seconds stays working', () => {
     const sessions = start();
-    const who = { source: 'claude-code', id: 'c1' } as const;
-    sessions.receive(syncReady('claude-code'));
+    const who = { source: 'demo', id: 'c1' } as const;
+    sessions.receive(syncReady('demo'));
     sessions.receive(toolStart('a', 'Bash', who));
-    sessions.receive(toolStart('q', 'AskUserQuestion', who));
     expect(clock.pending()).toStrictEqual([300_000]);
 
     clock.advanceTo(200_000);
 
-    expect(heard()).toStrictEqual([['claude-code:c1 working']]);
+    expect(heard()).toStrictEqual([['demo:c1 working']]);
+  });
+
+  it('claude-code: Bash is guessed an approval and AskUserQuestion a question; Agent stays working', () => {
+    const sessions = start();
+    const who = { source: 'claude-code', id: 'c1' } as const;
+    sessions.receive(syncReady('claude-code'));
+    sessions.receive(toolStart('a', 'Agent', who));
+    expect(clock.pending()).toStrictEqual([300_000]);
+    clock.advanceTo(200_000);
+    expect(states(sessions.list())).toStrictEqual(['claude-code:c1 working']);
+
+    sessions.receive(toolStart('q', 'AskUserQuestion', who));
+    clock.advanceTo(210_000);
+    expect(states(sessions.list())).toStrictEqual([
+      'claude-code:c1 decision (inferred)',
+    ]);
+    sessions.receive(ev('tool.end', { toolCallId: 'q' }, who));
+    sessions.receive(toolStart('b', 'Bash', who));
+    clock.advanceTo(220_000);
+    expect(states(sessions.list())).toStrictEqual([
+      'claude-code:c1 approval (inferred)',
+    ]);
   });
 
   it('a replayed tool.start 3 minutes ago, never ended: approval (inferred) when sync.ready publishes it', () => {

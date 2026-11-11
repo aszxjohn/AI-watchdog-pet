@@ -227,10 +227,19 @@ vi.mock('../../src/main/windows/stage-sources', () => ({
   },
 }));
 
+vi.mock('../../src/main/detection/adapters/claude-code/claude-code', () => ({
+  createClaudeCodeAdapter: (options: { root: string }) => {
+    // The real home folder's projects folder; only its tail is checked.
+    const tail = options.root.split(/[\\/]/).slice(-2).join('/');
+    state.order.push(`createClaudeCodeAdapter root=~/${tail}`);
+    return { fake: 'claude-code-adapter' };
+  },
+}));
+
 vi.mock('../../src/main/detection/detection', () => ({
-  createDetection: (options: { settings: unknown }) => {
+  createDetection: (options: { settings: unknown; adapters?: unknown }) => {
     state.order.push(
-      `createDetection settings=${JSON.stringify(options.settings)}`,
+      `createDetection settings=${JSON.stringify(options.settings)} adapters=${JSON.stringify(options.adapters)}`,
     );
     return {
       fake: 'detection',
@@ -477,7 +486,8 @@ describe('the primary instance', () => {
       'initRunLog /fake/userData/logs',
       'loadSettings',
       'createWindowsStageSource',
-      'createDetection settings={"fake":"settings"}',
+      'createClaudeCodeAdapter root=~/.claude/projects',
+      'createDetection settings={"fake":"settings"} adapters=[{"fake":"claude-code-adapter"}]',
       'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} detection={"fake":"detection"}',
       'registerIpcHandler app:get-version ["panels"]',
       'registerSettingsHandlers',
