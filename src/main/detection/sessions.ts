@@ -22,13 +22,16 @@
  * one from three hours ago expires without being published. Live events use
  * the time they arrive.
  *
- * Inference (AD-22). Each time a published session is evaluated, the
- * requests main/detection/inference guesses at for it are fed to the
- * reducer first, at that moment, stamped with the wall clock. The rule
+ * Inference (AD-22). Each time a published session is evaluated, what
+ * main/detection/inference guesses for it is fed to the reducer first, as
+ * inference returns it: a request at that moment, stamped with the wall
+ * clock; a turn end at the moment it fell due (it may be well before now: a
+ * timer that ran late, a session replayed from an hour ago). The rule
  * lives only there; this module calls it, applies what it returns and
  * folds `nextInferenceAt` into its one timer. An unsynced source is not
  * guessed at; once it syncs, a replayed tool call is timed from its
- * back-dated start. A guess already made stays when the timings change.
+ * back-dated start, and a replayed reply from the back-dated last event. A
+ * guess already made stays when the timings change.
  *
  * One timer. It is set for the earliest of every published session's
  * `nextChangeAt`, `nextInferenceAt` and expiry time, and of the sync
@@ -59,8 +62,8 @@ import type { StateCode } from '../../shared/states';
 import type { z } from '../../shared/zod-setup';
 import { errorCode, logEvent, type ConsoleLevel } from '../log/run-log';
 import {
+  inferEvents,
   type InferenceSubject,
-  inferRequests,
   nextInferenceAt,
 } from './inference';
 import {
@@ -92,7 +95,7 @@ export interface SessionsOptions {
   readonly now?: () => number;
   /**
    * The wall clock in epoch ms (default `Date.now`): dates replays and
-   * stamps the `ts` of inferred requests.
+   * stamps the `ts` of every guess (inference back-dates a turn end's).
    */
   readonly wallNow?: () => number;
   /** Runs `run` once after `delayMs` (default `setTimeout`). */
@@ -317,8 +320,8 @@ export function createSessions({
   }
 
   /**
-   * `session`'s conditions with the requests inference guesses at by `at`
-   * applied, and the inference subject for them.
+   * `session`'s conditions with what inference guesses by `at` applied, and
+   * the inference subject for them. `wall` is the wall clock at `at`.
    */
   function infer(
     sessionKey: SessionKey,
@@ -334,8 +337,10 @@ export function createSessions({
       capability: capabilityOf(session.source),
     };
     let conditions = session.conditions;
-    for (const request of inferRequests(subject, at, t, wall)) {
-      conditions = reduceSession(conditions, request, at);
+    for (const { event, dueAt } of inferEvents(subject, at, t, wall)) {
+      // A turn ended when nothing more came, not when it was noticed.
+      const happenedAt = event.type === 'turn.end' ? dueAt : at;
+      conditions = reduceSession(conditions, event, happenedAt);
     }
     if (conditions === session.conditions) {
       return subject;

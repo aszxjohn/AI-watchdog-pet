@@ -41,9 +41,23 @@ export const DEMO_MODE_HINT = `想先看看效果，可以從選單列或系統�
 /** The mark beside an inferred state. */
 export const INFERRED_LABEL = '推測';
 
-/** The tooltip of INFERRED_LABEL. */
+/** The tooltip of INFERRED_LABEL beside an inferred request (批准、決定). */
 export const INFERRED_TITLE =
   '紀錄沒有寫出這個狀態：工具執行太久還沒結束，推測在等你';
+
+/**
+ * The tooltip of INFERRED_LABEL beside an inferred 做完了 or 等你回覆: the
+ * turn's end was guessed (Story 2.6).
+ */
+export const INFERRED_TURN_END_TITLE =
+  '紀錄沒有寫出這一輪結束：回覆後一段時間沒有新紀錄，推測這一輪結束了';
+
+/** The tooltip of the 推測 mark beside an inferred `state`. */
+export function inferredTitle(state: StateCode): string {
+  return state === 'done' || state === 'waiting'
+    ? INFERRED_TURN_END_TITLE
+    : INFERRED_TITLE;
+}
 
 /** Heading of the adapter list. */
 export const ADAPTERS_HEADING = '轉接器';

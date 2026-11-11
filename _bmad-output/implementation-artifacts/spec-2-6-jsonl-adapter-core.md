@@ -80,6 +80,7 @@ context:
 
 - 審查修補（第 1 輪，4 項）後，主 session 重跑：typecheck、lint、`CI=true npm test`（47 個檔案、2130 個測試）、depcruise（0 違規）全部通過；claude-code 測試檔被刪的 `expect(` 仍只有搬到 `test/helpers/jsonl-adapter.ts` 的那 2 行；`jsonl/` 底下搜尋 `claude` 沒有結果。
 - sprint 狀態：`2-6-gemini-cli-轉接器` 維持 `in-progress`，不設為 `review`，因為這份只是 2.6 的前置重構，Gemini 轉接器本體（`spec-2-6-gemini-cli-adapter.md`）還沒做。
+- CI：使用者 commit `e06dde2`（2026-11-11）後，GitHub Actions 的 macOS、Windows 都通過（run 42984635692）。
 
 ## Spec Change Log
 

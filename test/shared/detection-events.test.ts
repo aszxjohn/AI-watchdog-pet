@@ -42,6 +42,7 @@ const SAMPLES: Record<DetectionEventType, Record<string, unknown>> = {
   },
   'turn.start': { type: 'turn.start', ...COMMON },
   'turn.end': { type: 'turn.end', ...COMMON },
+  'turn.reply': { type: 'turn.reply', ...COMMON },
   'tool.start': {
     type: 'tool.start',
     ...COMMON,
@@ -213,13 +214,14 @@ describe('eventTsSchema', () => {
 });
 
 describe('detectionEventSchema', () => {
-  it('has exactly the 13 event types of AD-21', () => {
+  it('has exactly the 13 event types of AD-21, and turn.reply after turn.end (Story 2.6)', () => {
     expect([...DETECTION_EVENT_TYPES]).toStrictEqual([
       'session.start',
       'session.end',
       'session.meta',
       'turn.start',
       'turn.end',
+      'turn.reply',
       'tool.start',
       'tool.end',
       'approval.request',
@@ -347,6 +349,19 @@ describe('detectionEventSchema', () => {
     ['an extra field', { ...SAMPLES.activity, message: 'hi' }],
     ['an error message', { ...SAMPLES.error, message: 'boom' }],
     ['tool.end with toolName', { ...SAMPLES['tool.end'], toolName: 'Bash' }],
+    ['turn.reply with its text', { ...SAMPLES['turn.reply'], text: 'hi' }],
+    [
+      'turn.reply with a toolCallId',
+      { ...SAMPLES['turn.reply'], toolCallId: 'toolu_01' },
+    ],
+    [
+      'an inferred turn.reply with confidence exact',
+      { ...SAMPLES['turn.reply'], via: 'inferred', confidence: 'exact' },
+    ],
+    [
+      'an inferred turn.end with confidence exact',
+      { ...SAMPLES['turn.end'], via: 'inferred', confidence: 'exact' },
+    ],
     ['replay false', { ...SAMPLES['turn.start'], replay: false }],
     ['replay undefined', { ...SAMPLES['turn.start'], replay: undefined }],
     ['replay as a string', { ...SAMPLES['turn.end'], replay: 'true' }],

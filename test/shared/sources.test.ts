@@ -55,6 +55,7 @@ describe('SOURCE_CAPABILITIES', () => {
       'claude-code': {
         approval: 'none',
         question: 'none',
+        turnEnd: 'exact',
         questionTools: ['AskUserQuestion', 'ExitPlanMode'],
         noInferTools: [
           'Agent',
@@ -66,12 +67,35 @@ describe('SOURCE_CAPABILITIES', () => {
           'ScheduleWakeup',
         ],
       },
-      codex: { approval: 'none', question: 'none', ...none },
-      gemini: { approval: 'none', question: 'exact', ...none },
-      cursor: { approval: 'none', question: 'exact', ...none },
-      copilot: { approval: 'exact', question: 'none', ...none },
-      demo: { approval: 'exact', question: 'exact', ...none },
+      codex: { approval: 'none', question: 'none', turnEnd: 'exact', ...none },
+      gemini: {
+        approval: 'none',
+        question: 'none',
+        turnEnd: 'none',
+        questionTools: ['ask_user'],
+        noInferTools: [],
+      },
+      cursor: {
+        approval: 'none',
+        question: 'exact',
+        turnEnd: 'exact',
+        ...none,
+      },
+      copilot: {
+        approval: 'exact',
+        question: 'none',
+        turnEnd: 'exact',
+        ...none,
+      },
+      demo: { approval: 'exact', question: 'exact', turnEnd: 'exact', ...none },
     });
+  });
+
+  it('guesses the turn end only for gemini, which writes none (Story 2.6)', () => {
+    const guessed = SOURCE_CODES.filter(
+      (source) => SOURCE_CAPABILITIES[source].turnEnd === 'none',
+    );
+    expect(guessed).toStrictEqual(['gemini']);
   });
 
   it.each(SOURCE_CODES)('cannot be changed: %s', (source) => {

@@ -568,6 +568,7 @@ function toolStart(toolCallId = 'a', toolName = 'Bash', who: Who = {}) {
 const CODEX_ASKING: SourceCapability = {
   approval: 'none',
   question: 'none',
+  turnEnd: 'exact',
   questionTools: ['ask_user'],
   noInferTools: [],
 };
@@ -1129,5 +1130,279 @@ describe('default clocks and timers', () => {
 
     sessions.stop();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+/** Codex as if its records showed no turn end, like Gemini CLI's. */
+const CODEX_SILENT: SourceCapability = {
+  ...SOURCE_CAPABILITIES.codex,
+  turnEnd: 'none',
+};
+
+/** Sessions where codex's turn ends are guessed at. */
+function startSilent(): Sessions {
+  return start({
+    capabilityOf: (source) =>
+      source === 'codex' ? CODEX_SILENT : SOURCE_CAPABILITIES[source],
+  });
+}
+
+describe('turn-end inference I/O matrix (Story 2.6)', () => {
+  it('a reply, then 10 seconds of nothing: done (inferred), then waiting (inferred) 5 seconds later', () => {
+    const sessions = startSilent();
+    sessions.receive(syncReady());
+    sessions.receive(ev('turn.start'));
+    clock.advanceTo(1000);
+    sessions.receive(ev('turn.reply'));
+    expect(clock.pending()).toStrictEqual([11_000]);
+
+    clock.advanceTo(10_999);
+    expect(states(sessions.list())).toStrictEqual(['codex:s1 thinking']);
+    clock.advanceTo(11_000);
+    expect(states(sessions.list())).toStrictEqual(['codex:s1 done (inferred)']);
+    expect(clock.pending()).toStrictEqual([16_000]);
+    clock.advanceTo(16_000);
+    expect(states(sessions.list())).toStrictEqual([
+      'codex:s1 waiting (inferred)',
+    ]);
+    // idle counts from the reply: the guess is not the last event.
+    expect(clock.pending()).toStrictEqual([301_000]);
+    clock.advanceTo(301_000);
+    expect(heard()).toStrictEqual([
+      ['codex:s1 thinking'],
+      ['codex:s1 done (inferred)'],
+      ['codex:s1 waiting (inferred)'],
+      ['codex:s1 idle'],
+    ]);
+  });
+
+  it('a tool call 3 seconds after the reply: working, no turn end', () => {
+    const sessions = startSilent();
+    sessions.receive(syncReady());
+    sessions.receive(ev('turn.start'));
+    sessions.receive(ev('turn.reply'));
+    clock.advanceTo(3000);
+    sessions.receive(toolStart());
+    expect(states(sessions.list())).toStrictEqual(['codex:s1 working']);
+
+    clock.advanceTo(12_000);
+    sessions.receive(ev('tool.end', { toolCallId: 'a' }));
+    clock.advanceTo(60_000);
+
+    expect(heard()).toStrictEqual([
+      ['codex:s1 thinking'],
+      ['codex:s1 working'],
+      ['codex:s1 thinking'],
+    ]);
+  });
+
+  it('an activity 6 seconds after the reply: 10 seconds from the activity', () => {
+    const sessions = startSilent();
+    sessions.receive(syncReady());
+    sessions.receive(ev('turn.start'));
+    sessions.receive(ev('turn.reply'));
+    clock.advanceTo(6000);
+    sessions.receive(ev('activity'));
+    expect(clock.pending()).toStrictEqual([16_000]);
+
+    clock.advanceTo(15_999);
+    expect(states(sessions.list())).toStrictEqual(['codex:s1 thinking']);
+    clock.advanceTo(16_000);
+    expect(states(sessions.list())).toStrictEqual(['codex:s1 done (inferred)']);
+  });
+
+  it('a tool still running: no turn end, the approval is guessed as before', () => {
+    const sessions = startSilent();
+    sessions.receive(syncReady());
+    sessions.receive(ev('turn.start'));
+    sessions.receive(toolStart());
+    clock.advanceTo(1000);
+    sessions.receive(ev('turn.reply'));
+
+    clock.advanceTo(60_000);
+
+    expect(heard()).toStrictEqual([
+      ['codex:s1 thinking'],
+      ['codex:s1 working'],
+      ['codex:s1 approval (inferred)'],
+    ]);
+  });
+
+  it('a reply with no turn.start before it: not in a turn, no guess', () => {
+    const sessions = startSilent();
+    sessions.receive(syncReady());
+    sessions.receive(ev('turn.reply'));
+    expect(clock.pending()).toStrictEqual([300_000]);
+
+    clock.advanceTo(60_000);
+
+    expect(heard()).toStrictEqual([['codex:s1 waiting']]);
+  });
+
+  it('replayed, the last record a reply an hour ago: idle when synced, never done', () => {
+    const sessions = startSilent();
+    sessions.receive(replay(ev('turn.start'), HOUR + 1000));
+    sessions.receive(replay(ev('turn.reply'), HOUR));
+
+    sessions.receive(syncReady());
+
+    expect(heard()).toStrictEqual([['codex:s1 idle']]);
+    // Expires two hours after the reply, not after the guess.
+    expect(clock.pending()).toStrictEqual([HOUR]);
+  });
+
+  it('replayed, the last record a reply a minute ago: waiting (inferred) when synced, never done', () => {
+    const sessions = startSilent();
+    sessions.receive(replay(ev('turn.start'), MINUTE + 1000));
+    sessions.receive(replay(ev('turn.reply'), MINUTE));
+
+    sessions.receive(syncReady());
+
+    expect(heard()).toStrictEqual([['codex:s1 waiting (inferred)']]);
+    expect(clock.pending()).toStrictEqual([4 * MINUTE]);
+    clock.advanceTo(4 * MINUTE);
+    expect(heard()).toStrictEqual([
+      ['codex:s1 waiting (inferred)'],
+      ['codex:s1 idle'],
+    ]);
+  });
+
+  it('after the guess, a new turn: thinking, not inferred', () => {
+    const sessions = startSilent();
+    sessions.receive(syncReady());
+    sessions.receive(ev('turn.start'));
+    sessions.receive(ev('turn.reply'));
+    clock.advanceTo(12_000);
+
+    sessions.receive(ev('turn.start'));
+
+    expect(heard()).toStrictEqual([
+      ['codex:s1 thinking'],
+      ['codex:s1 done (inferred)'],
+      ['codex:s1 thinking'],
+    ]);
+  });
+
+  it('after the guess, the real turn end: done, not inferred', () => {
+    const sessions = startSilent();
+    sessions.receive(syncReady());
+    sessions.receive(ev('turn.start'));
+    sessions.receive(ev('turn.reply'));
+    clock.advanceTo(20_000);
+
+    sessions.receive(ev('turn.end'));
+
+    expect(heard()).toStrictEqual([
+      ['codex:s1 thinking'],
+      ['codex:s1 done (inferred)'],
+      ['codex:s1 waiting (inferred)'],
+      ['codex:s1 done'],
+    ]);
+    expect(clock.pending()).toStrictEqual([25_000]);
+  });
+
+  it('after the guess, an activity: still inferred', () => {
+    const sessions = startSilent();
+    sessions.receive(syncReady());
+    sessions.receive(ev('turn.start'));
+    sessions.receive(ev('turn.reply'));
+    clock.advanceTo(20_000);
+
+    sessions.receive(ev('activity'));
+
+    expect(states(sessions.list())).toStrictEqual([
+      'codex:s1 waiting (inferred)',
+    ]);
+    expect(clock.pending()).toStrictEqual([320_000]);
+    expect(heard()).toStrictEqual([
+      ['codex:s1 thinking'],
+      ['codex:s1 done (inferred)'],
+      ['codex:s1 waiting (inferred)'],
+    ]);
+  });
+
+  it('a source whose turn ends are exact (claude-code): a reply only moves the last-event time', () => {
+    const sessions = start();
+    const who = { source: 'claude-code', id: 'c1' } as const;
+    sessions.receive(syncReady('claude-code'));
+    sessions.receive(ev('turn.start', {}, who));
+    clock.advanceTo(HOUR);
+    sessions.receive(ev('turn.reply', {}, who));
+    // The idle check 5 minutes after the reply (it changes nothing mid-turn);
+    // no guess 10 seconds after it.
+    expect(clock.pending()).toStrictEqual([HOUR + 300_000]);
+
+    clock.advanceTo(3 * HOUR - 1);
+    // Still there: it expires two hours after the reply.
+    expect(heard()).toStrictEqual([['claude-code:c1 thinking']]);
+    clock.advanceTo(3 * HOUR);
+    expect(sessions.list()).toStrictEqual([]);
+  });
+
+  it('before sync.ready: no guess; once synced, the turn ended when it fell due', () => {
+    timings = { ...timings, syncTimeoutMs: 60_000 };
+    const sessions = startSilent();
+    sessions.receive(ev('turn.start'));
+    sessions.receive(ev('turn.reply'));
+    expect(clock.pending()).toStrictEqual([60_000]);
+
+    clock.advanceTo(30_000);
+    expect(sessions.list()).toStrictEqual([]);
+    // Only the sync deadline: no timer for the guess.
+    expect(clock.pending()).toStrictEqual([60_000]);
+
+    sessions.receive(syncReady());
+    // Due at 10 seconds, so its done ended at 15: no done at 30.
+    expect(heard()).toStrictEqual([['codex:s1 waiting (inferred)']]);
+  });
+
+  it('a timer that runs late: the turn ended when it fell due, not when noticed', () => {
+    const sessions = startSilent();
+    sessions.receive(syncReady());
+    sessions.receive(ev('turn.start'));
+    sessions.receive(ev('turn.reply'));
+
+    // The system slept through the guess at 10 seconds.
+    clock.skipTo(13_000);
+    sessions.retime();
+
+    expect(states(sessions.list())).toStrictEqual(['codex:s1 done (inferred)']);
+    expect(clock.pending()).toStrictEqual([15_000]);
+  });
+
+  it('uses SOURCE_CAPABILITIES by default: gemini guesses the turn end, the others do not', () => {
+    const sessions = start();
+    for (const source of ['gemini', 'codex', 'cursor', 'demo'] as const) {
+      sessions.receive(syncReady(source));
+      sessions.receive(ev('turn.start', {}, { source, id: 'x' }));
+      sessions.receive(ev('turn.reply', {}, { source, id: 'x' }));
+    }
+
+    clock.advanceTo(10_000);
+
+    expect(states(sessions.list())).toStrictEqual([
+      'gemini:x done (inferred)',
+      'codex:x thinking',
+      'cursor:x thinking',
+      'demo:x thinking',
+    ]);
+  });
+
+  it('an inferred turn.end or turn.reply from an adapter is dropped', () => {
+    const sessions = startSilent();
+    sessions.receive(syncReady());
+    sessions.receive(ev('turn.start'));
+    for (const type of ['turn.end', 'turn.reply'] as const) {
+      sessions.receive(ev(type, {}, { via: 'inferred' }));
+    }
+
+    expect(states(sessions.list())).toStrictEqual(['codex:s1 thinking']);
+    expect(detectionLines()).toStrictEqual([
+      '[detection] dropped an inferred turn.end from the codex adapter (only inference may guess)',
+      '[detection] dropped an inferred turn.reply from the codex adapter (only inference may guess)',
+    ]);
+    // Nothing to guess: no reply came through.
+    clock.advanceTo(60_000);
+    expect(states(sessions.list())).toStrictEqual(['codex:s1 thinking']);
   });
 });

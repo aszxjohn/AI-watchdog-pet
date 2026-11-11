@@ -1411,3 +1411,303 @@ describe('timings', () => {
     expect(evaluate(conditions, 3000, TIMINGS).state).toBe('error');
   });
 });
+
+describe('a reply and a guessed turn end (Story 2.6)', () => {
+  const turnReply = () => event('turn.reply');
+  /** main/detection/inference's guess. */
+  const guessedTurnEnd = () => event('turn.end', {}, 'inferred');
+
+  it.each<[string, Step[]]>([
+    [
+      'a reply in a turn is a heartbeat: still thinking, the last event moves',
+      [
+        [0, turnStart()],
+        [1000, turnReply()],
+        [1000, 'thinking'],
+        [600_000, 'thinking'],
+      ],
+    ],
+    [
+      'a guessed turn end: done (inferred) until doneMs, then waiting (inferred), then idle',
+      [
+        [0, turnStart()],
+        [1000, turnReply()],
+        [11_000, guessedTurnEnd()],
+        [11_000, 'done (inferred)'],
+        [15_999, 'done (inferred)'],
+        [16_000, 'waiting (inferred)'],
+        // idle counts from the reply: the guess is not the last event.
+        [300_999, 'waiting (inferred)'],
+        [301_000, 'idle'],
+      ],
+    ],
+    [
+      'after the guess, the next turn: thinking, exact',
+      [
+        [0, turnStart()],
+        [1000, turnReply()],
+        [11_000, guessedTurnEnd()],
+        [20_000, turnStart()],
+        [20_000, 'thinking'],
+        [21_000, turnEnd()],
+        [21_000, 'done'],
+        [26_000, 'waiting'],
+      ],
+    ],
+    [
+      'after the guess, the real turn end: done, exact',
+      [
+        [0, turnStart()],
+        [1000, turnReply()],
+        [11_000, guessedTurnEnd()],
+        [12_000, turnEnd()],
+        [12_000, 'done'],
+        [17_000, 'waiting'],
+      ],
+    ],
+    [
+      'after the guess, an activity: still inferred, and idle counts from it',
+      [
+        [0, turnStart()],
+        [1000, turnReply()],
+        [11_000, guessedTurnEnd()],
+        [20_000, activity()],
+        [20_000, 'waiting (inferred)'],
+        [319_999, 'waiting (inferred)'],
+        [320_000, 'idle'],
+      ],
+    ],
+    [
+      'after the guess, a reply outside a turn: still inferred',
+      [
+        [0, turnStart()],
+        [1000, turnReply()],
+        [11_000, guessedTurnEnd()],
+        [12_000, turnReply()],
+        [12_000, 'done (inferred)'],
+        [16_000, 'waiting (inferred)'],
+      ],
+    ],
+    [
+      'after the guess, a tool call: working, then waiting, exact',
+      [
+        [0, turnStart()],
+        [1000, turnReply()],
+        [11_000, guessedTurnEnd()],
+        [12_000, toolStart('a')],
+        [12_000, 'working'],
+        [13_000, toolEnd('a')],
+        [13_000, 'done'],
+        [16_000, 'waiting'],
+      ],
+    ],
+    [
+      'after the guess, an error: error, exact; then waiting (inferred) again',
+      [
+        [0, turnStart()],
+        [1000, turnReply()],
+        [11_000, guessedTurnEnd()],
+        [12_000, error()],
+        [12_000, 'error'],
+        [42_000, 'waiting (inferred)'],
+      ],
+    ],
+    [
+      'a real turn end after a reply is exact as before',
+      [
+        [0, turnStart()],
+        [1000, turnReply()],
+        [2000, turnEnd()],
+        [2000, 'done'],
+        [7000, 'waiting'],
+      ],
+    ],
+    [
+      'priority is unchanged: an approval after the guess is approval',
+      [
+        [0, turnStart()],
+        [1000, turnReply()],
+        [11_000, guessedTurnEnd()],
+        [12_000, approvalRequest('r')],
+        [12_000, 'approval'],
+        [13_000, approvalResolved('r')],
+        [13_000, 'done (inferred)'],
+      ],
+    ],
+  ])('%s', (_label, steps) => {
+    expectStates(steps);
+  });
+
+  it('a reply sets replyPending and otherwise acts like activity', () => {
+    const before = feed([[0, turnStart()]]);
+    const after = reduceSession(before, turnReply(), 50);
+    expect(snapshot(after)).toStrictEqual({
+      ...snapshot(before),
+      lastEventAt: 50,
+      replyPending: true,
+    });
+  });
+
+  it.each<[string, () => DetectionEvent]>([
+    ['turn.start', turnStart],
+    ['tool.start', () => toolStart('a')],
+    ['turn.end', turnEnd],
+    ['a guessed turn.end', guessedTurnEnd],
+  ])('%s clears replyPending', (_label, make) => {
+    const pending = feed([
+      [0, turnStart()],
+      [1, turnReply()],
+    ]);
+    expect(pending.replyPending).toBe(true);
+    expect('replyPending' in reduceSession(pending, make(), 2)).toBe(false);
+  });
+
+  it('session.end clears replyPending and turnEndInferred', () => {
+    for (const steps of [
+      [
+        [0, turnStart()],
+        [1, turnReply()],
+      ],
+      [
+        [0, turnStart()],
+        [1, turnReply()],
+        [2, guessedTurnEnd()],
+      ],
+    ] satisfies Step[][]) {
+      const ended = reduceSession(feed(steps), sessionEnd(), 3);
+      expect('replyPending' in ended).toBe(false);
+      expect('turnEndInferred' in ended).toBe(false);
+    }
+  });
+
+  it.each<[string, () => DetectionEvent]>([
+    ['activity', activity],
+    ['tool.end', () => toolEnd('zzz')],
+    ['approval.resolved', () => approvalResolved('zzz')],
+    ['error', error],
+    ['session.meta', () => sessionMeta('x')],
+  ])('%s leaves replyPending as it was', (_label, make) => {
+    const pending = feed([
+      [0, turnStart()],
+      [1, turnReply()],
+    ]);
+    expect(reduceSession(pending, make(), 2).replyPending).toBe(true);
+  });
+
+  it('a guessed turn end closes the turn like a real one but does not move the last-event time', () => {
+    const before = feed([
+      [0, turnStart()],
+      [1, toolStart('a')],
+      [2, approvalRequest('a')],
+      [3, questionRequest('q')],
+      [4, turnReply()],
+    ]);
+    const after = reduceSession(before, guessedTurnEnd(), 10_004);
+    expect(snapshot(after)).toStrictEqual({
+      ended: false,
+      inTurn: false,
+      openTools: [],
+      openApprovals: [],
+      openQuestions: [],
+      turnEndedAt: 10_004,
+      errorAt: null,
+      lastEventAt: 4,
+      turnEndInferred: true,
+    });
+    expect(nextChangeAt(after, 10_004, TIMINGS)).toBe(15_004);
+  });
+
+  it.each<[string, () => DetectionEvent]>([
+    ['turn.start', turnStart],
+    ['turn.end', turnEnd],
+    ['tool.start', () => toolStart('a')],
+  ])('a %s that is not inferred clears turnEndInferred', (_label, make) => {
+    const guessed = feed([
+      [0, turnStart()],
+      [1, turnReply()],
+      [10_001, guessedTurnEnd()],
+    ]);
+    expect(guessed.turnEndInferred).toBe(true);
+    expect('turnEndInferred' in reduceSession(guessed, make(), 10_002)).toBe(
+      false,
+    );
+  });
+
+  it.each<[string, () => DetectionEvent]>([
+    ['turn.start', () => event('turn.start', {}, 'inferred')],
+    [
+      'tool.start',
+      () =>
+        event('tool.start', { toolCallId: 'a', toolName: 'Bash' }, 'inferred'),
+    ],
+    ['activity', activity],
+    ['turn.reply', turnReply],
+    ['tool.end', () => toolEnd('a')],
+    ['approval.resolved', () => approvalResolved('a')],
+    ['error', error],
+  ])(
+    'an inferred one, or any other event (%s), leaves turnEndInferred',
+    (_label, make) => {
+      const guessed = feed([
+        [0, turnStart()],
+        [1, turnReply()],
+        [10_001, guessedTurnEnd()],
+      ]);
+      expect(reduceSession(guessed, make(), 10_002).turnEndInferred).toBe(true);
+    },
+  );
+
+  it('a replayed real turn end clears turnEndInferred but leaves the done as it was', () => {
+    const guessed = feed([
+      [0, turnStart()],
+      [1, turnReply()],
+      [10_001, guessedTurnEnd()],
+    ]);
+    const after = reduceSession(
+      guessed,
+      detectionEventSchema.parse({ ...turnEnd(), replay: true }),
+      10_002,
+    );
+    expect('turnEndInferred' in after).toBe(false);
+    expect(after.turnEndedAt).toBe(10_001);
+    expect(evaluate(after, 10_002, TIMINGS)).toStrictEqual({
+      state: 'done',
+      confidence: 'exact',
+    });
+  });
+
+  it('the flags are absent, not false, while they do not hold', () => {
+    const conditions = feed([
+      [0, turnStart()],
+      [1, turnReply()],
+      [2, turnStart()],
+      [3, turnReply()],
+      [4, guessedTurnEnd()],
+      [5, turnStart()],
+    ]);
+    expect(Object.keys(conditions)).not.toContain('replyPending');
+    expect(Object.keys(conditions)).not.toContain('turnEndInferred');
+    expect(Object.isFrozen(conditions)).toBe(true);
+  });
+
+  it('reduceSession never changes the conditions it is given', () => {
+    const steps: Step[] = [
+      [0, turnStart()],
+      [1, turnReply()],
+      [2, guessedTurnEnd()],
+      [3, activity()],
+      [4, turnStart()],
+    ];
+    let conditions: SessionConditions | undefined;
+    for (const [at, step] of steps) {
+      if (typeof step === 'string') continue;
+      const before = conditions && snapshot(conditions);
+      const next = reduceSession(conditions, step, at);
+      if (conditions !== undefined) {
+        expect(snapshot(conditions)).toStrictEqual(before);
+      }
+      expect(Object.isFrozen(next)).toBe(true);
+      conditions = next;
+    }
+  });
+});

@@ -16,6 +16,11 @@ import type { StateCode } from '../../shared/states';
  * conditions only: its `turn.end` starts no `done` and its `error` holds no
  * `error`.
  *
+ * An inferred `turn.end` (main/detection/inference's guess for a source that
+ * writes no turn end) closes the turn like a real one, but, like an inferred
+ * request, is not the session's last event, and the `done` and `waiting`
+ * after it are `inferred` until the session shows what it does next.
+ *
  * This module reads no settings, starts no timers and writes no log; whoever
  * drives it schedules re-evaluation with `nextChangeAt`. The timings it is
  * given (only `doneMs`, `idleMs` and `errorHoldMs` are read) must be finite
@@ -64,15 +69,39 @@ export interface SessionConditions {
    */
   readonly errorAt: number | null;
   /**
-   * When the last event arrived. `session.meta` and inferred requests do not
-   * count (an inferred request is the stage's guess, not something the
-   * session did), except as a session's first event: the conditions it
+   * When the last event arrived. `session.meta`, inferred requests and an
+   * inferred `turn.end` do not count (a guess is the stage's, not something
+   * the session did), except as a session's first event: the conditions it
    * creates start at that moment (an inferred request then matches no open
    * tool call, so it creates nothing else). It only moves forward: an event back-dated
    * to before it (an older replayed record) leaves it as it was.
    */
   readonly lastEventAt: number;
+  /**
+   * Present, and true, from a `turn.reply` until the next `turn.start`,
+   * `tool.start`, `turn.end` or `session.end`: the session's latest reply
+   * may have ended its turn (main/detection/inference reads it).
+   */
+  readonly replyPending?: true;
+  /**
+   * Present, and true, from an inferred `turn.end` until the next
+   * `turn.start`, `turn.end` or `tool.start` that is not inferred, or
+   * `session.end`: the `done` and `waiting` after it are guesses. `activity`
+   * and `turn.reply` leave it as it was.
+   */
+  readonly turnEndInferred?: true;
 }
+
+/** The conditions that are present only while true. */
+type Flag = 'replyPending' | 'turnEndInferred';
+
+/**
+ * The conditions as reduceSession builds them: a flag is set with true and
+ * cleared with false.
+ */
+type ConditionFields = Omit<SessionConditions, Flag> & {
+  readonly [K in Flag]?: boolean;
+};
 
 /** One open tool call. Frozen, like the conditions holding it. */
 export interface OpenTool {
@@ -92,14 +121,24 @@ export interface OpenTool {
 export interface EvaluatedState {
   readonly state: StateCode;
   /**
-   * `inferred` only when the state is `approval` or `decision` and every
-   * pending request behind it is inferred; otherwise `exact`.
+   * `inferred` when the state is `approval` or `decision` and every pending
+   * request behind it is inferred, or when it is `done` or `waiting` after
+   * an inferred `turn.end` (`turnEndInferred`); otherwise `exact`.
    */
   readonly confidence: Confidence;
 }
 
-function conditions(fields: SessionConditions): SessionConditions {
-  return Object.freeze(fields);
+/** Frozen conditions, with each flag present only when it is true. */
+function conditions({
+  replyPending,
+  turnEndInferred,
+  ...fields
+}: ConditionFields): SessionConditions {
+  return Object.freeze({
+    ...fields,
+    ...(replyPending === true ? { replyPending } : {}),
+    ...(turnEndInferred === true ? { turnEndInferred } : {}),
+  });
 }
 
 function emptyConditions(now: number, ended: boolean): SessionConditions {
@@ -208,8 +247,9 @@ export function reduceSession(
     return current;
   }
   const base = current ?? emptyConditions(now, false);
+  const inferred = event.confidence === 'inferred';
   const inferredRequest =
-    event.confidence === 'inferred' &&
+    inferred &&
     (event.type === 'approval.request' || event.type === 'question.request');
   // main/detection/inference guesses only at a tool call that is open. An
   // inferred request whose id matches no open tool call (it arrived after
@@ -217,16 +257,20 @@ export function reduceSession(
   if (inferredRequest && !base.openTools.has(event.requestId)) {
     return base;
   }
-  // An inferred request is not the session's own doing: it does not move
-  // the last-event time (so it neither delays `idle` nor the expiry).
-  const moves = !inferredRequest;
-  const update = (changes: Partial<SessionConditions>) =>
+  // A guess (an inferred request or turn end) is not the session's own
+  // doing: it does not move the last-event time (so it neither delays
+  // `idle` nor the expiry).
+  const moves = !inferredRequest && !(inferred && event.type === 'turn.end');
+  const update = (changes: Partial<ConditionFields>) =>
     conditions({
       ...base,
       ...changes,
       lastEventAt: moves ? Math.max(base.lastEventAt, now) : base.lastEventAt,
     });
   const replayed = event.replay === true;
+  // What the session does next settles a guessed turn end; only a guess
+  // leaves it in place.
+  const settlesGuess = inferred ? {} : { turnEndInferred: false };
 
   switch (event.type) {
     case 'session.meta':
@@ -235,10 +279,19 @@ export function reduceSession(
     case 'session.start':
     case 'activity':
       return update({});
+    case 'turn.reply':
+      // A heartbeat that may end the turn: main/detection/inference decides.
+      return update({ replyPending: true });
     case 'session.end':
       return emptyConditions(now, true);
     case 'turn.start':
-      return update({ inTurn: true, turnEndedAt: null, errorAt: null });
+      return update({
+        inTurn: true,
+        turnEndedAt: null,
+        errorAt: null,
+        replyPending: false,
+        ...settlesGuess,
+      });
     case 'turn.end':
       // Whatever this turn left open was not written to the log; close it.
       // `error` is not cleared. A replayed turn ended before the stage
@@ -248,12 +301,16 @@ export function reduceSession(
         openTools: new Map(),
         openApprovals: new Map(),
         openQuestions: new Map(),
+        replyPending: false,
+        turnEndInferred: inferred,
         ...(replayed ? {} : { turnEndedAt: now }),
       });
     case 'tool.start':
       return update({
         openTools: withTool(base, event.toolCallId, event.toolName, now),
         errorAt: null,
+        replyPending: false,
+        ...settlesGuess,
       });
     case 'tool.end':
       // A tool call's end also closes the request it raised (same id).
@@ -316,7 +373,8 @@ function exact(state: StateCode): EvaluatedState {
  * done > waiting > idle. Durations are half-open: `done` while less than
  * `doneMs` has passed since `turn.end`, `error` while less than
  * `errorHoldMs` has passed since `error`, `waiting` while less than `idleMs`
- * has passed since the last event.
+ * has passed since the last event. After an inferred `turn.end`, `done` and
+ * `waiting` are `inferred`.
  */
 export function evaluate(
   current: SessionConditions,
@@ -347,14 +405,16 @@ export function evaluate(
   if (current.inTurn) {
     return exact('thinking');
   }
+  const afterTurn: Confidence =
+    current.turnEndInferred === true ? 'inferred' : 'exact';
   if (
     current.turnEndedAt !== null &&
     now < current.turnEndedAt + timings.doneMs
   ) {
-    return exact('done');
+    return { state: 'done', confidence: afterTurn };
   }
   if (now < current.lastEventAt + timings.idleMs) {
-    return exact('waiting');
+    return { state: 'waiting', confidence: afterTurn };
   }
   return exact('idle');
 }

@@ -30,7 +30,7 @@ import {
   adapterRows,
   DEMO_MODE_HINT,
   INFERRED_LABEL,
-  INFERRED_TITLE,
+  inferredTitle,
   NO_ADAPTERS_TEXT,
   NO_SESSIONS_TEXT,
   SESSION_COLUMNS,
@@ -244,7 +244,10 @@ function Sessions({ snapshot }: { snapshot: StageViewSnapshot | null }) {
                       {row.state}
                     </span>
                     {row.inferred ? (
-                      <span className="inferred-mark" title={INFERRED_TITLE}>
+                      <span
+                        className="inferred-mark"
+                        title={inferredTitle(row.stateCode)}
+                      >
                         {INFERRED_LABEL}
                       </span>
                     ) : null}

@@ -146,8 +146,23 @@ export const turnStartEventSchema = z.strictObject({
   ...commonFields,
 });
 
+/**
+ * A turn ended. For a source whose records never show it (`turnEnd: 'none'`
+ * in its capability), main/detection/inference guesses it instead.
+ */
 export const turnEndEventSchema = z.strictObject({
   type: z.literal('turn.end'),
+  ...commonFields,
+});
+
+/**
+ * The AI finished writing a reply that may end its turn. For the reducer it
+ * is a heartbeat like `activity`; for a source whose records never show a
+ * turn end, main/detection/inference guesses the turn ended once
+ * TURN_END_INFER_MS pass after it with no newer event (Story 2.6).
+ */
+export const turnReplyEventSchema = z.strictObject({
+  type: z.literal('turn.reply'),
   ...commonFields,
 });
 
@@ -199,13 +214,17 @@ export const activityEventSchema = z.strictObject({
   ...commonFields,
 });
 
-/** The event types, in AD-21's listing order. */
+/**
+ * The event types, in AD-21's listing order; `turn.reply` (Story 2.6) comes
+ * after `turn.end`.
+ */
 export const DETECTION_EVENT_TYPES = [
   'session.start',
   'session.end',
   'session.meta',
   'turn.start',
   'turn.end',
+  'turn.reply',
   'tool.start',
   'tool.end',
   'approval.request',
@@ -226,6 +245,7 @@ export const detectionEventSchema = z
     sessionMetaEventSchema,
     turnStartEventSchema,
     turnEndEventSchema,
+    turnReplyEventSchema,
     toolStartEventSchema,
     toolEndEventSchema,
     approvalRequestEventSchema,

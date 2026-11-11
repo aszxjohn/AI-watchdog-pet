@@ -175,3 +175,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-6-jsonl-adapter-core.md`
   summary: 共用 JSONL 核心沒有防護來源提供的回呼丟例外：`follow` 在 chokidar 的 `ignored` 裡丟會讓初次掃描中斷、`sync.ready` 不送；`scan`／`locate`／`gate.allows` 在補讀時丟也不送 `sync.ready`；`translate` 丟會讓同一個檔永遠卡在同一行；`gate.read` 丟會讓該次讀到的事件遺失
   evidence: Story 2.6 前置重構審查 E1～E4（medium，未發生）。與重構前完全相同，claude-code 的回呼設計上不丟例外；2.4 在 Windows 上的 BigInt `TypeError` 就是第一類。Gemini 轉接器（第二個使用核心的來源）時一併決定：每個回呼包 try/catch、記代碼、跳過該檔或該行，並各加一個丟例外的測試。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-6-turn-end-inference.md`
+  summary: Story 2.6 Gemini CLI 轉接器本體（共用核心讀第一行與回呼防護、`adapters/gemini/`、去識別化 fixture、接線），規格草稿在 `spec-2-6-gemini-cli-adapter.md`
+  evidence: 使用者 2026-11-11 在 Gemini 規格約 4800 tokens（字數粗估）時選擇再拆一次：推測一輪結束（`turn.reply`、推測的 `turn.end`、能力表「一輪結束」欄位）是判斷層的純函式改動，先做、單獨審查；轉接器本體依賴它，接著做。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-6-turn-end-inference.md`
+  summary: 架構文件的 AD-21 事件清單還沒有 `turn.reply`，AD-22 推測範圍還沒有「一輪結束」與能力表的「一輪結束」欄位
+  evidence: Story 2.6 推測一輪結束審查 B10c。規格 Design Notes 決定留到 Epic 2 回顧時一起對齊；程式註解已引用 AD-21／AD-22 說明新事件與新推測，架構文件仍是 13 種事件、只推測請求。

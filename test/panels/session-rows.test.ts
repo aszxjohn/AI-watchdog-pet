@@ -4,6 +4,9 @@ import {
   adapterRows,
   DEMO_MODE_HINT,
   INFERRED_LABEL,
+  INFERRED_TITLE,
+  INFERRED_TURN_END_TITLE,
+  inferredTitle,
   nativeIdOf,
   NO_ADAPTERS_TEXT,
   NO_SESSIONS_TEXT,
@@ -70,6 +73,29 @@ describe('sessionRows', () => {
       ['b', '工作中', false],
     ]);
     expect(INFERRED_LABEL).toBe('推測');
+  });
+
+  it('explains a guessed request and a guessed turn end differently (Story 2.6)', () => {
+    expect(INFERRED_TITLE).toBe(
+      '紀錄沒有寫出這個狀態：工具執行太久還沒結束，推測在等你',
+    );
+    expect(INFERRED_TURN_END_TITLE).toBe(
+      '紀錄沒有寫出這一輪結束：回覆後一段時間沒有新紀錄，推測這一輪結束了',
+    );
+    expect(
+      Object.fromEntries(
+        STATE_CODES.map((state) => [state, inferredTitle(state)]),
+      ),
+    ).toStrictEqual({
+      waiting: INFERRED_TURN_END_TITLE,
+      thinking: INFERRED_TITLE,
+      working: INFERRED_TITLE,
+      approval: INFERRED_TITLE,
+      decision: INFERRED_TITLE,
+      done: INFERRED_TURN_END_TITLE,
+      idle: INFERRED_TITLE,
+      error: INFERRED_TITLE,
+    });
   });
 
   it('shows the native id while the session has no display name', () => {

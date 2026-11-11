@@ -38,9 +38,9 @@ export const sourceCodeSchema = z.enum(SOURCE_CODES);
 export type SourceCode = z.infer<typeof sourceCodeSchema>;
 
 /**
- * How much of a kind of request a source's records show (AD-4): `exact` when
- * they say the session is waiting on the user, `none` when they never do and
- * main/detection/inference has to guess it.
+ * How much of a kind of fact a source's records show (AD-4): `exact` when
+ * they say so (the session is waiting on the user, the turn ended), `none`
+ * when they never do and main/detection/inference has to guess it.
  */
 export type CapabilityLevel = 'exact' | 'none';
 
@@ -50,6 +50,12 @@ export interface SourceCapability {
   readonly approval: CapabilityLevel;
   /** Whether its records show the AI asking the user a question. */
   readonly question: CapabilityLevel;
+  /**
+   * Whether its records show that a turn ended. With `none`, its adapter
+   * sends `turn.reply` for a reply that may end the turn, and
+   * main/detection/inference guesses the `turn.end` (Story 2.6).
+   */
+  readonly turnEnd: CapabilityLevel;
   /**
    * Tools that ask the user something by design, matched by exact
    * `toolName`. A long-running one is guessed to be a question, not an
@@ -64,15 +70,24 @@ export interface SourceCapability {
   readonly noInferTools: readonly string[];
 }
 
-function capability(
-  approval: CapabilityLevel,
-  question: CapabilityLevel,
-  questionTools: readonly string[] = [],
-  noInferTools: readonly string[] = [],
-): SourceCapability {
+/** A frozen capability; the tool lists default to none. */
+function capability({
+  approval,
+  question,
+  turnEnd,
+  questionTools = [],
+  noInferTools = [],
+}: {
+  readonly approval: CapabilityLevel;
+  readonly question: CapabilityLevel;
+  readonly turnEnd: CapabilityLevel;
+  readonly questionTools?: readonly string[];
+  readonly noInferTools?: readonly string[];
+}): SourceCapability {
   return Object.freeze({
     approval,
     question,
+    turnEnd,
     questionTools: Object.freeze([...questionTools]),
     noInferTools: Object.freeze([...noInferTools]),
   });
@@ -81,6 +96,7 @@ function capability(
 /**
  * Each source's capability, from AD-4's table of what is known to be
  * unreadable. A `none` here is what main/detection/inference guesses at.
+ * Every source but `gemini` writes when a turn ends.
  *
  * - `claude-code`: neither, for now. Its transcripts never say that a tool
  *   call waits for approval or that the AI waits for an answer; its status
@@ -94,7 +110,13 @@ function capability(
  *   asks for approval, so a long one is guessed at like any other tool).
  * - `codex`: neither is written to its log. Question tools are filled in
  *   from real records by Story 2.5.
- * - `gemini`, `cursor`: approvals are not written; questions are.
+ * - `gemini`: neither is written to its chat log: `ask_user`, its question
+ *   tool, is written only once the user has answered. Tool calls are
+ *   written only once their whole batch has finished (so its adapter sees
+ *   a call after the fact), and no turn end is written at all: the turn is
+ *   guessed to end TURN_END_INFER_MS after a reply with nothing newer
+ *   (Story 2.6).
+ * - `cursor`: approvals are not written; questions are.
  * - `copilot`: questions are not written. Question tools come with its
  *   adapter (Epic 6).
  * - `demo`: the demo adapter emits every request itself.
@@ -102,11 +124,12 @@ function capability(
 export const SOURCE_CAPABILITIES: Readonly<
   Record<SourceCode, SourceCapability>
 > = Object.freeze({
-  'claude-code': capability(
-    'none',
-    'none',
-    ['AskUserQuestion', 'ExitPlanMode'],
-    [
+  'claude-code': capability({
+    approval: 'none',
+    question: 'none',
+    turnEnd: 'exact',
+    questionTools: ['AskUserQuestion', 'ExitPlanMode'],
+    noInferTools: [
       'Agent',
       'Task',
       'Workflow',
@@ -115,12 +138,21 @@ export const SOURCE_CAPABILITIES: Readonly<
       'TaskOutput',
       'ScheduleWakeup',
     ],
-  ),
-  codex: capability('none', 'none'),
-  gemini: capability('none', 'exact'),
-  cursor: capability('none', 'exact'),
-  copilot: capability('exact', 'none'),
-  demo: capability('exact', 'exact'),
+  }),
+  codex: capability({ approval: 'none', question: 'none', turnEnd: 'exact' }),
+  gemini: capability({
+    approval: 'none',
+    question: 'none',
+    turnEnd: 'none',
+    questionTools: ['ask_user'],
+  }),
+  cursor: capability({ approval: 'none', question: 'exact', turnEnd: 'exact' }),
+  copilot: capability({
+    approval: 'exact',
+    question: 'none',
+    turnEnd: 'exact',
+  }),
+  demo: capability({ approval: 'exact', question: 'exact', turnEnd: 'exact' }),
 });
 
 /**

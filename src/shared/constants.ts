@@ -74,3 +74,12 @@ export const BAD_LINE_STREAK_DEGRADED = 20;
  * watcher does not report a removed folder coming back.
  */
 export const RECORDS_FOLDER_RECHECK_MS = 30_000;
+
+/**
+ * For a source whose records never show a turn end (`turnEnd: 'none'` in
+ * its capability), main/detection/inference guesses the turn ended once
+ * this long has passed since the session's last event, after a `turn.reply`
+ * with no tool call or request open (Story 2.6). A constant, not a setting:
+ * the user chose it, and it is not offered for adjustment.
+ */
+export const TURN_END_INFER_MS = 10_000;
