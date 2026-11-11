@@ -152,6 +152,7 @@ context:
 - 實機（開發代理）：`npm start -- -- --user-data-dir=<scratchpad>` 隔離執行約 20 秒，未截圖、未碰使用者的 app。run log 依序有 `claude-code: started; watching the projects folder` 與 `claude-code: replayed 8 transcripts … (7 sessions, 1 subagents; 778 transcripts in all); sync.ready`，沒有 `detection` 錯誤或警告；之後停止，沒有殘留行程。執行前後只比對 `~/.claude/projects/` 的 metadata（3370 個項目）：沒有新增、刪除、變小的檔；唯一變化是一個 subagent transcript 變大，應是開發代理自己這個執行中的 subagent session 在寫入（只比 metadata，未讀內容確認）。面板與「管理 session」頁未實際操作，使用者驗收尚未進行。
 - 主 session 核對：讀過翻譯與轉接器的原始碼；fixture 的每個字串值都在白名單內（工具名、紀錄種類、中斷固定文字、「範例標題」、`/fixture/project`），6 個 UUID 都與本機真實檔名不同，快照沒有路徑。重跑 typecheck、lint、`CI=true npm test`（47 個檔案、2113 個測試、0 跳過）、depcruise（0 違規），全部通過；I/O 矩陣 16 列都有對應測試並有執行（`detection-claude-code.test.ts` 的 `I/O matrix`，唯讀列在 `detection-claude-code-fixtures.test.ts`）。開一個真實 Claude Code session 看面板的人工驗收尚未進行。
 - 審查修補（第 1 輪，14 項，含使用者決定的兩項）完成後，主 session 重跑：typecheck、lint、`CI=true npm test`（47 個檔案、2125 個測試、0 跳過）、depcruise（0 違規），全部通過；fixture 與快照再查一次，沒有任何 home 路徑。
+- CI（`05111fa`）：Windows 上三個用真 chokidar 的測試在 5 秒內等不到 `sync.ready`（macOS 通過）。CI 的完整 log 要登入才看得到，原因未確定；先把這三個測試的單項等待加長到 20 秒、整個測試 60 秒，失敗訊息附上平台、健康、各類輸出數量與 `detection` 紀錄（公開的 annotations 看得到），下一輪 CI 再判斷是 Windows 慢還是根本沒有觸發。
 
 ## Spec Change Log
 

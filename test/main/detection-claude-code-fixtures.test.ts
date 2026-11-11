@@ -41,6 +41,14 @@ import type { AdapterOutput } from '../../src/shared/detection-events';
 import type { AdapterHealth } from '../../src/shared/sources';
 import { SETTINGS_DEFAULTS } from '../../src/shared/settings';
 
+/**
+ * How long the tests with the real watcher wait for one thing, and how long
+ * each may take in all. Generous: chokidar's first scan is much slower on
+ * the Windows CI runner than on macOS.
+ */
+const REAL_WATCH_WAIT_MS = 20_000;
+const REAL_WATCH_TEST_MS = 60_000;
+
 const FIXTURES = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   '../fixtures/claude-code',
@@ -274,6 +282,35 @@ describe('the whole adapter on a copy of the fixtures, real watcher included', (
     });
   });
 
+  /**
+   * What the adapter did so far, for a failure message (the CI log of a
+   * Windows run is not public, its annotations are): how many outputs of
+   * each type, the health last reported, and the `detection` log lines
+   * (codes and counts only).
+   */
+  function diagnose(
+    outputs: readonly AdapterOutput[],
+    health?: AdapterHealth,
+  ): string {
+    const types = new Map<string, number>();
+    for (const output of outputs) {
+      types.set(output.type, (types.get(output.type) ?? 0) + 1);
+    }
+    const logged = [console.info, console.warn, console.error].flatMap(
+      (method) =>
+        vi
+          .mocked(method)
+          .mock.calls.map((call) => String(call[0]))
+          .filter((line) => line.includes('[detection]')),
+    );
+    return [
+      `platform ${process.platform}`,
+      `health ${health ?? 'none'}`,
+      `outputs ${JSON.stringify([...types])}`,
+      `log ${JSON.stringify(logged)}`,
+    ].join('; ');
+  }
+
   /** Each file's path, size, modification time and content hash. */
   function fingerprint(): string[] {
     return filesUnder(tmp).map((file) => {
@@ -286,95 +323,104 @@ describe('the whole adapter on a copy of the fixtures, real watcher included', (
     });
   }
 
-  it('the whole adapter, real watcher included, changes nothing and opens only transcripts, to read', async () => {
-    const before = fingerprint();
-    const calls: string[] = [];
-    const opened: { file: string; flags: string }[] = [];
-    const spy: TranscriptFs = {
-      readdirSync: (dir, options) => {
-        calls.push('readdirSync');
-        return nodeFs.readdirSync(dir, options);
-      },
-      statSync: (file) => {
-        calls.push('statSync');
-        return nodeFs.statSync(file);
-      },
-      realpathSync: (file) => {
-        calls.push('realpathSync');
-        return nodeFs.realpathSync(file);
-      },
-      openSync: (file, flags) => {
-        calls.push('openSync');
-        opened.push({ file, flags });
-        return nodeFs.openSync(file, flags);
-      },
-      fstatSync: (fd) => {
-        calls.push('fstatSync');
-        return nodeFs.fstatSync(fd);
-      },
-      readSync: (fd, buffer, offset, length, position) => {
-        calls.push('readSync');
-        return nodeFs.readSync(fd, buffer, offset, length, position);
-      },
-      closeSync: (fd) => {
-        calls.push('closeSync');
-        nodeFs.closeSync(fd);
-      },
-    };
-    const outputs: AdapterOutput[] = [];
-    let synced: () => void = () => {};
-    const ready = new Promise<void>((resolve) => {
-      synced = resolve;
-    });
-    const context: AdapterContext = {
-      emit(batch) {
-        outputs.push(...batch);
-        if (batch.some((output) => output.type === 'sync.ready')) {
-          synced();
-        }
-      },
-      timings: () => SETTINGS_DEFAULTS,
-      wallNow: Date.now,
-      setTimer: (run, delayMs) => setTimeout(run, delayMs),
-      clearTimer: (handle) => {
-        clearTimeout(handle as ReturnType<typeof setTimeout>);
-      },
-    };
-    const adapter = createClaudeCodeAdapter({ root, fs: spy });
-    adapter.start(context);
-    await ready;
-    adapter.stop();
-    // Let the watcher finish closing.
-    await new Promise((resolve) => setTimeout(resolve, 200));
+  it(
+    'the whole adapter, real watcher included, changes nothing and opens only transcripts, to read',
+    async () => {
+      const before = fingerprint();
+      const calls: string[] = [];
+      const opened: { file: string; flags: string }[] = [];
+      const spy: TranscriptFs = {
+        readdirSync: (dir, options) => {
+          calls.push('readdirSync');
+          return nodeFs.readdirSync(dir, options);
+        },
+        statSync: (file) => {
+          calls.push('statSync');
+          return nodeFs.statSync(file);
+        },
+        realpathSync: (file) => {
+          calls.push('realpathSync');
+          return nodeFs.realpathSync(file);
+        },
+        openSync: (file, flags) => {
+          calls.push('openSync');
+          opened.push({ file, flags });
+          return nodeFs.openSync(file, flags);
+        },
+        fstatSync: (fd) => {
+          calls.push('fstatSync');
+          return nodeFs.fstatSync(fd);
+        },
+        readSync: (fd, buffer, offset, length, position) => {
+          calls.push('readSync');
+          return nodeFs.readSync(fd, buffer, offset, length, position);
+        },
+        closeSync: (fd) => {
+          calls.push('closeSync');
+          nodeFs.closeSync(fd);
+        },
+      };
+      const outputs: AdapterOutput[] = [];
+      let health: AdapterHealth | undefined;
+      const context: AdapterContext = {
+        emit(batch, reported) {
+          outputs.push(...batch);
+          if (reported !== undefined) {
+            health = reported;
+          }
+        },
+        timings: () => SETTINGS_DEFAULTS,
+        wallNow: Date.now,
+        setTimer: (run, delayMs) => setTimeout(run, delayMs),
+        clearTimer: (handle) => {
+          clearTimeout(handle as ReturnType<typeof setTimeout>);
+        },
+      };
+      const adapter = createClaudeCodeAdapter({ root, fs: spy });
+      adapter.start(context);
+      await vi.waitFor(
+        () => {
+          expect(
+            outputs.some((output) => output.type === 'sync.ready'),
+            diagnose(outputs, health),
+          ).toBe(true);
+        },
+        { timeout: REAL_WATCH_WAIT_MS, interval: 20 },
+      );
+      adapter.stop();
+      // Let the watcher finish closing.
+      await new Promise((resolve) => setTimeout(resolve, 200));
 
-    expect(fingerprint()).toStrictEqual(before);
-    // Every transcript was replayed: six sessions and one subagent.
-    expect(
-      new Set(opened.map(({ file }) => path.relative(root, file))),
-    ).toStrictEqual(new Set(filesUnder(root)));
-    for (const { file, flags } of opened) {
-      expect(flags).toBe('r');
-      expect(file.startsWith(root + path.sep)).toBe(true);
-      expect(file.endsWith('.jsonl')).toBe(true);
-    }
-    expect(new Set(calls)).toStrictEqual(
-      new Set([
-        'readdirSync',
-        'statSync',
-        'realpathSync',
-        'openSync',
-        'fstatSync',
-        'readSync',
-        'closeSync',
-      ]),
-    );
-    const sessions = new Set(
-      outputs.flatMap((output) =>
-        output.type === 'sync.ready' ? [] : [output.sessionKey],
-      ),
-    );
-    expect(sessions.size).toBe(6);
-  });
+      expect(fingerprint()).toStrictEqual(before);
+      // Every transcript was replayed: six sessions and one subagent.
+      expect(
+        new Set(opened.map(({ file }) => path.relative(root, file))),
+      ).toStrictEqual(new Set(filesUnder(root)));
+      for (const { file, flags } of opened) {
+        expect(flags).toBe('r');
+        expect(file.startsWith(root + path.sep)).toBe(true);
+        expect(file.endsWith('.jsonl')).toBe(true);
+      }
+      expect(new Set(calls)).toStrictEqual(
+        new Set([
+          'readdirSync',
+          'statSync',
+          'realpathSync',
+          'openSync',
+          'fstatSync',
+          'readSync',
+          'closeSync',
+        ]),
+      );
+      const sessions = new Set(
+        outputs.flatMap((output) =>
+          output.type === 'sync.ready' ? [] : [output.sessionKey],
+        ),
+      );
+      expect(sessions.size).toBe(6);
+    },
+    REAL_WATCH_TEST_MS,
+  );
 
   /**
    * The adapter on the copy, with a recheck timer of a few milliseconds;
@@ -401,11 +447,12 @@ describe('the whole adapter on a copy of the fixtures, real watcher included', (
     adapter.start(context);
     await vi.waitFor(
       () => {
-        expect(outputs.some((output) => output.type === 'sync.ready')).toBe(
-          true,
-        );
+        expect(
+          outputs.some((output) => output.type === 'sync.ready'),
+          diagnose(outputs, state.health),
+        ).toBe(true);
       },
-      { timeout: 5000, interval: 20 },
+      { timeout: REAL_WATCH_WAIT_MS, interval: 20 },
     );
     return { adapter, outputs, state };
   }
@@ -431,121 +478,130 @@ describe('the whole adapter on a copy of the fixtures, real watcher included', (
           outputs.some(
             (output) => output.type !== 'sync.ready' && match(output),
           ),
+          diagnose(outputs),
         ).toBe(true);
       },
-      { timeout: 5000, interval: 20 },
+      { timeout: REAL_WATCH_WAIT_MS, interval: 20 },
     );
   }
 
-  it('after the sync it reads appends to a session, to a subagent, and to a transcript too old to replay', async () => {
-    // Outside the discovery window: neither replayed nor followed at start.
-    const old = path.join(projectDir(), `${ID(2)}.jsonl`);
-    const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000);
-    utimesSync(old, threeHoursAgo, threeHoursAgo);
-    const { adapter, outputs } = await startReal();
-    expect(
-      outputs.some(
+  it(
+    'after the sync it reads appends to a session, to a subagent, and to a transcript too old to replay',
+    async () => {
+      // Outside the discovery window: neither replayed nor followed at start.
+      const old = path.join(projectDir(), `${ID(2)}.jsonl`);
+      const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000);
+      utimesSync(old, threeHoursAgo, threeHoursAgo);
+      const { adapter, outputs } = await startReal();
+      expect(
+        outputs.some(
+          (output) =>
+            output.type !== 'sync.ready' &&
+            output.sessionKey === `claude-code:${ID(2)}`,
+        ),
+      ).toBe(false);
+
+      // (a) A recent session's transcript.
+      appendFileSync(
+        path.join(projectDir(), `${ID(1)}.jsonl`),
+        line({
+          type: 'user',
+          timestamp: now(),
+          message: { role: 'user', content: '' },
+        }),
+      );
+      await arrives(
+        outputs,
         (output) =>
-          output.type !== 'sync.ready' &&
-          output.sessionKey === `claude-code:${ID(2)}`,
-      ),
-    ).toBe(false);
+          output.sessionKey === `claude-code:${ID(1)}` &&
+          output.type === 'turn.start' &&
+          output.replay !== true,
+      );
 
-    // (a) A recent session's transcript.
-    appendFileSync(
-      path.join(projectDir(), `${ID(1)}.jsonl`),
-      line({
-        type: 'user',
-        timestamp: now(),
-        message: { role: 'user', content: '' },
-      }),
-    );
-    await arrives(
-      outputs,
-      (output) =>
-        output.sessionKey === `claude-code:${ID(1)}` &&
-        output.type === 'turn.start' &&
-        output.replay !== true,
-    );
+      // (b) A subagent's transcript, three folders down: its tool call is
+      // the parent's.
+      appendFileSync(
+        path.join(projectDir(), ID(3), 'subagents', 'agent-fixture-1.jsonl'),
+        line({
+          type: 'assistant',
+          timestamp: now(),
+          message: {
+            role: 'assistant',
+            stop_reason: 'tool_use',
+            content: [{ type: 'tool_use', id: 'toolu_watch_1', name: 'Bash' }],
+          },
+        }),
+      );
+      await arrives(
+        outputs,
+        (output) =>
+          output.sessionKey === `claude-code:${ID(3)}` &&
+          output.type === 'tool.start' &&
+          output.toolCallId === 'toolu_watch_1',
+      );
 
-    // (b) A subagent's transcript, three folders down: its tool call is
-    // the parent's.
-    appendFileSync(
-      path.join(projectDir(), ID(3), 'subagents', 'agent-fixture-1.jsonl'),
-      line({
-        type: 'assistant',
-        timestamp: now(),
-        message: {
-          role: 'assistant',
-          stop_reason: 'tool_use',
-          content: [{ type: 'tool_use', id: 'toolu_watch_1', name: 'Bash' }],
+      // (c) The old transcript: picked up, replayed from its tail.
+      appendFileSync(
+        old,
+        line({
+          type: 'user',
+          timestamp: now(),
+          message: { role: 'user', content: '' },
+        }),
+      );
+      await arrives(
+        outputs,
+        (output) =>
+          output.sessionKey === `claude-code:${ID(2)}` &&
+          output.type === 'turn.start' &&
+          output.replay === true,
+      );
+
+      await stopReal(adapter);
+    },
+    REAL_WATCH_TEST_MS,
+  );
+
+  it(
+    'the projects folder removed: missing; back with a transcript: ok, and the session appears',
+    async () => {
+      const { adapter, outputs, state } = await startReal();
+      expect(state.health).toBe('ok');
+
+      rmSync(root, { recursive: true, force: true });
+      await vi.waitFor(
+        () => {
+          expect(state.health, diagnose(outputs, state.health)).toBe('missing');
         },
-      }),
-    );
-    await arrives(
-      outputs,
-      (output) =>
-        output.sessionKey === `claude-code:${ID(3)}` &&
-        output.type === 'tool.start' &&
-        output.toolCallId === 'toolu_watch_1',
-    );
+        { timeout: REAL_WATCH_WAIT_MS, interval: 20 },
+      );
 
-    // (c) The old transcript: picked up, replayed from its tail.
-    appendFileSync(
-      old,
-      line({
-        type: 'user',
-        timestamp: now(),
-        message: { role: 'user', content: '' },
-      }),
-    );
-    await arrives(
-      outputs,
-      (output) =>
-        output.sessionKey === `claude-code:${ID(2)}` &&
-        output.type === 'turn.start' &&
-        output.replay === true,
-    );
+      const id = 'eeeeeeee-0000-4000-8000-000000000001';
+      mkdirSync(projectDir(), { recursive: true });
+      writeFileSync(
+        path.join(projectDir(), `${id}.jsonl`),
+        line({
+          type: 'user',
+          timestamp: now(),
+          cwd: '/fixture/project',
+          message: { role: 'user', content: '' },
+        }),
+      );
+      await vi.waitFor(
+        () => {
+          expect(state.health, diagnose(outputs, state.health)).toBe('ok');
+        },
+        { timeout: REAL_WATCH_WAIT_MS, interval: 20 },
+      );
+      await arrives(
+        outputs,
+        (output) =>
+          output.sessionKey === `claude-code:${id}` &&
+          output.type === 'turn.start',
+      );
 
-    await stopReal(adapter);
-  }, 20_000);
-
-  it('the projects folder removed: missing; back with a transcript: ok, and the session appears', async () => {
-    const { adapter, outputs, state } = await startReal();
-    expect(state.health).toBe('ok');
-
-    rmSync(root, { recursive: true, force: true });
-    await vi.waitFor(
-      () => {
-        expect(state.health).toBe('missing');
-      },
-      { timeout: 5000, interval: 20 },
-    );
-
-    const id = 'eeeeeeee-0000-4000-8000-000000000001';
-    mkdirSync(projectDir(), { recursive: true });
-    writeFileSync(
-      path.join(projectDir(), `${id}.jsonl`),
-      line({
-        type: 'user',
-        timestamp: now(),
-        cwd: '/fixture/project',
-        message: { role: 'user', content: '' },
-      }),
-    );
-    await vi.waitFor(
-      () => {
-        expect(state.health).toBe('ok');
-      },
-      { timeout: 5000, interval: 20 },
-    );
-    await arrives(
-      outputs,
-      (output) =>
-        output.sessionKey === `claude-code:${id}` &&
-        output.type === 'turn.start',
-    );
-
-    await stopReal(adapter);
-  }, 20_000);
+      await stopReal(adapter);
+    },
+    REAL_WATCH_TEST_MS,
+  );
 });
