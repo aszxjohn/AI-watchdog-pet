@@ -63,6 +63,17 @@ module.exports = {
       },
     },
     {
+      name: 'jsonl-core-not-to-source-adapters',
+      comment:
+        "The shared JSON Lines adapter core is source-agnostic (Story 2.6): src/main/detection/adapters/jsonl must not import any source's adapter folder; each source hands its own rules in as options.",
+      severity: 'error',
+      from: { path: '^src/main/detection/adapters/jsonl/' },
+      to: {
+        path: '^src/main/detection/adapters/',
+        pathNot: '^src/main/detection/adapters/jsonl/',
+      },
+    },
+    {
       name: 'preload-only-electron-and-shared',
       comment:
         'Sandboxed preloads can load only electron and their own bundle (AD-2, AD-24): no Node built-ins, no other packages.',

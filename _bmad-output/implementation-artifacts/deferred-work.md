@@ -166,3 +166,12 @@
 - source_spec: none
   summary: Story 2.4 的狀態檔部分：讀 `~/.claude/sessions/<pid>.json`（只讀檔名符合 `^\d+\.json$`、只取允許的 7 個欄位）取得精確的「要你批准」與行程結束（`session.end`），狀態檔不可用時健康標 `degraded` 並退回推測，`claude-code` 的能力表改成依狀態檔是否可用而定
   evidence: 使用者 2026-11-10 選擇把 Story 2.4 拆成兩段，先做 transcript。2026-11-10 以結構調查（只看欄位名與代碼）確認：本機 9 個狀態檔的 `status` 只有 `idle`、`busy`，沒有任何 `waitingFor`，所以「等批准」時狀態檔長什麼樣子還沒有樣本。做這段之前，要使用者在非 auto 模式的 Claude Code session 停在批准畫面時取一份樣本。`/clear` 讓舊 session 結束、行程結束，也要靠這段的 `sessionId` 與 pid。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-5-codex-cli-adapter.md`
+  summary: Story 2.5 Codex CLI 轉接器：規格草稿已寫好（含從 2.4 抽出共用讀檔模組），等使用者跑 Codex 樣本後，核對對照表、定稿、實作
+  evidence: 使用者 2026-11-11 決定先做 2.6 Gemini，2.5 留在 draft。本機原本沒有 `~/.codex`；曾裝過 Codex CLI 0.167.1 但沒有執行，使用者要求後已移除（`~/.codex` 從未產生）。格式依據是 `openai/codex` commit `5228d94a27b7f84cae4854acbb5ea3b3e90dfeaf` 的原始碼調查，未經真實樣本驗證，尤其是「跳出批准時工具呼叫是否已寫進紀錄」（推測靠這點）。回來做時，照規格草稿裡的樣本清單跑（一般的一輪、等 15 秒的批准、Esc 中斷、`/rename`、`/plan` 提問、`/new`、可選的 subagent）。若 2.6 先抽出了共用讀檔模組，2.5 的 Code Map 要改成直接使用它。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-6-jsonl-adapter-core.md`
+  summary: Story 2.6 本體：Gemini CLI 轉接器與推測一輪結束（`turn.reply`、推測的 `turn.end`、能力表新欄位），規格草稿在 `spec-2-6-gemini-cli-adapter.md`
+  evidence: 使用者 2026-11-11 在規格約 4000 tokens 時選擇拆開，先做抽共用 JSONL 讀檔核心的重構；Gemini 那份規格的決定（含選 B：有文字的回覆 10 秒沒有新紀錄才推測一輪結束）已寫在草稿的 frozen 區塊，重構完成後接著做。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-6-jsonl-adapter-core.md`
+  summary: 共用 JSONL 核心沒有防護來源提供的回呼丟例外：`follow` 在 chokidar 的 `ignored` 裡丟會讓初次掃描中斷、`sync.ready` 不送；`scan`／`locate`／`gate.allows` 在補讀時丟也不送 `sync.ready`；`translate` 丟會讓同一個檔永遠卡在同一行；`gate.read` 丟會讓該次讀到的事件遺失
+  evidence: Story 2.6 前置重構審查 E1～E4（medium，未發生）。與重構前完全相同，claude-code 的回呼設計上不丟例外；2.4 在 Windows 上的 BigInt `TypeError` 就是第一類。Gemini 轉接器（第二個使用核心的來源）時一併決定：每個回呼包 try/catch、記代碼、跳過該檔或該行，並各加一個丟例外的測試。

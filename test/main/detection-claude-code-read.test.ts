@@ -1,6 +1,8 @@
 /**
- * The Claude Code adapter's file reading (lines across reads, tails) and
- * which paths under the projects folder are transcripts (Story 2.4).
+ * File reading (lines across reads, tails), from the shared JSON Lines
+ * core (adapters/jsonl/read; Story 2.4, shared since Story 2.6), and which
+ * paths under Claude Code's projects folder are transcripts and followed
+ * by the watcher (adapters/claude-code/paths; Story 2.4).
  */
 import { Buffer } from 'node:buffer';
 import path from 'node:path';
@@ -15,24 +17,10 @@ import {
   readRange,
   splitLines,
   tailRead,
-} from '../../src/main/detection/adapters/claude-code/read';
+} from '../../src/main/detection/adapters/jsonl/read';
+import { readAll } from '../helpers/jsonl-adapter';
 
 const bytes = (text: string) => Buffer.from(text, 'utf8');
-
-/** splitLines over `chunks`, one read each; the lines of each read. */
-function readAll(
-  chunks: readonly Uint8Array[],
-  carry: LineCarry = NO_CARRY,
-): { lines: string[][]; carry: LineCarry } {
-  const lines: string[][] = [];
-  let current = carry;
-  for (const chunk of chunks) {
-    const split = splitLines(current, chunk);
-    lines.push([...split.lines]);
-    current = split.carry;
-  }
-  return { lines, carry: current };
-}
 
 describe('splitLines', () => {
   it('gives the complete lines and keeps an incomplete last line for the next read', () => {

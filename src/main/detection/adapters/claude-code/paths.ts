@@ -9,12 +9,24 @@
  *   transcripts, which belongs to session `<id>`.
  */
 import path from 'node:path';
+import {
+  partsBelow,
+  shouldFollow,
+  type WatchedKind,
+  type WatchedStats,
+} from '../jsonl/watcher';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const JSONL = '.jsonl';
 
 const SUBAGENTS = 'subagents';
+
+/**
+ * How many folders below the root the watcher looks: down to the files in
+ * `<cwd>/<id>/subagents/`.
+ */
+export const WATCH_DEPTH = 3;
 
 /** A transcript's kind and the session it belongs to. */
 export interface TranscriptPath {
@@ -28,28 +40,8 @@ function isSessionFile(name: string): boolean {
   return name.endsWith(JSONL) && UUID.test(name.slice(0, -JSONL.length));
 }
 
-/** `file`'s parts below `root`; null when it is not below it. */
-function partsBelow(root: string, file: string): string[] | null {
-  const relative = path.relative(root, file);
-  if (
-    relative === '' ||
-    relative.startsWith('..') ||
-    path.isAbsolute(relative)
-  ) {
-    return null;
-  }
-  return relative.split(path.sep);
-}
-
-/** What transcript `file` is; null when it is none (see the module comment). */
-export function transcriptAt(
-  root: string,
-  file: string,
-): TranscriptPath | null {
-  const parts = partsBelow(root, file);
-  if (parts === null) {
-    return null;
-  }
+/** What transcript the path with `parts` below the root is; null when none. */
+function transcriptOf(parts: readonly string[]): TranscriptPath | null {
   const [, second = '', third, fourth = ''] = parts;
   if (parts.length === 2 && isSessionFile(second)) {
     return { kind: 'main', sessionId: second.slice(0, -JSONL.length) };
@@ -63,6 +55,15 @@ export function transcriptAt(
     return { kind: 'subagent', sessionId: second };
   }
   return null;
+}
+
+/** What transcript `file` is; null when it is none (see the module comment). */
+export function transcriptAt(
+  root: string,
+  file: string,
+): TranscriptPath | null {
+  const parts = partsBelow(root, file);
+  return parts === null ? null : transcriptOf(parts);
 }
 
 /** Whether `name`, in a `<cwd>` folder, is a session's subagent folder's parent. */
@@ -85,25 +86,27 @@ export function isSubagentTranscript(name: string): boolean {
   return name.endsWith(JSONL);
 }
 
-/** What the watcher knows of a path when it asks whether to watch it. */
-export interface WatchedStats {
-  isFile(): boolean;
-  isDirectory(): boolean;
-  /**
-   * A BigInt on Windows: chokidar's readdirp asks for BigInt stats there,
-   * and a BigInt cannot be mixed with numbers (it throws a TypeError).
-   */
-  readonly mtimeMs: number | bigint;
+/**
+ * What the path with `parts` below the root is to the watcher: a
+ * transcript; a folder transcripts live in (`<cwd>` folders, session
+ * folders and their `subagents` folders); or neither.
+ */
+function watchedKind(parts: readonly string[]): WatchedKind {
+  if (transcriptOf(parts) !== null) {
+    return 'transcript';
+  }
+  const [, second = '', third] = parts;
+  return parts.length === 1 ||
+    (parts.length === 2 && UUID.test(second)) ||
+    (parts.length === 3 && UUID.test(second) && third === SUBAGENTS)
+    ? 'folder'
+    : null;
 }
 
 /**
- * Whether the watcher should follow `entry`: the root; `<cwd>` folders,
- * session folders and their `subagents` folders; transcripts modified
- * recently (`recent(mtimeMs)`). Older transcripts are left alone until
- * they change: the folder holding one notices, asks again, and the watcher
- * reports the file as added. That keeps one watch handle per recently used
- * transcript, not one per transcript ever written. Without stats, only the
- * names are checked.
+ * Whether the watcher should follow `entry`: the root, the folders
+ * transcripts live in, and transcripts modified recently (`recent(mtimeMs)`;
+ * see shouldFollow).
  */
 export function shouldWatch(
   root: string,
@@ -111,24 +114,5 @@ export function shouldWatch(
   stats: WatchedStats | undefined,
   recent: (mtimeMs: number) => boolean,
 ): boolean {
-  if (path.relative(root, entry) === '') {
-    return true;
-  }
-  const parts = partsBelow(root, entry);
-  if (parts === null || parts.length > 4) {
-    return false;
-  }
-  const [, second = '', third] = parts;
-  const isTranscript = transcriptAt(root, entry) !== null;
-  const isFolder =
-    parts.length === 1 ||
-    (parts.length === 2 && UUID.test(second)) ||
-    (parts.length === 3 && UUID.test(second) && third === SUBAGENTS);
-  if (stats === undefined) {
-    return isTranscript || isFolder;
-  }
-  if (stats.isFile()) {
-    return isTranscript && recent(Number(stats.mtimeMs));
-  }
-  return stats.isDirectory() && isFolder;
+  return shouldFollow(root, entry, stats, recent, watchedKind);
 }

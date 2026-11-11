@@ -1,9 +1,9 @@
 /**
- * main/detection/adapters/claude-code/read: reading a transcript file a
- * piece at a time (Story 2.4), read-only. A transcript is JSON Lines that
- * Claude Code appends to; a read takes the bytes from where the last one
- * stopped to the file's end. A line is complete once its `\n` is there;
- * the bytes after the last `\n` wait for the next read.
+ * main/detection/adapters/jsonl/read: reading a transcript file a piece at
+ * a time (Story 2.4; shared since Story 2.6), read-only. A transcript is
+ * JSON Lines that an AI tool appends to; a read takes the bytes from where
+ * the last one stopped to the file's end. A line is complete once its `\n`
+ * is there; the bytes after the last `\n` wait for the next read.
  *
  * A tail read (replay) starts REPLAY_TAIL_BYTES before the end, in the
  * middle of a line unless the byte before it is `\n`; that partial line is
@@ -36,7 +36,7 @@ export interface TranscriptFs {
     options: { withFileTypes: true },
   ): readonly TranscriptDirent[];
   statSync(file: string): TranscriptStats;
-  /** The path with symbolic links resolved (for the projects folder). */
+  /** The path with symbolic links resolved (for the records folder). */
   realpathSync(file: string): string;
   openSync(file: string, flags: 'r'): number;
   fstatSync(fd: number): TranscriptStats;

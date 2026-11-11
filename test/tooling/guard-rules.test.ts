@@ -244,6 +244,7 @@ describe('dependency-cruiser rules', () => {
     'src-not-to-prototypes-or-test',
     'src-no-network-modules',
     'adapters-no-processes-or-electron',
+    'jsonl-core-not-to-source-adapters',
     'preload-only-electron-and-shared',
     'overlay-no-react',
     'react-only-in-panels',
@@ -308,6 +309,15 @@ describe('dependency-cruiser rules', () => {
         'node:child_process',
         'node:worker_threads',
         'node:cluster',
+      ),
+      'src/main/detection/adapters/fake/target.ts': target,
+      'src/main/detection/adapters/jsonl/target.ts': target,
+      'src/main/detection/adapters/jsonl/to-source.ts':
+        imports('../fake/target'),
+      'src/main/detection/adapters/jsonl/allowed.ts': imports(
+        './target',
+        '../../../target',
+        '../../../../shared/target',
       ),
       'src/main/runs.ts': imports(
         'node:child_process',
@@ -434,6 +444,11 @@ describe('dependency-cruiser rules', () => {
     ],
     ['not-to-unresolvable', 'src/main/to-missing.ts', './missing'],
     [
+      'jsonl-core-not-to-source-adapters',
+      'src/main/detection/adapters/jsonl/to-source.ts',
+      'src/main/detection/adapters/fake/target.ts',
+    ],
+    [
       'main-ipc-only-windows-environment',
       'src/main/ipc/to-windows.ts',
       'src/main/windows/target.ts',
@@ -484,6 +499,14 @@ describe('dependency-cruiser rules', () => {
   it('adapters-no-processes-or-electron leaves the rest of src/main alone', () => {
     expect(
       violations.filter((v) => v.from === 'src/main/runs.ts'),
+    ).toStrictEqual([]);
+  });
+
+  it('jsonl-core-not-to-source-adapters lets the core import its own folder and the rest of src', () => {
+    expect(
+      violations.filter(
+        (v) => v.from === 'src/main/detection/adapters/jsonl/allowed.ts',
+      ),
     ).toStrictEqual([]);
   });
 

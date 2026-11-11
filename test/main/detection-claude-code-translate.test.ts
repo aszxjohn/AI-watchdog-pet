@@ -1,7 +1,10 @@
 /**
  * The Claude Code adapter's record → event translation (Story 2.4): each
  * row of the spec's mapping table on hand-made records, then every fixture
- * transcript (de-identified real records) as a snapshot.
+ * transcript (de-identified real records) as a snapshot. The lenient
+ * reading tests also cover the record helpers of the shared JSON Lines
+ * core (adapters/jsonl/records: parseRecordLine, timestampOf,
+ * displayNameOf, folderNameOf; shared since Story 2.6).
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -9,16 +12,18 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   currentNameEvent,
-  displayNameOf,
-  folderNameOf,
   NEW_TRANSCRIPT,
-  parseRecordLine,
   type RecordContext,
-  timestampOf,
   type TranscriptKind,
   type TranscriptState,
   translateRecord,
 } from '../../src/main/detection/adapters/claude-code/translate';
+import {
+  displayNameOf,
+  folderNameOf,
+  parseRecordLine,
+  timestampOf,
+} from '../../src/main/detection/adapters/jsonl/records';
 import {
   DETECTION_ID_MAX_LENGTH,
   type DetectionEvent,

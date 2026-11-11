@@ -4,7 +4,8 @@
  * file, clock or log; what it remembers between records of one transcript
  * is the TranscriptState it is handed and returns.
  *
- * Records are read leniently: any JSON object is a record, unknown fields
+ * Records are read leniently (../jsonl/records reads the lines and the
+ * fields every format shares): any JSON object is a record, unknown fields
  * and record types are let through, and a field of the wrong type counts as
  * missing. Every event is `via: 'log'`, `confidence: 'exact'`, and
  * `replay: true` when the record is replayed. Its `ts` is the record's
@@ -54,6 +55,13 @@ import {
   type DetectionEvent,
   type SessionKey,
 } from '../../../../shared/detection-events';
+import {
+  displayNameOf,
+  type Fields,
+  folderNameOf,
+  isObject,
+  timestampOf,
+} from '../jsonl/records';
 
 /** The texts of the record Claude Code writes when the user interrupts. */
 export const INTERRUPT_TEXTS: readonly string[] = Object.freeze([
@@ -117,28 +125,6 @@ export interface Translation {
   readonly events: readonly DetectionEvent[];
 }
 
-type Fields = Readonly<Record<string, unknown>>;
-
-function isObject(value: unknown): value is Fields {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** The record's `timestamp` in epoch ms, or null when it has none usable. */
-export function timestampOf(record: Fields): number | null {
-  const value = record.timestamp;
-  const ms =
-    typeof value === 'string'
-      ? Date.parse(value)
-      : typeof value === 'number'
-        ? value
-        : Number.NaN;
-  if (!Number.isFinite(ms) || ms < 0) {
-    return null;
-  }
-  const whole = Math.floor(ms);
-  return Number.isSafeInteger(whole) ? whole : null;
-}
-
 /** `value` if it can be an id or tool name; null otherwise. */
 function idOf(value: unknown): string | null {
   return typeof value === 'string' &&
@@ -146,37 +132,6 @@ function idOf(value: unknown): string | null {
     value.length <= DETECTION_ID_MAX_LENGTH
     ? value
     : null;
-}
-
-/**
- * `value` trimmed and cut to DETECTION_ID_MAX_LENGTH (never in the middle
- * of a surrogate pair), if it is a non-blank string; null otherwise.
- */
-export function displayNameOf(value: unknown): string | null {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const trimmed = value.trim();
-  if (trimmed === '') {
-    return null;
-  }
-  if (trimmed.length <= DETECTION_ID_MAX_LENGTH) {
-    return trimmed;
-  }
-  const cut = trimmed.slice(0, DETECTION_ID_MAX_LENGTH);
-  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
-}
-
-/**
- * The name of the folder `cwd` names: its last part (`/Users/me/proj` and
- * `C:\Users\me\proj` give `proj`); `/` stays `/`.
- */
-export function folderNameOf(cwd: unknown): string | null {
-  if (typeof cwd !== 'string') {
-    return null;
-  }
-  const last = cwd.split(/[\\/]+/).findLast((part) => part !== '');
-  return displayNameOf(last ?? cwd);
 }
 
 /** The content blocks of the record's message; null when it has no list. */
@@ -417,17 +372,4 @@ export function currentNameEvent(
     ...commonFields(context, state.latestTs ?? context.fallbackTs),
     displayName: state.name,
   };
-}
-
-/**
- * One line of a transcript as a record: the JSON object it holds, or null
- * when it is not one (a bad line). Never throws.
- */
-export function parseRecordLine(line: string): Fields | null {
-  try {
-    const value: unknown = JSON.parse(line);
-    return isObject(value) ? value : null;
-  } catch {
-    return null;
-  }
 }

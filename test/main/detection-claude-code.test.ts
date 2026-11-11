@@ -20,11 +20,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AdapterContext } from '../../src/main/detection/adapter';
 import { createClaudeCodeAdapter } from '../../src/main/detection/adapters/claude-code/claude-code';
-import type { TranscriptFs } from '../../src/main/detection/adapters/claude-code/read';
-import type {
-  WatchHandlers,
-  WatchTranscripts,
-} from '../../src/main/detection/adapters/claude-code/watcher';
+import type { TranscriptFs } from '../../src/main/detection/adapters/jsonl/read';
 import {
   createDetection,
   type Detection,
@@ -45,6 +41,7 @@ import {
 import type { AdapterHealth } from '../../src/shared/sources';
 import type { StageViewDetectionSections } from '../../src/shared/stage-view';
 import { fakeClock, type FakeClock } from '../helpers/fake-clock';
+import { fakeWatcher } from '../helpers/jsonl-adapter';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -62,39 +59,6 @@ let clock: FakeClock;
 let watcher: ReturnType<typeof fakeWatcher>;
 let heard: Partial<StageViewDetectionSections>[];
 let consoleCalls: () => string[];
-
-/** The fake watcher: tests fire its handlers by hand. */
-function fakeWatcher() {
-  let handlers: WatchHandlers | undefined;
-  const state = {
-    started: 0,
-    closed: 0,
-    root: undefined as string | undefined,
-    follow: undefined as Parameters<WatchTranscripts>[1] | undefined,
-    throws: false,
-  };
-  const watch: WatchTranscripts = (watchedRoot, follow, on) => {
-    state.started += 1;
-    if (state.throws) {
-      throw Object.assign(new Error('no watcher'), { code: 'EMFILE' });
-    }
-    state.root = watchedRoot;
-    state.follow = follow;
-    handlers = on;
-    return {
-      close: async () => {
-        state.closed += 1;
-      },
-    };
-  };
-  const on = (): WatchHandlers => {
-    if (handlers === undefined) {
-      throw new Error('the watcher was not started');
-    }
-    return handlers;
-  };
-  return { watch, state, on };
-}
 
 /** main/settings as detection sees it. */
 function fakeSettings() {
@@ -896,6 +860,35 @@ describe('the projects folder missing', () => {
     old.changed(transcript(A));
     write(transcript(A), rec.prompt());
     expect(states(detection)).toStrictEqual([`${KEY_A} thinking`]);
+  });
+
+  it("removed while running: the sessions read before are forgotten, so a subagent waits until its session's own transcript is read again", () => {
+    const { emitted } = startAdapter();
+    watcher.on().ready();
+    append(transcript(A), [rec.prompt()]);
+    watcher.on().added(transcript(A));
+    // A's own transcript drops out of the discovery window: not replayed.
+    const old = new Date(clock.wall() - 3 * HOUR);
+    utimesSync(transcript(A), old, old);
+    append(subagent(A), [rec.activity()]);
+
+    watcher.on().folderRemoved(root);
+    clock.advance(RECORDS_FOLDER_RECHECK_MS);
+    const before = emitted.length;
+    watcher.on().ready();
+
+    expect(consoleCalls()).toContain(
+      '[detection] claude-code: replayed 0 transcripts modified within the discovery window (0 sessions, 1 subagents; 2 transcripts in all)',
+    );
+    expect(
+      emitted
+        .slice(before)
+        .flatMap((batch) =>
+          batch.outputs.filter(
+            (o) => o.type !== 'sync.ready' && o.sessionKey === KEY_A,
+          ),
+        ),
+    ).toStrictEqual([]);
   });
 
   it('a symbolically linked projects folder is watched at its real path', () => {

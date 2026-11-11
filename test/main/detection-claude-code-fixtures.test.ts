@@ -8,17 +8,14 @@
  *   fixtures, leaves every file exactly as it was, and opens only
  *   transcripts, to read.
  */
-import { createHash } from 'node:crypto';
 import nodeFs, {
   appendFileSync,
   cpSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
-  statSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -36,31 +33,25 @@ import {
 } from '../../scripts/deidentify-claude-code.mjs';
 import type { AdapterContext } from '../../src/main/detection/adapter';
 import { createClaudeCodeAdapter } from '../../src/main/detection/adapters/claude-code/claude-code';
-import type { TranscriptFs } from '../../src/main/detection/adapters/claude-code/read';
+import type { TranscriptFs } from '../../src/main/detection/adapters/jsonl/read';
 import type { AdapterOutput } from '../../src/shared/detection-events';
 import type { AdapterHealth } from '../../src/shared/sources';
 import { SETTINGS_DEFAULTS } from '../../src/shared/settings';
-
-/**
- * How long the tests with the real watcher wait for one thing, and how long
- * each may take in all. Generous: chokidar's first scan is much slower on
- * the Windows CI runner than on macOS.
- */
-const REAL_WATCH_WAIT_MS = 20_000;
-const REAL_WATCH_TEST_MS = 60_000;
+import {
+  arrives,
+  diagnose,
+  filesUnder,
+  fingerprintFiles,
+  REAL_WATCH_TEST_MS,
+  REAL_WATCH_WAIT_MS,
+  startReal,
+  stopReal,
+} from '../helpers/jsonl-adapter';
 
 const FIXTURES = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   '../fixtures/claude-code',
 );
-
-/** Every file under `dir`, relative, sorted. */
-function filesUnder(dir: string): string[] {
-  return readdirSync(dir, { recursive: true })
-    .map(String)
-    .filter((file) => statSync(path.join(dir, file)).isFile())
-    .sort();
-}
 
 describe('the fixtures', () => {
   const files = filesUnder(FIXTURES);
@@ -282,46 +273,8 @@ describe('the whole adapter on a copy of the fixtures, real watcher included', (
     });
   });
 
-  /**
-   * What the adapter did so far, for a failure message (the CI log of a
-   * Windows run is not public, its annotations are): how many outputs of
-   * each type, the health last reported, and the `detection` log lines
-   * (codes and counts only).
-   */
-  function diagnose(
-    outputs: readonly AdapterOutput[],
-    health?: AdapterHealth,
-  ): string {
-    const types = new Map<string, number>();
-    for (const output of outputs) {
-      types.set(output.type, (types.get(output.type) ?? 0) + 1);
-    }
-    const logged = [console.info, console.warn, console.error].flatMap(
-      (method) =>
-        vi
-          .mocked(method)
-          .mock.calls.map((call) => String(call[0]))
-          .filter((line) => line.includes('[detection]')),
-    );
-    return [
-      `platform ${process.platform}`,
-      `health ${health ?? 'none'}`,
-      `outputs ${JSON.stringify([...types])}`,
-      `log ${JSON.stringify(logged)}`,
-    ].join('; ');
-  }
-
   /** Each file's path, size, modification time and content hash. */
-  function fingerprint(): string[] {
-    return filesUnder(tmp).map((file) => {
-      const full = path.join(tmp, file);
-      const stats = statSync(full);
-      const hash = createHash('sha256')
-        .update(readFileSync(full))
-        .digest('hex');
-      return `${file} ${stats.size} ${stats.mtimeMs} ${hash}`;
-    });
-  }
+  const fingerprint = () => fingerprintFiles(tmp);
 
   it(
     'the whole adapter, real watcher included, changes nothing and opens only transcripts, to read',
@@ -422,68 +375,10 @@ describe('the whole adapter on a copy of the fixtures, real watcher included', (
     REAL_WATCH_TEST_MS,
   );
 
-  /**
-   * The adapter on the copy, with a recheck timer of a few milliseconds;
-   * what it emitted, and its health as last reported.
-   */
-  async function startReal() {
-    const outputs: AdapterOutput[] = [];
-    const state = { health: undefined as AdapterHealth | undefined };
-    const context: AdapterContext = {
-      emit(batch, health) {
-        outputs.push(...batch);
-        if (health !== undefined) {
-          state.health = health;
-        }
-      },
-      timings: () => SETTINGS_DEFAULTS,
-      wallNow: Date.now,
-      setTimer: (run) => setTimeout(run, 20),
-      clearTimer: (handle) => {
-        clearTimeout(handle as ReturnType<typeof setTimeout>);
-      },
-    };
-    const adapter = createClaudeCodeAdapter({ root });
-    adapter.start(context);
-    await vi.waitFor(
-      () => {
-        expect(
-          outputs.some((output) => output.type === 'sync.ready'),
-          diagnose(outputs, state.health),
-        ).toBe(true);
-      },
-      { timeout: REAL_WATCH_WAIT_MS, interval: 20 },
-    );
-    return { adapter, outputs, state };
-  }
-
-  async function stopReal(adapter: { stop(): void }) {
-    adapter.stop();
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-
   const ID = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
   const projectDir = () => path.join(root, '-fixture-project');
   const line = (record: unknown) => `${JSON.stringify(record)}\n`;
   const now = () => new Date().toISOString();
-
-  /** Waits until an output for `sessionKey` matches `match`. */
-  async function arrives(
-    outputs: AdapterOutput[],
-    match: (output: Exclude<AdapterOutput, { type: 'sync.ready' }>) => boolean,
-  ) {
-    await vi.waitFor(
-      () => {
-        expect(
-          outputs.some(
-            (output) => output.type !== 'sync.ready' && match(output),
-          ),
-          diagnose(outputs),
-        ).toBe(true);
-      },
-      { timeout: REAL_WATCH_WAIT_MS, interval: 20 },
-    );
-  }
 
   it(
     'after the sync it reads appends to a session, to a subagent, and to a transcript too old to replay',
@@ -492,7 +387,9 @@ describe('the whole adapter on a copy of the fixtures, real watcher included', (
       const old = path.join(projectDir(), `${ID(2)}.jsonl`);
       const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000);
       utimesSync(old, threeHoursAgo, threeHoursAgo);
-      const { adapter, outputs } = await startReal();
+      const { adapter, outputs } = await startReal(
+        createClaudeCodeAdapter({ root }),
+      );
       expect(
         outputs.some(
           (output) =>
@@ -565,7 +462,9 @@ describe('the whole adapter on a copy of the fixtures, real watcher included', (
   it(
     'the projects folder removed: missing; back with a transcript: ok, and the session appears',
     async () => {
-      const { adapter, outputs, state } = await startReal();
+      const { adapter, outputs, state } = await startReal(
+        createClaudeCodeAdapter({ root }),
+      );
       expect(state.health).toBe('ok');
 
       rmSync(root, { recursive: true, force: true });
