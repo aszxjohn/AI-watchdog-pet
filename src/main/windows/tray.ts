@@ -6,11 +6,15 @@
  *
  * If the icon cannot be created, that is logged and the app keeps running:
  * launching it again still opens the main panel.
+ *
+ * The 示範模式 check mark follows main/detection (showTrayDemoState), so it
+ * agrees with a change made from the canvas menu on the demo session.
  */
-import { Tray } from 'electron';
+import { type Menu, Tray } from 'electron';
 import { PRODUCT_NAME } from '../../shared/constants';
+import type { StateCode } from '../../shared/states';
 import { errorCode, logEvent } from '../log/run-log';
-import { buildTrayMenu, type TrayMenuActions } from './menu';
+import { buildTrayMenu, checkDemoItem, type TrayMenuActions } from './menu';
 import { createTrayIcon } from './tray-icon';
 
 /** Tooltip of the tray icon. */
@@ -21,6 +25,8 @@ export const TRAY_TOOLTIP = PRODUCT_NAME;
  * disappears from the menu bar.
  */
 let tray: Tray | undefined;
+/** The tray's menu, whose 示範模式 check mark showTrayDemoState() moves. */
+let trayMenu: Menu | undefined;
 
 /**
  * Creates the tray icon and its menu. Returns undefined, after logging why,
@@ -41,6 +47,7 @@ export function createTray(
       });
     }
     tray = created;
+    trayMenu = menu;
     logEvent('windows', 'tray icon created');
     return created;
   } catch (error) {
@@ -56,4 +63,27 @@ export function createTray(
 /** The tray created by createTray, if any. */
 export function currentTray(): Tray | undefined {
   return tray;
+}
+
+/**
+ * Moves the tray's 示範模式 check mark to `state` (null: 關閉), the demo
+ * session's state as main/detection reports it, and sets the menu again so
+ * every platform shows the change (Linux needs that). Nothing when there is
+ * no tray or the mark is already there; a failure is logged.
+ */
+export function showTrayDemoState(state: StateCode | null): void {
+  if (tray === undefined || trayMenu === undefined) {
+    return;
+  }
+  try {
+    if (checkDemoItem(trayMenu, state)) {
+      tray.setContextMenu(trayMenu);
+    }
+  } catch (error) {
+    logEvent(
+      'windows',
+      `tray demo mode check mark could not be moved (${errorCode(error)})`,
+      'error',
+    );
+  }
 }

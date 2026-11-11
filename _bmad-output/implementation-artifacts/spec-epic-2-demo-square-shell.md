@@ -2,7 +2,8 @@
 title: 'Epic 2 驗收用：示範模式的方塊角色空殼與右鍵選單'
 type: 'feature'
 created: '2026-11-10'
-status: 'ready-for-dev'
+status: 'done'
+baseline_commit: 'd34985798f513d09d1819b71b641103ccc9b8998'
 route: 'dispatch'
 review_loop_iteration: 0
 context:
@@ -98,12 +99,12 @@ context:
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `src/shared/ipc.ts`、`src/shared/preload-api.ts`、`src/preload/overlay.ts`：兩個通道與 API。
-- [ ] `src/overlay/pointer.ts`、`demo-square.ts`、`main.ts`：hit-test、方塊、右鍵。
-- [ ] `src/main/windows/canvas-window.ts`、`menu.ts`：穿透切換、`seq`、選單。
-- [ ] `src/main/main.ts`（以及必要時的 `detection.ts`）：接線。
-- [ ] 測試：I/O 矩陣每一列（繪圖除外），以及新 schema 的往返與拒絕。
-- [ ] `deferred-work.md`：加一筆「Epic 3 真角色上畫布後移除方塊空殼，保留 `pointer.ts` 與兩個通道」。
+- [x] `src/shared/ipc.ts`、`src/shared/preload-api.ts`、`src/preload/overlay.ts`：兩個通道與 API。
+- [x] `src/overlay/pointer.ts`、`demo-square.ts`、`main.ts`：hit-test、方塊、右鍵。
+- [x] `src/main/windows/canvas-window.ts`、`menu.ts`：穿透切換、`seq`、選單。
+- [x] `src/main/main.ts`（以及必要時的 `detection.ts`）：接線。
+- [x] 測試：I/O 矩陣每一列（繪圖除外），以及新 schema 的往返與拒絕。
+- [x] `deferred-work.md`：加一筆「Epic 3 真角色上畫布後移除方塊空殼，保留 `pointer.ts` 與兩個通道」。
 
 **Acceptance Criteria:**
 - Given 這項工作完成，when 執行 `npm run typecheck`、`npm run lint`、`npm test`、`npm run depcruise`，then 全部通過。
@@ -111,9 +112,54 @@ context:
 
 ## Implementation Notes
 
+- 開發代理對規格沒寫明之處的解讀：
+  - `canvas:set-hover` 的 `seq` 用 `z.int().positive()`（1 到 2^53−1）；`canvas:context-menu` 的請求是 `{ sessionKey }`，preload 的 `contextMenu(sessionKey)` 包成物件送出。
+  - main 只接受「目前畫布視窗的頁面」送來的請求：`CanvasWindowHandle.webContents` 加 `id`，與 IPC 事件的 `sender.id` 比對；重建前的舊頁面送來的一律丟掉。`createCanvasWindows` 改成泛型，`main.ts` 拿到的是 `BrowserWindow`，可直接給 `Menu.popup({ window })`。
+  - 冪等：`seq` 比上一筆大就收下（即使 `over` 沒變也更新 `seq`），但只有 `over` 改變時才呼叫 `setIgnoreMouseEvents`。過時的請求不記紀錄。
+  - 「畫布頁面重新載入」用 `webContents` 的 `did-navigate`（主框架導覽完成，含重新載入）判斷：`seq` 歸零，當時不穿透的話恢復 `setClickThrough`。重建時新視窗本來就從穿透、`seq` 0 開始。
+  - 右鍵是否為示範 session 的判斷放在 `menu.ts` 的 `openCanvasMenu`（可單獨測試）；`main.ts` 只提供 `DEMO_SESSION_KEY`、目前狀態（`demoStateOf(detection.get().sessions)`）與 `detection.setDemo`，`main/windows` 不 import `main/detection`。不是示範 session 記 `windows` warn（只記來源代碼，不記原生 id）；示範模式已關閉但方塊還沒消失時的右鍵，也不跳選單、記一筆 warn。
+  - 右鍵選單的 8 個狀態項目與系統匣子選單共用 `demoStateItems`（radio，id 同為 `demo-<state>`），下面是分隔線與一般項目「關閉示範模式」（id `demo-turn-off`）。
+  - 系統匣勾選同步：`detection.ts` 新增純函式 `demoStateOf(sessions)` 與 `watchDemoState(detection, listener)`（只在示範狀態真的改變時通知；「休息中」的結束再開在同一次通知內，不會出現中間的 null）。`main.ts` 在 `startupStep('tray')` 內接上 `showTrayDemoState`：用 `getMenuItemById` 設 `checked`，有移動才重設 `tray.setContextMenu`（Linux 要重設才會顯示；勾選已在原位時不重設）。
+  - overlay：`pointer.ts` 是純函式的狀態機（`pointerMoved`、`pointerLeft`、`areasChanged`），回傳下一個狀態與要送的請求。可點區域改變而游標沒動時，只會送「不在」：方塊在靜止游標下出現不會關閉穿透，等下一次移動，因為最後的游標位置可能已經過時（forward 的移動在視窗邊緣就停了），過時的「在上面」會擋住底下視窗的點擊。
+  - 方塊太小的世界（寬小於 144 DIP 或高小於 216 DIP）把方塊夾在左上邊緣，不畫到畫面外。標籤字型 `sans-serif` 22 粗體；深色字用 `#212121`。
+  - overlay 只在方塊有變（出現、改狀態、跟著世界移動、消失）時重畫並 `app.render()` 一次；PixiJS 的 resize plugin 在視窗大小改變後會自己再 render。
+- 審查修補（主 session 交辦，7 項）：
+  - 滑鼠與 IPC 的狀態和接線從 `src/overlay/main.ts` 移到新的 `src/overlay/canvas-input.ts`（不含 DOM／PixiJS 型別，`api`、`draw` 由外部傳入），`main.ts` 只轉送 `clientX/clientY` 並依回傳值 `preventDefault`；測試在 `test/overlay/canvas-input.test.ts`。
+  - 畫布初始化完成（`onCanvasReady`）並真的畫出方塊之前，可點區域保持為空；`initCanvas` 失敗時永遠不會有看不見的 120×120 區域攔截滑鼠或開選單。
+  - 右鍵送出選單請求後，視同游標離開（`pointerLeft`，送下一個 `seq` 的 `over: false`）：原生選單關掉後，不會因 overlay 還以為游標在方塊上而吞掉一次點擊，下一次移動再重新判定。
+  - 畫布頁面 `unresponsive` 時，若是目前視窗且不穿透，main 恢復 `setClickThrough`、`over` 改為 false、`seq` 保留，並記一筆 `windows` warn。
+  - `approval`、`done` 也改用深色字（白字對比只有約 2.8:1、2.2:1）：深色字現在是 `approval`、`decision`、`done`、`waiting`。這改了 Design Notes「文字用白色；decision、waiting 改用深色字」的寫法。
+  - 方塊離右緣 24 DIP，離下緣改為 96 DIP（`DEMO_SQUARE_BOTTOM_MARGIN`），避開 Windows 工作列（48 DIP）與 macOS 底部 Dock；依工作區域放置留給 Epic 3 的角色。這改了 Code Map「距邊緣 24 DIP」的寫法。
+  - `pointer.ts` 改用 shared 的 `CanvasHover` 型別（`import type`），刪掉重複的 `HoverRequest`。
+- 驗證：開發代理跑過 `npm run typecheck`、`npm run lint`、`npm test`（42 個檔案、1929 個測試，基準 1788）、`npm run depcruise`（0 違規），全部通過。I/O 矩陣：出現／跟著變／消失在 `test/overlay/demo-square.test.ts`；移到方塊上／移開／消失時送「不在」在 `test/overlay/pointer.test.ts`；main 端的切換、冪等、過時、畫布重載與重建、Linux 不切換、壞請求在 `test/main/windows-canvas.test.ts`；右鍵選單內容、從選單選、不是示範 session、兩個入口同步（含以真的 `createDetection` 照 `main.ts` 接線的端到端測試）在 `test/main/windows-tray.test.ts`；`watchDemoState` 在 `test/main/detection.test.ts`；`main.ts` 接線在 `test/main/windows-main.test.ts`；新 schema 的往返與拒絕在 `test/shared/ipc.test.ts`，preload 到 main 在 `test/preload/overlay.test.ts`。PixiJS 繪圖與 DOM 事件（`overlay/main.ts`）沒有單元測試。
+- 用隔離的 `--user-data-dir`（scratchpad 暫存資料夾）跑 `npm start`：`canvas ready (renderer webgl, 1920x1080)`，等過 `syncTimeoutMs` 後 run log 沒有 `windows`、`detection`、`stage-view` 錯誤，console 也沒有錯誤，之後停止，沒有殘留行程。畫布、方塊與系統匣沒有實際操作（無法自動化、不截圖），使用者驗收那幾項尚未做。
+- 主 session 核對：讀過 `d349857` 以來的完整 diff，6 項任務與 2 條驗收條件都已完成。重跑 typecheck、lint、`npm test`（42 個檔案、1929 個測試、0 跳過）、depcruise（0 違規），全部通過；I/O 矩陣 12 列都有測試並已執行。開發代理在 `deferred-work.md` 既有的兩筆（方塊空殼、系統匣勾選同步）後面加了「已解決」；依「只增不改」的規則已還原，兩筆由本規格解決，記錄在此。`npm ci` 因 npm 快取寫入權限失敗，worktree 的 `node_modules` 是從主資料夾以 APFS 複製（lockfile 相同）。
+- 主 session 修補後核對：讀過 `src/overlay/canvas-input.ts` 與 `main.ts` 的接線，7 項修補都已到位。重跑 typecheck、lint、`npm test`（43 個檔案、1946 個測試）、depcruise（0 違規），全部通過。
+
 ## Spec Change Log
 
 ## Review Triage Log
+
+第 1 輪（2026-11-10）。審查員代號：VG＝verification-gap，B＝blind-hunter，E＝edge-case-hunter。
+
+| # | 發現 | 判定 | 處理 | 依據 |
+|---|---|---|---|---|
+| VG1、B8 | `overlay/main.ts` 的滑鼠與 IPC 接線（`apply` 保存狀態、`showView` 送「不在」、`mousemove`／`contextmenu` 用 client 座標）沒有任何測試實際跑過 | medium | patch | gap 預先驗證：只有 `guard-rules.test.ts` 讀這個檔的原始碼；`pointer.test.ts`、`demo-square.test.ts` 在測試裡自己串起純函式。比照 `start.ts`，把接線抽成注入 api 的模組再測 |
+| B1、E1、E8 | 畫布還沒畫好（`initCanvas` 尚未完成或失敗）時，可點區域照樣設定：右下角一塊看不見的區域會關掉穿透、右鍵也會跳選單 | medium | patch | 程式確認：`start.ts` 先訂閱 StageView 再初始化畫布，`showView` 設定 `areas` 不看 `drawing` |
+| B2 | 右鍵選單關閉後，overlay 仍以為游標在方塊上、main 維持不穿透；下一次移動前，選單項目所在位置的點擊會被畫布吃掉 | low | patch | 程式確認：選單開著時 overlay 收不到移動，選完後方塊與區域沒變，`areasChanged` 不送請求。修法是送出右鍵請求後，overlay 視同游標離開（送 `over: false`），下一次移動再重新判定 |
+| B3、E4 | overlay 卡住（renderer 無回應）時若正好不穿透，整個螢幕的點擊都被吃掉，送不出 `over: false` | medium | patch | 改動前畫布永遠穿透，這是新出現的失敗方式；`BrowserWindow` 有 `unresponsive` 事件可以恢復穿透 |
+| B7 | `done`（綠）、`approval`（橘）的白字對比度約 2.2:1、2.8:1，不好辨識 | low | patch | 對比度計算確認；驗收第一步就要看「要你批准」。改用深色字，與 `decision`、`waiting` 相同 |
+| B12 | `pointer.ts` 的 `HoverRequest` 與 `src/shared/ipc.ts` 的 `CanvasHover` 重複定義 | low | patch | 改成 `import type`，之後改一邊不會分歧 |
+| E7 | 方塊距底邊只有 24 DIP：Windows 工作列、macOS 下方的 Dock 會蓋住方塊下半部，右鍵點到工作列或 Dock | medium | patch | 畫布視窗涵蓋整個螢幕（不扣工作區），Windows 工作列預設 48 DIP 高、橫跨整個底邊。最小修法是加大底邊距離；用工作區定位要在 StageView 加欄位，留給 Epic 3 的真角色 |
+| E5、E6、E9 | `idleMs` 與 `sessionExpireMs` 都設成 1 小時（範圍允許）時，選「休息中」的示範 session 會立刻逾時：方塊消失、系統匣勾選跳回「關閉」，示範轉接器卻還在跑 | low | defer | 程式確認：Story 2.3 的「休息中」把時間回推 `idleMs`，兩者相等時逾時點就是現在。這是 2.3 示範轉接器原有的問題，本次的勾選同步只是把它顯示出來 |
+| B4、E2 | `canvas:set-hover` 回傳失敗時 overlay 不重送，main 可能維持不穿透 | low | reject | 要 IPC 本身失敗才會發生（通道已註冊、輸入由 overlay 自己組），日常不會遇到；修法要加回退分支 |
+| B5 | overlay 以 `source === 'demo'` 找示範 session，main 以 `DEMO_SESSION_KEY` 判斷，兩邊可能分歧 | low | reject | 示範轉接器只有一個 session、key 固定為 `demo:1`；方塊在 Epic 3 移除 |
+| B6 | 方塊位置用 StageView 要求的視窗大小，不是實際大小 | low | reject | AD-14 規定世界大小取 `canvas.bounds`；實際大小不符時 `checkBounds` 已記警告，Windows DPI 偏差另有 deferred 項目 |
+| B9 | run log 沒有穿透切換、重設、外來頁面請求的紀錄 | low | reject | 驗收時直接觀察得到；逐次記錄移入／移出會很吵 |
+| B10 | `tray.setContextMenu` 丟例外後，勾選資料與 Linux 上的顯示會一直不一致 | low | reject | `setContextMenu` 實務上不會丟例外；已有錯誤紀錄 |
+| B11 | `checkDemoItem` 找不到 id 時不記錄 | low | reject | id 與選單 template 由同一個 `demoItemId` 產生，測試已涵蓋 |
+| B13 | 系統匣端到端測試在斷言失敗時不會 `detection.stop()`，計時器殘留 | low | reject | 只在測試已失敗時影響後續測試 |
+| E3 | 重新載入失敗、提交錯誤頁時只有 `did-fail-load`、沒有 `did-navigate`，穿透不會恢復 | maybe-false（若成立為 low） | reject | 打包版不會重新載入畫布（當掉時重建新視窗，已正確歸零）；只在開發時的重載會遇到，要確認 Electron 提交錯誤頁時是否也發 `did-navigate` |
 
 ## Design Notes
 

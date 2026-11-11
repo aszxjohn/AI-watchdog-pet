@@ -11,8 +11,21 @@
  *   for the Dock (dock.ts). setVisibleOnAllWorkspaces is never called: a
  *   macOS panel already shows on every Space.
  * - Every click goes through to the windows below. macOS and Windows still
- *   forward mouse moves to the page (Story 4.2 hit-tests characters with
- *   them); Linux ignores the whole window.
+ *   forward mouse moves to the page, which hit-tests what takes the mouse
+ *   with them; Linux ignores the whole window.
+ * - Hover (AD-14, `canvas:set-hover`): the overlay owns whether the cursor
+ *   is over something that takes the mouse and says so only when that
+ *   changes, with a `seq` one more each time. On macOS and Windows, main
+ *   turns click-through off while it is over and back to setClickThrough()
+ *   as soon as it is not; a request whose `seq` is not greater than the
+ *   last one taken from that page is dropped, and one that changes nothing
+ *   does nothing. Each new window and each new page load (a reload or a
+ *   rebuild) starts again: click-through on, `seq` back to 0. A page that
+ *   stops responding while click-through is off gets it back on (its `seq`
+ *   kept). Linux never toggles: the whole window stays click-through.
+ * - Right-click (`canvas:context-menu`): the overlay names the session it
+ *   was on; main.ts decides which menu that is and pops it up on the
+ *   canvas window (menus are defined in menu.ts only).
  * - place() puts it on a display: the first call creates it, later calls
  *   move it with setBounds when the bounds change. Once shown and after
  *   each move, where the window really is (getBounds) is compared with
@@ -36,7 +49,14 @@ import {
   CANVAS_REBUILD_LIMIT,
   CANVAS_REBUILD_WINDOW_MS,
 } from '../../shared/constants';
-import { canvasReady, type CanvasReadyReport } from '../../shared/ipc';
+import type { SessionKey } from '../../shared/detection-events';
+import {
+  canvasContextMenu,
+  canvasReady,
+  canvasSetHover,
+  type CanvasHover,
+  type CanvasReadyReport,
+} from '../../shared/ipc';
 import type { DisplayBounds, StageCanvas } from '../../shared/stage-view';
 import type { ChannelRenderers } from '../ipc/origin';
 import { registerIpcHandler } from '../ipc/register';
@@ -52,8 +72,18 @@ export type CanvasPlacement = NonNullable<StageCanvas>;
 /** Chromium's net::ERR_ABORTED: a load replaced by a newer one, not a failure. */
 const ERR_ABORTED = -3;
 
-/** Only the overlay reports on `canvas:ready`. */
+/** Only the overlay uses the `canvas:*` channels. */
 export const CANVAS_RENDERERS: ChannelRenderers = ['overlay'];
+
+/**
+ * Whether the canvas forwards mouse moves to its page while click-through
+ * (macOS and Windows), so the page can hit-test and click-through can be
+ * turned off under the cursor. Elsewhere (Linux) the whole window ignores
+ * the mouse.
+ */
+function forwardsMouseMoves(platform: NodeJS.Platform): boolean {
+  return platform === 'darwin' || platform === 'win32';
+}
 
 /**
  * The canvas window's options: exactly `bounds`, transparent, frameless,
@@ -114,7 +144,7 @@ export function setClickThrough(
   win: Pick<CanvasWindowHandle, 'setIgnoreMouseEvents'>,
   platform: NodeJS.Platform,
 ): void {
-  if (platform === 'darwin' || platform === 'win32') {
+  if (forwardsMouseMoves(platform)) {
     win.setIgnoreMouseEvents(true, { forward: true });
   } else {
     win.setIgnoreMouseEvents(true);
@@ -134,7 +164,11 @@ export function overlayUrl(env: WindowsEnvironment): string {
 /** The parts of a BrowserWindow the canvas uses. */
 export interface CanvasWindowHandle {
   readonly webContents: {
+    /** Matches an IPC event's `sender.id`. */
+    readonly id: number;
     loadURL(url: string): Promise<void>;
+    /** A main-frame navigation committed: a new page load, reloads included. */
+    on(event: 'did-navigate', listener: () => void): unknown;
     on(
       event: 'did-fail-load',
       listener: (
@@ -152,6 +186,8 @@ export interface CanvasWindowHandle {
   };
   once(event: 'ready-to-show', listener: () => void): unknown;
   on(event: 'closed', listener: () => void): unknown;
+  /** The page stopped responding. */
+  on(event: 'unresponsive', listener: () => void): unknown;
   setIgnoreMouseEvents(
     ignore: boolean,
     options?: IgnoreMouseEventsOptions,
@@ -163,11 +199,11 @@ export interface CanvasWindowHandle {
   destroy(): void;
 }
 
-export interface CanvasWindowsOptions {
+export interface CanvasWindowsOptions<
+  W extends CanvasWindowHandle = CanvasWindowHandle,
+> {
   /** `new BrowserWindow(options)`. */
-  readonly createWindow: (
-    options: BrowserWindowConstructorOptions,
-  ) => CanvasWindowHandle;
+  readonly createWindow: (options: BrowserWindowConstructorOptions) => W;
   /** Absolute path of the overlay preload bundle. */
   readonly preload: string;
   readonly env: WindowsEnvironment;
@@ -183,7 +219,9 @@ export interface CanvasWindowsOptions {
   readonly defer?: (run: () => void) => void;
 }
 
-export interface CanvasWindows {
+export interface CanvasWindows<
+  W extends CanvasWindowHandle = CanvasWindowHandle,
+> {
   /** Puts the canvas on `placement`: creates it, or moves it there. */
   place(placement: CanvasPlacement): void;
   /**
@@ -192,7 +230,19 @@ export interface CanvasWindows {
    */
   stop(): void;
   /** The live canvas window, if any. */
-  current(): CanvasWindowHandle | undefined;
+  current(): W | undefined;
+  /**
+   * The live canvas window when `webContentsId` is its page's (an IPC
+   * event's `sender.id`); undefined for any other page.
+   */
+  windowOf(webContentsId: number): W | undefined;
+  /**
+   * The page in `webContentsId` says the cursor is (`over`) or is not over
+   * what takes the mouse. Turns click-through off or back on, on macOS and
+   * Windows; drops a request from any other page, one whose `seq` is not
+   * greater than the last one taken, and every request on Linux.
+   */
+  setHover(webContentsId: number, hover: CanvasHover): void;
 }
 
 function sameBounds(a: DisplayBounds, b: DisplayBounds): boolean {
@@ -233,7 +283,10 @@ function checkBounds(
   }
 }
 
-export function createCanvasWindows({
+/** No request taken yet, click-through on: a new window or page load. */
+const NO_HOVER = { seq: 0, over: false } as const;
+
+export function createCanvasWindows<W extends CanvasWindowHandle>({
   createWindow,
   preload,
   env,
@@ -243,24 +296,37 @@ export function createCanvasWindows({
   defer = (run) => {
     setTimeout(run, 0);
   },
-}: CanvasWindowsOptions): CanvasWindows {
-  let current: CanvasWindowHandle | undefined;
+}: CanvasWindowsOptions<W>): CanvasWindows<W> {
+  let current: W | undefined;
   let placement: CanvasPlacement | undefined;
   /** When each rebuild in the last CANVAS_REBUILD_WINDOW_MS happened. */
   let rebuilds: number[] = [];
   /** Set by stop() or once the rebuild limit is hit; nothing is created after. */
   let stopped = false;
+  /**
+   * The current window's page: the last hover `seq` taken from it, and
+   * whether click-through is off because the cursor is over something.
+   */
+  let hover: { readonly seq: number; readonly over: boolean } = NO_HOVER;
 
-  function live(): CanvasWindowHandle | undefined {
+  function live(): W | undefined {
     if (current !== undefined && current.isDestroyed()) {
       current = undefined;
     }
     return current;
   }
 
+  function windowOf(webContentsId: number): W | undefined {
+    const win = live();
+    return win !== undefined && win.webContents.id === webContentsId
+      ? win
+      : undefined;
+  }
+
   function create(at: CanvasPlacement): void {
     const win = createWindow(canvasWindowOptions(preload, at.bounds, platform));
     current = win;
+    hover = NO_HOVER;
     setClickThrough(win, platform);
     logEvent('windows', `canvas window created on ${describePlacement(at)}`);
 
@@ -292,6 +358,34 @@ export function createCanvasWindows({
         );
       },
     );
+    // A page that stops responding cannot say the cursor left: with
+    // click-through off, the window covering the display would swallow
+    // every click. Click-through back on; seq kept, so the page's later
+    // requests still count.
+    win.on('unresponsive', () => {
+      if (current !== win || !hover.over) {
+        return;
+      }
+      hover = { seq: hover.seq, over: false };
+      setClickThrough(win, platform);
+      logEvent(
+        'windows',
+        'canvas page stopped responding while it took the mouse; click-through is back on',
+        'warn',
+      );
+    });
+    // A new page (a reload) counts its seq from 1 again and has not said
+    // the cursor is over anything: click-through back on, seq back to 0.
+    win.webContents.on('did-navigate', () => {
+      if (current !== win) {
+        return;
+      }
+      const wasOver = hover.over;
+      hover = NO_HOVER;
+      if (wasOver) {
+        setClickThrough(win, platform);
+      }
+    });
     win.webContents.on('render-process-gone', (_event, details) => {
       if (current !== win) {
         return;
@@ -311,7 +405,7 @@ export function createCanvasWindows({
     win.webContents.loadURL(overlayUrl(env)).catch(() => {});
   }
 
-  function rebuild(gone: CanvasWindowHandle): void {
+  function rebuild(gone: W): void {
     if (!gone.isDestroyed()) {
       gone.destroy();
     }
@@ -362,6 +456,28 @@ export function createCanvasWindows({
     },
 
     current: live,
+
+    windowOf,
+
+    setHover(webContentsId, request) {
+      const win = windowOf(webContentsId);
+      if (win === undefined || !forwardsMouseMoves(platform)) {
+        return;
+      }
+      if (request.seq <= hover.seq) {
+        return;
+      }
+      const changed = request.over !== hover.over;
+      hover = { seq: request.seq, over: request.over };
+      if (!changed) {
+        return;
+      }
+      if (request.over) {
+        win.setIgnoreMouseEvents(false);
+      } else {
+        setClickThrough(win, platform);
+      }
+    },
   };
 }
 
@@ -383,4 +499,39 @@ export function registerCanvasReadyHandler(): void {
     logCanvasReady(report);
     return null;
   });
+}
+
+/**
+ * Registers `canvas:set-hover` (overlay only): each request goes to
+ * `canvas.setHover` with the sending page's webContents id.
+ */
+export function registerCanvasHoverHandler(
+  canvas: Pick<CanvasWindows, 'setHover'>,
+): void {
+  registerIpcHandler(canvasSetHover, CANVAS_RENDERERS, (event, hover) => {
+    canvas.setHover(event.sender.id, hover);
+    return null;
+  });
+}
+
+/**
+ * Registers `canvas:context-menu` (overlay only): a right-click reported by
+ * the live canvas window's page goes to `open` with that window, which
+ * decides on and pops up the menu; one from any other page is dropped.
+ */
+export function registerCanvasContextMenuHandler<W>(
+  canvas: { windowOf(webContentsId: number): W | undefined },
+  open: (sessionKey: SessionKey, win: W) => void,
+): void {
+  registerIpcHandler(
+    canvasContextMenu,
+    CANVAS_RENDERERS,
+    (event, { sessionKey }) => {
+      const win = canvas.windowOf(event.sender.id);
+      if (win !== undefined) {
+        open(sessionKey, win);
+      }
+      return null;
+    },
+  );
 }

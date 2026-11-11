@@ -10,9 +10,13 @@
  *    `ready`), then starts the run log, settings, detection (demo mode off),
  *    StageView (settings, main/windows' displays, canvas and power sections,
  *    and main/detection's sessions and adapters) and the IPC handlers, and
- *    guards every window webContents.
+ *    guards every window webContents. The canvas's hover and right-click
+ *    handlers come once the canvas windows exist; a right-click on the demo
+ *    session's square opens the demo menu, which calls detection.setDemo
+ *    as the tray's 示範模式 does.
  * 3. Once ready: the session guards, the application menu, the `app://`
- *    handler, the Dock icon hidden, the tray icon, then the stage: the
+ *    handler, the Dock icon hidden, the tray icon (its 示範模式 check mark
+ *    follows detection, whichever menu changed it), then the stage: the
  *    canvas on the chosen display (following display and settings changes)
  *    and the sleep / lock watch (sleep also goes to detection's clock).
  *    Each step that throws is logged as an error with its errorCode and the
@@ -43,7 +47,13 @@ import started from 'electron-squirrel-startup';
 import { PRODUCT_NAME } from '../shared/constants';
 import { appGetVersion } from '../shared/ipc';
 import { MAIN_PANEL_PAGE } from '../shared/panels';
-import { createDetection, watchSleep } from './detection/detection';
+import { DEMO_SESSION_KEY } from './detection/adapters/demo/demo';
+import {
+  createDetection,
+  demoStateOf,
+  watchDemoState,
+  watchSleep,
+} from './detection/detection';
 import { registerIpcHandler } from './ipc/register';
 import { errorCode, initRunLog, logEvent } from './log/run-log';
 import { registerSettingsHandlers } from './settings/ipc';
@@ -54,11 +64,17 @@ import {
 } from './stage-view/stage-view';
 import {
   createCanvasWindows,
+  registerCanvasContextMenuHandler,
+  registerCanvasHoverHandler,
   registerCanvasReadyHandler,
 } from './windows/canvas-window';
 import { createDockController } from './windows/dock';
 import { currentEnvironment } from './windows/environment';
-import { buildApplicationMenu } from './windows/menu';
+import {
+  buildApplicationMenu,
+  openCanvasMenu,
+  type DemoMenuTarget,
+} from './windows/menu';
 import { createPanelWindows, PRELOAD_BUNDLES } from './windows/panel-window';
 import { watchPower } from './windows/power';
 import { handleAppProtocol, registerSchemes } from './windows/protocols';
@@ -70,7 +86,7 @@ import {
   createWindowsStageSource,
   watchDisplays,
 } from './windows/stage-sources';
-import { createTray } from './windows/tray';
+import { createTray, showTrayDemoState } from './windows/tray';
 
 if (started) {
   // A Squirrel event: quit silently.
@@ -193,6 +209,20 @@ function startPrimaryInstance(): void {
     env,
     platform: process.platform,
   });
+  // The canvas's hover and right-click requests (AD-14). Only the demo
+  // session has a canvas menu for now (its square, Epic 2 acceptance);
+  // picking from it goes to detection.setDemo, as the tray's 示範模式 does.
+  const demoMenu: DemoMenuTarget = {
+    sessionKey: DEMO_SESSION_KEY,
+    state: () => demoStateOf(detection.get().sessions),
+    setDemo: (state) => {
+      detection.setDemo(state);
+    },
+  };
+  registerCanvasHoverHandler(canvas);
+  registerCanvasContextMenuHandler(canvas, (sessionKey, win) => {
+    openCanvasMenu(sessionKey, win, demoMenu);
+  });
   // Quitting closes the canvas with every other window; do not rebuild it.
   app.on('before-quit', () => {
     canvas.stop();
@@ -279,6 +309,11 @@ function startPrimaryInstance(): void {
           quit: () => {
             app.quit();
           },
+        });
+        // The 示範模式 check mark follows detection, so it agrees with a
+        // change made from the canvas menu.
+        watchDemoState(detection, (state) => {
+          showTrayDemoState(state);
         });
       });
       startupStep('canvas', () => {

@@ -148,6 +148,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-3-demo-sessions-panel.md`
   summary: 系統匣「示範模式」的勾選由 Electron 自己管，不跟偵測的實際狀態同步；方塊角色空殼的右鍵選單成為第二個入口後，兩邊會不一致
   evidence: Story 2.3 審查 B5。`src/main/windows/menu.ts` 的子選單一開始勾「關閉」，之後不再依偵測狀態重建。未驗證，若成立為 medium。做方塊角色空殼時一起處理：依 `detection.onChange` 更新勾選，或重建系統匣選單；右鍵選單要呼叫 `detection.setDemo`，不要直接呼叫轉接器的 `setState`。
+- source_spec: `_bmad-output/implementation-artifacts/spec-epic-2-demo-square-shell.md`
+  summary: Epic 3 真角色上畫布後，移除示範方塊空殼（`src/overlay/demo-square.ts`、`src/overlay/main.ts` 裡畫方塊的部分、`main.ts` 只認示範 session 的右鍵選單），保留 `src/overlay/pointer.ts` 與 `canvas:set-hover`、`canvas:context-menu` 兩個通道
+  evidence: 方塊只供 Epic 2 驗收（使用者 2026-11-10 決定）。穿透切換與右鍵選單的機制照 AD-14 做，Epic 3 的角色 hitbox 直接交給 `pointer.ts`；右鍵選單改成 AD-14 的角色選單（編輯頁、管理 session、暫停／顯示），`openCanvasMenu` 對非示範 session 目前只記 `windows` 警告、不跳選單。
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-3-demo-sessions-panel.md`
   summary: StageView 的 `adapters` 沒有「同步中」狀態；補讀期間面板會顯示「目前沒有偵測到 session」，轉接器卻顯示正常
   evidence: Story 2.3 審查 B11。來源送出 `sync.ready`（或 `syncTimeoutMs` 到期）前，它的 session 不會發布。未驗證，若成立為 medium。示範轉接器不補讀，遇不到；Story 2.4（第一個會補讀的轉接器）決定要不要加同步中的顯示。
@@ -157,3 +160,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-3-demo-sessions-panel.md`
   summary: `idleMs` 不小於 `sessionExpireMs` 時，任何 session 都會先逾時、不可能變成「休息中」；設定沒有交叉檢查
   evidence: Story 2.3 審查 B1／E1。設定範圍允許 `idleMs` 與 `sessionExpireMs` 都是 1 小時。Story 2.9 做計時值設定頁時決定是否要求 `idleMs < sessionExpireMs`（面板擋下，`main/settings` 寫入時再驗一次）。
+- source_spec: `_bmad-output/implementation-artifacts/spec-epic-2-demo-square-shell.md`
+  summary: `idleMs` 與 `sessionExpireMs` 設成相同值（都是 1 小時，範圍允許）時，示範模式選「休息中」，示範 session 會立刻逾時：方塊消失、系統匣勾選跳回「關閉」，示範轉接器卻還在跑
+  evidence: 方塊空殼審查 E5／E6。Story 2.3 的「休息中」把時間回推 `idleMs`，逾時點是 `lastEventAt + sessionExpireMs`，兩者相等時就是現在。low，只在兩個設定都調到極端值時發生；可以讓示範轉接器回推時取 `min(idleMs, sessionExpireMs − 1 分鐘)` 之類的值，或在設定加上 `idleMs < sessionExpireMs` 的約束（Story 2.9 做計時值設定時一起決定）。

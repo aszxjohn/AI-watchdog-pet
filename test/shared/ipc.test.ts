@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   appGetVersion,
   CANVAS_READY_REASON_MAX_LENGTH,
+  canvasContextMenu,
   canvasReady,
+  canvasSetHover,
   ipcErrorCodeSchema,
   ipcErrorSchema,
   ipcFailure,
@@ -286,5 +288,88 @@ describe('canvas:ready contract', () => {
     expectRoundTrip(canvasReady.output, null);
     expectRejected(canvasReady.output, undefined);
     expectRejected(canvasReady.output, {});
+  });
+});
+
+describe('canvas:set-hover contract', () => {
+  it('uses a valid channel name', () => {
+    expect(canvasSetHover.channel).toBe('canvas:set-hover');
+    expect(isIpcChannelName(canvasSetHover.channel)).toBe(true);
+  });
+
+  it.each([
+    ['over, the first request', { seq: 1, over: true }],
+    ['not over', { seq: 2, over: false }],
+    ['a large seq', { seq: Number.MAX_SAFE_INTEGER, over: true }],
+  ])('takes exactly one request: %s', (_label, request) => {
+    expectRoundTrip(canvasSetHover.input, [request]);
+  });
+
+  it.each([
+    ['no request', []],
+    [
+      'two requests',
+      [
+        { seq: 1, over: true },
+        { seq: 2, over: false },
+      ],
+    ],
+    ['seq 0', [{ seq: 0, over: true }]],
+    ['a negative seq', [{ seq: -1, over: false }]],
+    ['a fractional seq', [{ seq: 1.5, over: true }]],
+    ['a seq past the safe integers', [{ seq: 2 ** 53, over: true }]],
+    ['a string seq', [{ seq: '1', over: true }]],
+    ['no seq', [{ over: true }]],
+    ['no over', [{ seq: 1 }]],
+    ['over as a number', [{ seq: 1, over: 1 }]],
+    ['an extra key', [{ seq: 1, over: true, x: 10 }]],
+    ['null', [null]],
+  ])('rejects %s', (_label, args) => {
+    expectRejected(canvasSetHover.input, args);
+  });
+
+  it('answers null', () => {
+    expectRoundTrip(canvasSetHover.output, null);
+    expectRejected(canvasSetHover.output, undefined);
+    expectRejected(canvasSetHover.output, { seq: 1 });
+  });
+});
+
+describe('canvas:context-menu contract', () => {
+  it('uses a valid channel name', () => {
+    expect(canvasContextMenu.channel).toBe('canvas:context-menu');
+    expect(isIpcChannelName(canvasContextMenu.channel)).toBe(true);
+  });
+
+  it.each([
+    ['the demo session', 'demo:1'],
+    [
+      'a Claude Code session',
+      'claude-code:0b9a7c2e-4f1d-4a8e-9c3b-5d6e7f8a9b0c',
+    ],
+    ['a native id with a colon', 'codex:a:b'],
+  ])('takes exactly one request: %s', (_label, sessionKey) => {
+    expectRoundTrip(canvasContextMenu.input, [{ sessionKey }]);
+  });
+
+  it.each([
+    ['no request', []],
+    ['two requests', [{ sessionKey: 'demo:1' }, { sessionKey: 'demo:1' }]],
+    ['a bare key', ['demo:1']],
+    ['no source', [{ sessionKey: 'demo' }]],
+    ['an unknown source', [{ sessionKey: 'vim:1' }]],
+    ['an empty native id', [{ sessionKey: 'demo:' }]],
+    ['a native id past the limit', [{ sessionKey: 'demo:'.padEnd(262, 'x') }]],
+    ['a control character', [{ sessionKey: 'demo:1\n' }]],
+    ['no key', [{}]],
+    ['an extra key', [{ sessionKey: 'demo:1', state: 'error' }]],
+  ])('rejects %s', (_label, args) => {
+    expectRejected(canvasContextMenu.input, args);
+  });
+
+  it('answers null', () => {
+    expectRoundTrip(canvasContextMenu.output, null);
+    expectRejected(canvasContextMenu.output, undefined);
+    expectRejected(canvasContextMenu.output, 'menu');
   });
 });

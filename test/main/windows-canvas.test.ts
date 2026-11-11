@@ -8,6 +8,8 @@ import {
   createCanvasWindows,
   logCanvasReady,
   overlayUrl,
+  registerCanvasContextMenuHandler,
+  registerCanvasHoverHandler,
   setClickThrough,
   type CanvasPlacement,
   type CanvasWindowHandle,
@@ -18,7 +20,10 @@ import {
   CANVAS_REBUILD_LIMIT,
   CANVAS_REBUILD_WINDOW_MS,
 } from '../../src/shared/constants';
+import type { SessionKey } from '../../src/shared/detection-events';
+import { canvasContextMenu, canvasSetHover } from '../../src/shared/ipc';
 import type { DisplayBounds } from '../../src/shared/stage-view';
+import * as fake from '../helpers/fake-electron';
 
 vi.mock('electron', () => import('../helpers/fake-electron'));
 
@@ -69,6 +74,8 @@ function lines(spy: ReturnType<typeof vi.spyOn>): string[] {
 /** A fake BrowserWindow that records what the canvas does to it. */
 class FakeWindow implements CanvasWindowHandle {
   static created: FakeWindow[] = [];
+  /** The last webContents id handed out; each window gets the next. */
+  static lastId = 100;
   readonly calls: string[] = [];
   readonly loaded: string[] = [];
   readonly ignoreMouse: unknown[][] = [];
@@ -86,9 +93,13 @@ class FakeWindow implements CanvasWindowHandle {
 
   constructor(readonly options: BrowserWindowConstructorOptions) {
     FakeWindow.created.push(this);
+    FakeWindow.lastId += 1;
+    this.webContents.id = FakeWindow.lastId;
   }
 
   readonly webContents = {
+    /** Settable, so a test can make it the fake IPC sender's. */
+    id: 0,
     loadURL: (url: string) => {
       this.loaded.push(url);
       return FakeWindow.rejectLoads
@@ -126,6 +137,10 @@ class FakeWindow implements CanvasWindowHandle {
   /** What a crashed renderer does. */
   crash(reason = 'crashed', exitCode = 11) {
     this.emitContents('render-process-gone', {}, { reason, exitCode });
+  }
+  /** What a new page load (a reload) does once it commits. */
+  navigate() {
+    this.emitContents('did-navigate', {}, 'app://overlay/index.html', -1, '');
   }
   setIgnoreMouseEvents(...args: [boolean, IgnoreMouseEventsOptions?]) {
     this.ignoreMouse.push(args);
@@ -563,5 +578,333 @@ describe('logCanvasReady', () => {
     expect(lines(error)).toStrictEqual([
       '[windows] canvas failed to initialise: Error: no WebGL',
     ]);
+  });
+});
+
+describe('hover (AD-14): click-through follows the overlay', () => {
+  const OFF = [false];
+  const ON = [true, { forward: true }];
+
+  /** A placed canvas on `platform` and its page's webContents id. */
+  function placed(platform: NodeJS.Platform = 'darwin') {
+    const context = setup({ platform });
+    context.canvas.place(PRIMARY);
+    return { ...context, id: context.win().webContents.id };
+  }
+
+  it.each([['darwin'], ['win32']] as const)(
+    '%s 移到方塊上 / 移開: over turns click-through off, not over restores setClickThrough',
+    (platform) => {
+      const { canvas, win, id } = placed(platform);
+      expect(win().ignoreMouse).toStrictEqual([ON]);
+
+      canvas.setHover(id, { seq: 1, over: true });
+      expect(win().ignoreMouse).toStrictEqual([ON, OFF]);
+
+      canvas.setHover(id, { seq: 2, over: false });
+      expect(win().ignoreMouse).toStrictEqual([ON, OFF, ON]);
+    },
+  );
+
+  it('is idempotent: a request that changes nothing does nothing', () => {
+    const { canvas, win, id } = placed();
+
+    canvas.setHover(id, { seq: 1, over: false });
+    canvas.setHover(id, { seq: 2, over: true });
+    canvas.setHover(id, { seq: 3, over: true });
+
+    expect(win().ignoreMouse).toStrictEqual([ON, OFF]);
+  });
+
+  it('過時的請求: drops a seq not greater than the last one taken; click-through stays', () => {
+    const { canvas, win, id } = placed();
+    canvas.setHover(id, { seq: 2, over: true });
+
+    canvas.setHover(id, { seq: 2, over: false });
+    canvas.setHover(id, { seq: 1, over: false });
+    expect(win().ignoreMouse).toStrictEqual([ON, OFF]);
+
+    canvas.setHover(id, { seq: 3, over: false });
+    expect(win().ignoreMouse).toStrictEqual([ON, OFF, ON]);
+  });
+
+  it('counts a dropped-as-unchanged request: a later, smaller seq is still stale', () => {
+    const { canvas, win, id } = placed();
+    canvas.setHover(id, { seq: 5, over: false });
+
+    canvas.setHover(id, { seq: 4, over: true });
+
+    expect(win().ignoreMouse).toStrictEqual([ON]);
+  });
+
+  it('畫布重載: a new page load restores click-through and counts seq from 0 again', () => {
+    const { canvas, win, id } = placed();
+    canvas.setHover(id, { seq: 7, over: true });
+
+    win().navigate();
+
+    expect(win().ignoreMouse).toStrictEqual([ON, OFF, ON]);
+    canvas.setHover(id, { seq: 1, over: true });
+    expect(win().ignoreMouse).toStrictEqual([ON, OFF, ON, OFF]);
+  });
+
+  it('a page load while not over changes nothing but still counts seq from 0', () => {
+    const { canvas, win, id } = placed();
+    canvas.setHover(id, { seq: 7, over: false });
+
+    win().navigate();
+
+    expect(win().ignoreMouse).toStrictEqual([ON]);
+    canvas.setHover(id, { seq: 1, over: true });
+    expect(win().ignoreMouse).toStrictEqual([ON, OFF]);
+  });
+
+  it('畫布重建: a rebuilt window starts click-through with seq 0, and the old page is ignored', () => {
+    const { canvas, win, flush, id } = placed();
+    const first = win();
+    canvas.setHover(id, { seq: 9, over: true });
+
+    first.crash();
+    flush();
+    const second = win();
+    expect(second).not.toBe(first);
+    expect(second.ignoreMouse).toStrictEqual([ON]);
+
+    canvas.setHover(id, { seq: 10, over: false });
+    first.navigate();
+    expect(second.ignoreMouse).toStrictEqual([ON]);
+
+    canvas.setHover(second.webContents.id, { seq: 1, over: true });
+    expect(second.ignoreMouse).toStrictEqual([ON, OFF]);
+  });
+
+  it("drops a request from any page but the live canvas window's", () => {
+    const { canvas, win, id } = placed();
+
+    canvas.setHover(id + 1, { seq: 1, over: true });
+    expect(win().ignoreMouse).toStrictEqual([ON]);
+
+    win().destroy();
+    canvas.setHover(id, { seq: 2, over: true });
+    expect(win().ignoreMouse).toStrictEqual([ON]);
+  });
+
+  it.each([['linux'], ['freebsd']] as const)(
+    '%s never toggles: the whole window stays click-through',
+    (platform) => {
+      const { canvas, win, id } = placed(platform);
+
+      canvas.setHover(id, { seq: 1, over: true });
+      canvas.setHover(id, { seq: 2, over: false });
+      win().navigate();
+      win().emit('unresponsive');
+
+      expect(win().ignoreMouse).toStrictEqual([[true]]);
+    },
+  );
+
+  it('a page that stops responding while over gets click-through back, logged; seq is kept', () => {
+    const { canvas, win, id } = placed('win32');
+    canvas.setHover(id, { seq: 3, over: true });
+
+    win().emit('unresponsive');
+
+    expect(win().ignoreMouse).toStrictEqual([ON, OFF, ON]);
+    expect(lines(warn)).toStrictEqual([
+      '[windows] canvas page stopped responding while it took the mouse; click-through is back on',
+    ]);
+    // seq kept: an old request is still stale, the page's next one counts.
+    canvas.setHover(id, { seq: 3, over: true });
+    expect(win().ignoreMouse).toStrictEqual([ON, OFF, ON]);
+    canvas.setHover(id, { seq: 4, over: false });
+    expect(win().ignoreMouse).toStrictEqual([ON, OFF, ON]);
+    canvas.setHover(id, { seq: 5, over: true });
+    expect(win().ignoreMouse).toStrictEqual([ON, OFF, ON, OFF]);
+  });
+
+  it('a page that stops responding while not over changes nothing', () => {
+    const { canvas, win, id } = placed();
+    canvas.setHover(id, { seq: 1, over: true });
+    canvas.setHover(id, { seq: 2, over: false });
+
+    win().emit('unresponsive');
+
+    expect(win().ignoreMouse).toStrictEqual([ON, OFF, ON]);
+    expect(lines(warn)).toStrictEqual([]);
+  });
+
+  it('a replaced window going unresponsive does not touch the new one', () => {
+    const { canvas, win, flush, id } = placed();
+    const first = win();
+    canvas.setHover(id, { seq: 1, over: true });
+    first.crash();
+    flush();
+    const second = win();
+    canvas.setHover(second.webContents.id, { seq: 1, over: true });
+
+    first.emit('unresponsive');
+
+    expect(second.ignoreMouse).toStrictEqual([ON, OFF]);
+  });
+
+  it('windowOf: the live canvas window for its page, nothing for another page or once closed', () => {
+    const { canvas, win, id } = placed();
+
+    expect(canvas.windowOf(id)).toBe(win());
+    expect(canvas.windowOf(id + 1)).toBeUndefined();
+
+    win().destroy();
+    expect(canvas.windowOf(id)).toBeUndefined();
+  });
+});
+
+describe('canvas:set-hover and canvas:context-menu handlers', () => {
+  const OVERLAY_URL = 'app://overlay/index.html';
+
+  beforeEach(() => {
+    fake.resetFakeElectron();
+    fake.sender.mainFrame.url = OVERLAY_URL;
+  });
+
+  /** A placed canvas whose page is the fake IPC sender, both handlers registered. */
+  function wired() {
+    const context = setup();
+    context.canvas.place(PRIMARY);
+    context.win().webContents.id = fake.sender.id;
+    const open = vi.fn<(sessionKey: SessionKey, win: FakeWindow) => void>();
+    registerCanvasHoverHandler(context.canvas);
+    registerCanvasContextMenuHandler(context.canvas, open);
+    return { ...context, open };
+  }
+
+  it('移到方塊上 / 移開 through IPC: each request answers null and toggles click-through', async () => {
+    const { win } = wired();
+
+    expect(
+      await fake.ipcRenderer.invoke(canvasSetHover.channel, {
+        seq: 1,
+        over: true,
+      }),
+    ).toStrictEqual({ ok: true, data: null });
+    expect(win().ignoreMouse.at(-1)).toStrictEqual([false]);
+
+    await fake.ipcRenderer.invoke(canvasSetHover.channel, {
+      seq: 2,
+      over: false,
+    });
+    expect(win().ignoreMouse.at(-1)).toStrictEqual([true, { forward: true }]);
+  });
+
+  it.each([
+    ['seq 0', [{ seq: 0, over: true }]],
+    ['a negative seq', [{ seq: -1, over: true }]],
+    ['a fractional seq', [{ seq: 1.5, over: true }]],
+    ['no over', [{ seq: 1 }]],
+    ['over as a string', [{ seq: 1, over: 'true' }]],
+    ['an extra key', [{ seq: 1, over: true, x: 3 }]],
+    [
+      'two requests',
+      [
+        { seq: 1, over: true },
+        { seq: 2, over: false },
+      ],
+    ],
+    ['no request', []],
+  ])(
+    '壞請求 (%s): rejected by the registration function, click-through unchanged',
+    async (_label, args) => {
+      const { win } = wired();
+
+      const reply = await fake.ipcRenderer.invoke(
+        canvasSetHover.channel,
+        ...args,
+      );
+
+      expect(reply).toMatchObject({
+        ok: false,
+        error: { code: 'invalid-input' },
+      });
+      expect(win().ignoreMouse).toStrictEqual([[true, { forward: true }]]);
+    },
+  );
+
+  it('only the overlay may send a hover: the panels get sender-rejected', async () => {
+    const { win } = wired();
+    fake.sender.mainFrame.url = 'app://panels/index.html';
+
+    const reply = await fake.ipcRenderer.invoke(canvasSetHover.channel, {
+      seq: 1,
+      over: true,
+    });
+
+    expect(reply).toMatchObject({
+      ok: false,
+      error: { code: 'sender-rejected' },
+    });
+    expect(win().ignoreMouse).toStrictEqual([[true, { forward: true }]]);
+  });
+
+  it('右鍵: a right-click on the canvas goes to open with its session key and the canvas window', async () => {
+    const { win, open } = wired();
+
+    const reply = await fake.ipcRenderer.invoke(canvasContextMenu.channel, {
+      sessionKey: 'demo:1',
+    });
+
+    expect(reply).toStrictEqual({ ok: true, data: null });
+    expect(open.mock.calls).toStrictEqual([['demo:1', win()]]);
+  });
+
+  it('drops a right-click from a page that is not the live canvas window', async () => {
+    const { win, open } = wired();
+    win().webContents.id = fake.sender.id + 1;
+
+    const reply = await fake.ipcRenderer.invoke(canvasContextMenu.channel, {
+      sessionKey: 'demo:1',
+    });
+
+    expect(reply).toStrictEqual({ ok: true, data: null });
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['not a session key', [{ sessionKey: 'nope' }]],
+    ['an unknown source', [{ sessionKey: 'vim:1' }]],
+    ['an empty native id', [{ sessionKey: 'demo:' }]],
+    ['a control character', [{ sessionKey: 'demo:\u0007' }]],
+    ['an extra key', [{ sessionKey: 'demo:1', state: 'error' }]],
+    ['a bare string', ['demo:1']],
+    ['no request', []],
+  ])(
+    '壞請求 (%s): rejected by the registration function, no menu',
+    async (_label, args) => {
+      const { open } = wired();
+
+      const reply = await fake.ipcRenderer.invoke(
+        canvasContextMenu.channel,
+        ...args,
+      );
+
+      expect(reply).toMatchObject({
+        ok: false,
+        error: { code: 'invalid-input' },
+      });
+      expect(open).not.toHaveBeenCalled();
+    },
+  );
+
+  it('only the overlay may ask for a menu: the panels get sender-rejected', async () => {
+    const { open } = wired();
+    fake.sender.mainFrame.url = 'app://panels/index.html';
+
+    const reply = await fake.ipcRenderer.invoke(canvasContextMenu.channel, {
+      sessionKey: 'demo:1',
+    });
+
+    expect(reply).toMatchObject({
+      ok: false,
+      error: { code: 'sender-rejected' },
+    });
+    expect(open).not.toHaveBeenCalled();
   });
 });

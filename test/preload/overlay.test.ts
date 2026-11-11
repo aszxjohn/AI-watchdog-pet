@@ -12,9 +12,20 @@ import {
   createStageView,
   registerStageViewHandlers,
 } from '../../src/main/stage-view/stage-view';
-import { registerCanvasReadyHandler } from '../../src/main/windows/canvas-window';
+import {
+  registerCanvasContextMenuHandler,
+  registerCanvasHoverHandler,
+  registerCanvasReadyHandler,
+} from '../../src/main/windows/canvas-window';
 import { createWindowsStageSource } from '../../src/main/windows/stage-sources';
-import { canvasReady, settingsPatch } from '../../src/shared/ipc';
+import type { SessionKey } from '../../src/shared/detection-events';
+import {
+  canvasContextMenu,
+  canvasReady,
+  canvasSetHover,
+  settingsPatch,
+  type CanvasHover,
+} from '../../src/shared/ipc';
 import type { OverlayApi } from '../../src/shared/preload-api';
 import { SETTINGS_DEFAULTS } from '../../src/shared/settings';
 import type { StageViewSnapshot } from '../../src/shared/stage-view';
@@ -83,7 +94,11 @@ describe('overlay preload', () => {
 
     expect([...fake.exposed.keys()]).toStrictEqual(['awp']);
     expect(Object.keys(api).sort()).toStrictEqual(['canvas', 'stageView']);
-    expect(Object.keys(api.canvas)).toStrictEqual(['ready']);
+    expect(Object.keys(api.canvas)).toStrictEqual([
+      'ready',
+      'setHover',
+      'contextMenu',
+    ]);
     expect(Object.keys(api.stageView)).toStrictEqual(['subscribe']);
     expect(Object.isFrozen(api)).toBe(true);
     expect(Object.isFrozen(api.canvas)).toBe(true);
@@ -161,6 +176,80 @@ describe('overlay preload', () => {
       ok: false,
       error: { code: 'invalid-input' },
     });
+  });
+});
+
+describe('canvas hover and right-click', () => {
+  /** The canvas handlers, on a canvas whose window is the fake sender's. */
+  function startCanvas() {
+    const hovers: [number, CanvasHover][] = [];
+    const menus: SessionKey[] = [];
+    const win = { id: 'canvas-window' };
+    registerCanvasHoverHandler({
+      setHover: (webContentsId, hover) => {
+        hovers.push([webContentsId, hover]);
+      },
+    });
+    registerCanvasContextMenuHandler(
+      {
+        windowOf: (webContentsId) =>
+          webContentsId === fake.sender.id ? win : undefined,
+      },
+      (sessionKey) => {
+        menus.push(sessionKey);
+      },
+    );
+    return { hovers, menus };
+  }
+
+  it('canvas.setHover reaches main with the sending page and the request', async () => {
+    const { hovers } = startCanvas();
+    const api = await loadApi();
+
+    const result = await api.canvas.setHover({ seq: 1, over: true });
+
+    expect(result).toStrictEqual({ ok: true, data: null });
+    expect(hovers).toStrictEqual([[fake.sender.id, { seq: 1, over: true }]]);
+  });
+
+  it('canvas.setHover answers invalid-input to a bad request; main hears nothing', async () => {
+    const { hovers } = startCanvas();
+    const api = await loadApi();
+
+    const result = await api.canvas.setHover({ seq: 0, over: true });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'invalid-input' },
+    });
+    expect(hovers).toStrictEqual([]);
+  });
+
+  it('canvas.contextMenu sends { sessionKey } and reaches main', async () => {
+    const { menus } = startCanvas();
+    const api = await loadApi();
+
+    const result = await api.canvas.contextMenu('demo:1');
+
+    expect(result).toStrictEqual({ ok: true, data: null });
+    expect(menus).toStrictEqual(['demo:1']);
+  });
+
+  it('the panels calling canvas:set-hover or canvas:context-menu are sender-rejected', async () => {
+    const { hovers, menus } = startCanvas();
+    fake.sender.mainFrame.url = 'app://panels/index.html';
+
+    for (const [channel, request] of [
+      [canvasSetHover.channel, { seq: 1, over: true }],
+      [canvasContextMenu.channel, { sessionKey: 'demo:1' }],
+    ] as const) {
+      expect(await fake.ipcRenderer.invoke(channel, request)).toMatchObject({
+        ok: false,
+        error: { code: 'sender-rejected' },
+      });
+    }
+    expect(hovers).toStrictEqual([]);
+    expect(menus).toStrictEqual([]);
   });
 });
 

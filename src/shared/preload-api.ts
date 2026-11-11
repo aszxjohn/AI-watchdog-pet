@@ -1,11 +1,15 @@
 import type { PRELOAD_API_KEY } from './constants';
+import type { SessionKey } from './detection-events';
 import type {
+  CanvasHover,
   CanvasReadyReport,
   IpcData,
   IpcError,
   IpcResult,
   appGetVersion,
+  canvasContextMenu,
   canvasReady,
+  canvasSetHover,
   settingsGet,
   settingsPatch,
 } from './ipc';
@@ -55,6 +59,21 @@ export interface OverlayApi {
     ready(
       report: CanvasReadyReport,
     ): Promise<IpcResult<IpcData<typeof canvasReady>>>;
+    /**
+     * Says the cursor moved onto (`over: true`) or off what takes the mouse
+     * (AD-14); main turns click-through off or back on. Send one only when
+     * that changes, `seq` one more each time.
+     */
+    setHover(
+      hover: CanvasHover,
+    ): Promise<IpcResult<IpcData<typeof canvasSetHover>>>;
+    /**
+     * Says the session at `sessionKey` was right-clicked; main pops up its
+     * menu on the canvas.
+     */
+    contextMenu(
+      sessionKey: SessionKey,
+    ): Promise<IpcResult<IpcData<typeof canvasContextMenu>>>;
   };
 }
 

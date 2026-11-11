@@ -27,7 +27,11 @@ import type { AdapterHealth, SourceCode } from '../../shared/sources';
 import type { StageViewDetectionSections } from '../../shared/stage-view';
 import type { StateCode } from '../../shared/states';
 import { errorCode, logEvent, type ConsoleLevel } from '../log/run-log';
-import { createDemoAdapter, type DemoAdapter } from './adapters/demo/demo';
+import {
+  createDemoAdapter,
+  DEMO_SESSION_KEY,
+  type DemoAdapter,
+} from './adapters/demo/demo';
 import { createSleepClock } from './clock';
 import { createSessions, type DetectedSession } from './sessions';
 
@@ -252,6 +256,43 @@ export function createDetection({
       health.clear();
     },
   };
+}
+
+/**
+ * The demo session's state in a `sessions` section; null when it is not
+ * there, which means demo mode is off.
+ */
+export function demoStateOf(
+  sessions: StageViewDetectionSections['sessions'],
+): StateCode | null {
+  return (
+    sessions.find((session) => session.sessionKey === DEMO_SESSION_KEY)
+      ?.state ?? null
+  );
+}
+
+/**
+ * Calls `listener` with the demo session's state now, then each time it
+ * changes, whatever changed it (null: demo mode off). The tray's 示範模式
+ * check mark follows it. Returns an unsubscribe.
+ */
+export function watchDemoState(
+  detection: Pick<Detection, 'get' | 'onChange'>,
+  listener: (state: StateCode | null) => void,
+): () => void {
+  let last = demoStateOf(detection.get().sessions);
+  listener(last);
+  return detection.onChange((sections) => {
+    if (sections.sessions === undefined) {
+      return;
+    }
+    const next = demoStateOf(sections.sessions);
+    if (next === last) {
+      return;
+    }
+    last = next;
+    listener(next);
+  });
 }
 
 export type SleepEvent = 'suspend' | 'resume';

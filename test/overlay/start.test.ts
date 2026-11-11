@@ -61,6 +61,14 @@ function fakeApi(
           ? { ok: false, error: { code: 'sender-rejected', message: 'nope' } }
           : { ok: true, data: null };
       },
+      async setHover() {
+        order.push('setHover');
+        return { ok: true, data: null };
+      },
+      async contextMenu() {
+        order.push('contextMenu');
+        return { ok: true, data: null };
+      },
     },
   };
   return {

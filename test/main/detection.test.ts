@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createDetection,
   type Detection,
+  demoStateOf,
+  watchDemoState,
   watchSleep,
 } from '../../src/main/detection/detection';
 import type {
@@ -647,5 +649,87 @@ describe('watchSleep', () => {
     listeners.get('resume')?.();
 
     expect(states(detection)).toStrictEqual([]);
+  });
+});
+
+describe('demoStateOf', () => {
+  it("is the demo session's state, or null when there is none (demo mode off)", () => {
+    const codexSession = {
+      sessionKey: 'codex:s1',
+      source: 'codex',
+      displayName: null,
+      state: 'working',
+      confidence: 'exact',
+    } as const;
+    const demo = {
+      ...codexSession,
+      sessionKey: 'demo:1',
+      source: 'demo',
+      state: 'error',
+    } as const;
+    expect(demoStateOf([])).toBeNull();
+    expect(demoStateOf([codexSession])).toBeNull();
+    expect(demoStateOf([codexSession, demo])).toBe('error');
+  });
+});
+
+describe('watchDemoState', () => {
+  function watch(detection: Detection) {
+    const seen: (StateCode | null)[] = [];
+    const stop = watchDemoState(detection, (state) => {
+      seen.push(state);
+    });
+    return { seen, stop };
+  }
+
+  it('hears the state now, then each change, whoever made it; null when demo mode goes off', () => {
+    const detection = start();
+    const { seen } = watch(detection);
+    expect(seen).toStrictEqual([null]);
+
+    detection.setDemo('approval');
+    detection.setDemo('error');
+    detection.setDemo(null);
+
+    expect(seen).toStrictEqual([null, 'approval', 'error', null]);
+  });
+
+  it('starts from the state demo mode already shows', () => {
+    const detection = start();
+    detection.setDemo('done');
+    expect(watch(detection).seen).toStrictEqual(['done']);
+  });
+
+  it('hears nothing for a change that leaves the demo state as it was', () => {
+    const detection = start();
+    detection.setDemo('working');
+    const { seen } = watch(detection);
+
+    detection.setDemo('working');
+    feed({ type: 'sync.ready', source: 'codex' }, codex('turn.start'));
+    settings.set({ doneMs: 2000 });
+    clock.advance(3 * HOUR);
+
+    expect(seen).toStrictEqual(['working']);
+  });
+
+  it('休息中 ends and restarts the session in one change: heard once, never null in between', () => {
+    const detection = start();
+    detection.setDemo('working');
+    const { seen } = watch(detection);
+
+    detection.setDemo('idle');
+
+    expect(seen).toStrictEqual(['working', 'idle']);
+  });
+
+  it('returns an unsubscribe', () => {
+    const detection = start();
+    const { seen, stop } = watch(detection);
+
+    stop();
+    detection.setDemo('approval');
+
+    expect(seen).toStrictEqual([null]);
   });
 });

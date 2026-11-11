@@ -1,3 +1,4 @@
+import { sessionKeySchema } from './detection-events';
 import {
   settingsPatchResultSchema,
   settingsPatchSchema,
@@ -177,6 +178,51 @@ export type CanvasReadyReport = z.infer<typeof canvasReadyReportSchema>;
 export const canvasReady = {
   channel: 'canvas:ready',
   input: z.tuple([canvasReadyReportSchema]),
+  output: z.null(),
+} as const satisfies IpcContract;
+
+/**
+ * Whether the cursor is over something on the canvas that takes the mouse
+ * (AD-14). The overlay owns this: it sends one only when that changes, each
+ * with a `seq` one more than the last it sent from this page load, starting
+ * at 1.
+ */
+export const canvasHoverSchema = z.strictObject({
+  seq: z.int().positive(),
+  over: z.boolean(),
+});
+
+export type CanvasHover = z.infer<typeof canvasHoverSchema>;
+
+/**
+ * `canvas:set-hover`: the overlay says the cursor moved onto or off what
+ * takes the mouse; main turns click-through off or back on. Main drops a
+ * request whose `seq` is not greater than the last one it took from that
+ * page. Answers null.
+ */
+export const canvasSetHover = {
+  channel: 'canvas:set-hover',
+  input: z.tuple([canvasHoverSchema]),
+  output: z.null(),
+} as const satisfies IpcContract;
+
+/** What was right-clicked on the canvas: a session's key. */
+export const canvasContextMenuRequestSchema = z.strictObject({
+  sessionKey: sessionKeySchema,
+});
+
+export type CanvasContextMenuRequest = z.infer<
+  typeof canvasContextMenuRequestSchema
+>;
+
+/**
+ * `canvas:context-menu`: the overlay says the session at `sessionKey` was
+ * right-clicked; main pops up that session's menu on the canvas window (the
+ * menus are defined in main/windows only). Answers null.
+ */
+export const canvasContextMenu = {
+  channel: 'canvas:context-menu',
+  input: z.tuple([canvasContextMenuRequestSchema]),
   output: z.null(),
 } as const satisfies IpcContract;
 

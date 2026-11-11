@@ -42,6 +42,26 @@ const state = vi.hoisted(() => {
     powerArgs: undefined as unknown[] | undefined,
     /** What main.ts passed to watchSleep. */
     sleepArgs: undefined as unknown[] | undefined,
+    /** What main.ts passed to registerCanvasHoverHandler. */
+    hoverCanvas: undefined as unknown,
+    /** The right-click callback main.ts passed to registerCanvasContextMenuHandler. */
+    openMenu: undefined as
+      | ((sessionKey: string, win: unknown) => void)
+      | undefined,
+    /** What the right-click callback passed to openCanvasMenu. */
+    menuArgs: undefined as
+      | [
+          string,
+          unknown,
+          {
+            sessionKey: string;
+            state(): string | null;
+            setDemo(state: string | null): void;
+          },
+        ]
+      | undefined,
+    /** The listener main.ts passed to watchDemoState. */
+    demoListener: undefined as ((state: string | null) => void) | undefined,
     reset() {
       s.squirrel = false;
       s.lock = true;
@@ -59,6 +79,10 @@ const state = vi.hoisted(() => {
       s.displaysOptions = undefined;
       s.powerArgs = undefined;
       s.sleepArgs = undefined;
+      s.hoverCanvas = undefined;
+      s.openMenu = undefined;
+      s.menuArgs = undefined;
+      s.demoListener = undefined;
       s.ready = new Promise<void>((resolve) => {
         s.resolveReady = resolve;
       });
@@ -210,11 +234,24 @@ vi.mock('../../src/main/detection/detection', () => ({
     );
     return {
       fake: 'detection',
+      get: () => ({ sessions: ['fake sessions'], adapters: [] }),
       setDemo: (demoState: string | null) => {
         state.order.push(`detection.setDemo ${String(demoState)}`);
       },
       stop: record('detection.stop'),
     };
+  },
+  demoStateOf: (sessions: unknown) => {
+    state.order.push(`demoStateOf ${JSON.stringify(sessions)}`);
+    return 'error';
+  },
+  watchDemoState: (
+    detection: { fake: string },
+    listener: (demoState: string | null) => void,
+  ) => {
+    state.order.push(`watchDemoState ${detection.fake}`);
+    state.demoListener = listener;
+    state.maybeFail('watchDemoState');
   },
   watchSleep: (...args: unknown[]) => {
     state.sleepArgs = args;
@@ -233,6 +270,17 @@ vi.mock('../../src/main/windows/power', () => ({
 
 vi.mock('../../src/main/windows/canvas-window', () => ({
   registerCanvasReadyHandler: record('registerCanvasReadyHandler'),
+  registerCanvasHoverHandler: (canvas: { fake: string }) => {
+    state.order.push(`registerCanvasHoverHandler ${canvas.fake}`);
+    state.hoverCanvas = canvas;
+  },
+  registerCanvasContextMenuHandler: (
+    canvas: { fake: string },
+    open: (sessionKey: string, win: unknown) => void,
+  ) => {
+    state.order.push(`registerCanvasContextMenuHandler ${canvas.fake}`);
+    state.openMenu = open;
+  },
   createCanvasWindows: (options: { preload: string; platform: string }) => {
     state.order.push(
       `createCanvasWindows ${options.preload.split(/[\\/]/).at(-1)} ${options.platform}`,
@@ -299,6 +347,15 @@ vi.mock('../../src/main/windows/menu', () => ({
     state.maybeFail('buildApplicationMenu');
     return { fake: `menu ${platform}` };
   },
+  openCanvasMenu: (
+    sessionKey: string,
+    win: unknown,
+    demo: NonNullable<typeof state.menuArgs>[2],
+  ) => {
+    state.order.push(`openCanvasMenu ${sessionKey} ${JSON.stringify(win)}`);
+    state.menuArgs = [sessionKey, win, demo];
+    return true;
+  },
 }));
 
 vi.mock('../../src/main/windows/tray', () => ({
@@ -313,6 +370,9 @@ vi.mock('../../src/main/windows/tray', () => ({
     state.order.push(`createTray ${platform}`);
     state.trayActions = actions;
     state.maybeFail('createTray');
+  },
+  showTrayDemoState: (demoState: string | null) => {
+    state.order.push(`showTrayDemoState ${String(demoState)}`);
   },
 }));
 
@@ -337,6 +397,7 @@ function readySteps(): string[] {
     'handleAppProtocol',
     'dock.hideAtStartup',
     `createTray ${process.platform}`,
+    'watchDemoState detection',
     'watchDisplays',
     'watchPower',
     'watchSleep',
@@ -427,6 +488,8 @@ describe('the primary instance', () => {
       'createDockController',
       'createPanelWindows panels.cjs',
       `createCanvasWindows overlay.cjs ${process.platform}`,
+      'registerCanvasHoverHandler canvas',
+      'registerCanvasContextMenuHandler canvas',
     ]);
     expect(state.logs[0]).toMatch(/^app: start version=1\.0\.0 /);
   });
@@ -460,8 +523,11 @@ describe('the primary instance', () => {
       ]);
       expect(state.order).toStrictEqual(
         readySteps().filter(
-          // A menu that cannot be built is not set.
-          (entry) => step !== 'menu' || !entry.startsWith('Menu.'),
+          (entry) =>
+            // A menu that cannot be built is not set, and a tray that
+            // cannot be created has no check mark to follow detection.
+            (step !== 'menu' || !entry.startsWith('Menu.')) &&
+            (step !== 'tray' || !entry.startsWith('watchDemoState')),
         ),
       );
       expect(state.order).toContain(`createTray ${process.platform}`);
@@ -655,6 +721,52 @@ describe('the primary instance', () => {
       'detection.setDemo approval',
       'detection.setDemo null',
       'app.quit',
+    ]);
+  });
+
+  it('gives the canvas hover handler the canvas windows', async () => {
+    await startMain();
+    expect(state.hoverCanvas).toStrictEqual(
+      expect.objectContaining({ fake: 'canvas' }),
+    );
+  });
+
+  it('wires a canvas right-click to the canvas menu, for the demo session as main/detection sees it', async () => {
+    await startMain();
+    state.order = [];
+
+    state.openMenu?.('codex:s1', { fake: 'canvas window' });
+
+    expect(state.order).toStrictEqual([
+      'openCanvasMenu codex:s1 {"fake":"canvas window"}',
+    ]);
+    const demo = state.menuArgs?.[2];
+    expect(demo?.sessionKey).toBe('demo:1');
+
+    state.order = [];
+    // Its current state: the demo session's in detection's sessions section.
+    expect(demo?.state()).toBe('error');
+    // Picking from the menu goes to detection.setDemo, as the tray's does.
+    demo?.setDemo('done');
+    demo?.setDemo(null);
+    expect(state.order).toStrictEqual([
+      'demoStateOf ["fake sessions"]',
+      'detection.setDemo done',
+      'detection.setDemo null',
+    ]);
+  });
+
+  it("the tray's 示範模式 check mark follows detection's demo state", async () => {
+    await startMain();
+    await becomeReady();
+    state.order = [];
+
+    state.demoListener?.('error');
+    state.demoListener?.(null);
+
+    expect(state.order).toStrictEqual([
+      'showTrayDemoState error',
+      'showTrayDemoState null',
     ]);
   });
 
