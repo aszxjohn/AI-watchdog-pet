@@ -225,6 +225,28 @@ describe('shouldWatch', () => {
     }
   });
 
+  it('takes the BigInt modification time chokidar gives on Windows', () => {
+    // readdirp asks for BigInt stats on Windows; mixing a BigInt with the
+    // numbers recent() compares throws a TypeError, which once stopped the
+    // watcher's first scan there.
+    const bigFile = (mtimeMs: bigint) => ({
+      isFile: () => true,
+      isDirectory: () => false,
+      mtimeMs,
+    });
+    const entry = at('-work-gundam', `${ID}.jsonl`);
+    expect(shouldWatch(root, entry, bigFile(100n), recent)).toBe(true);
+    expect(shouldWatch(root, entry, bigFile(99n), recent)).toBe(false);
+    expect(
+      shouldWatch(
+        root,
+        entry,
+        bigFile(100n),
+        (mtimeMs) => Date.now() - mtimeMs < 1,
+      ),
+    ).toBe(false);
+  });
+
   it.each([
     [
       'another folder in a session folder',

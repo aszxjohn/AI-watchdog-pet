@@ -89,7 +89,11 @@ export function isSubagentTranscript(name: string): boolean {
 export interface WatchedStats {
   isFile(): boolean;
   isDirectory(): boolean;
-  readonly mtimeMs: number;
+  /**
+   * A BigInt on Windows: chokidar's readdirp asks for BigInt stats there,
+   * and a BigInt cannot be mixed with numbers (it throws a TypeError).
+   */
+  readonly mtimeMs: number | bigint;
 }
 
 /**
@@ -124,7 +128,7 @@ export function shouldWatch(
     return isTranscript || isFolder;
   }
   if (stats.isFile()) {
-    return isTranscript && recent(stats.mtimeMs);
+    return isTranscript && recent(Number(stats.mtimeMs));
   }
   return stats.isDirectory() && isFolder;
 }

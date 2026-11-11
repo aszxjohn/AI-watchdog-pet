@@ -153,6 +153,7 @@ context:
 - 主 session 核對：讀過翻譯與轉接器的原始碼；fixture 的每個字串值都在白名單內（工具名、紀錄種類、中斷固定文字、「範例標題」、`/fixture/project`），6 個 UUID 都與本機真實檔名不同，快照沒有路徑。重跑 typecheck、lint、`CI=true npm test`（47 個檔案、2113 個測試、0 跳過）、depcruise（0 違規），全部通過；I/O 矩陣 16 列都有對應測試並有執行（`detection-claude-code.test.ts` 的 `I/O matrix`，唯讀列在 `detection-claude-code-fixtures.test.ts`）。開一個真實 Claude Code session 看面板的人工驗收尚未進行。
 - 審查修補（第 1 輪，14 項，含使用者決定的兩項）完成後，主 session 重跑：typecheck、lint、`CI=true npm test`（47 個檔案、2125 個測試、0 跳過）、depcruise（0 違規），全部通過；fixture 與快照再查一次，沒有任何 home 路徑。
 - CI（`05111fa`）：Windows 上三個用真 chokidar 的測試在 5 秒內等不到 `sync.ready`（macOS 通過）。CI 的完整 log 要登入才看得到，原因未確定；先把這三個測試的單項等待加長到 20 秒、整個測試 60 秒，失敗訊息附上平台、健康、各類輸出數量與 `detection` 紀錄（公開的 annotations 看得到），下一輪 CI 再判斷是 Windows 慢還是根本沒有觸發。
+- CI（`0f9ed0c`）的診斷訊息找到 Windows 的原因：chokidar 的 readdirp 在 Windows 上給 BigInt 的檔案資訊，`shouldWatch` 把 BigInt 的 `mtimeMs` 和數字相減，丟出 `TypeError`，第一次掃描中斷、`sync.ready` 永遠不送，轉接器在 Windows 上完全讀不到。修正：`mtimeMs` 先轉成數字；加一個以 BigInt 模擬 Windows 的測試，拿掉修正時會重現同一個 `TypeError`。
 
 ## Spec Change Log
 
