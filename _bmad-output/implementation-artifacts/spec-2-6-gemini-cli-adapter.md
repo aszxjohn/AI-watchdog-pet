@@ -115,6 +115,7 @@ context:
 - 主 session 驗證（全部修補後）：typecheck、lint、depcruise（0 違規）、`CI=true npm test`（53 個檔案、2376 個測試）全過；diff 沒有刪掉的 `expect(`。fixture 的所有值逐一列出確認只有佔位值。
 - 開發代理實機：隔離 `--user-data-dir` 跑 `npm start`，run log 有 `gemini: started`、`replayed 0 transcripts … (0 sessions, 0 subagents; 3 transcripts in all); sync.ready`、`gemini: stopped`，沒有 `detection` 錯誤；`~/.gemini/tmp` 的 metadata 前後相同。本機 3 個 chat log 都在補讀時間範圍外，即時讀只有測試驗證過。
 - 使用者驗收（開一個 Gemini CLI session 看「管理 session」頁）還沒做。
+- CI：使用者 commit `b1aa433`（2026-11-12）後，GitHub Actions 的 macOS、Windows 都通過（run 43143692121）；`2-6-gemini-cli-轉接器` 設為 `done`。
 - sprint 狀態：Story 2.6 三份規格（前置重構、推測一輪結束、本份）都完成，`2-6-gemini-cli-轉接器` 設為 `review`，等 commit 後 CI 通過再設 `done`。
 
 ## Spec Change Log

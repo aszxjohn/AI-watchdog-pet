@@ -1,0 +1,541 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`fixtures (de-identified real transcripts) > 00000001-0000-4000-8000-000000000000/00000001-0000-4000-8000-000000000000.jsonl 1`] = `
+"session.start
+session.meta "fixture-project"
+turn.start
+tool.start Read step1:1
+tool.start Glob step1:2
+tool.start GetMcpTools step1:3
+tool.start AskQuestion step1:4
+tool.end step1:1
+tool.end step1:2
+tool.end step1:3
+tool.end step1:4
+tool.start Read step2:1
+tool.start Read step2:2
+tool.start Read step2:3
+tool.start GetMcpTools step2:4
+tool.start Glob step2:5
+tool.start Shell step2:6
+tool.end step2:1
+tool.end step2:2
+tool.end step2:3
+tool.end step2:4
+tool.end step2:5
+tool.end step2:6
+tool.start Read step3:1
+tool.start Read step3:2
+tool.start Grep step3:3
+tool.start Shell step3:4
+tool.start GetMcpTools step3:5
+turn.end"
+`;
+
+exports[`fixtures (de-identified real transcripts) > 00000002-0000-4000-8000-000000000000/00000002-0000-4000-8000-000000000000.jsonl 1`] = `
+"session.start
+session.meta "fixture-project"
+turn.start
+tool.start Read step1:1
+tool.start GetMcpTools step1:2
+tool.end step1:1
+tool.end step1:2
+activity
+turn.end
+turn.start
+tool.start Read step2:1
+tool.end step2:1
+activity
+turn.end
+turn.start
+tool.start WebSearch step3:1
+tool.end step3:1
+tool.start WebFetch step4:1
+tool.start WebSearch step4:2
+tool.end step4:1
+tool.end step4:2
+activity
+turn.end
+activity
+turn.start
+turn.start
+tool.start Read step5:1
+tool.start WebSearch step5:2
+tool.end step5:1
+tool.end step5:2
+activity
+turn.end
+turn.start
+activity
+turn.end"
+`;
+
+exports[`fixtures (de-identified real transcripts) > 00000003-0000-4000-8000-000000000000/00000003-0000-4000-8000-000000000000.jsonl 1`] = `
+"session.start
+session.meta "fixture-project"
+turn.start
+tool.start GetMcpTools step1:1
+tool.start Glob step1:2
+tool.start Shell step1:3
+tool.end step1:1
+tool.end step1:2
+tool.end step1:3
+tool.start CallMcpTool step2:1
+tool.start Shell step2:2
+tool.end step2:1
+tool.end step2:2
+tool.start Shell step3:1
+tool.end step3:1
+tool.start Shell step4:1
+turn.end
+turn.start
+tool.start Shell step5:1
+tool.end step5:1
+activity
+turn.end
+turn.start
+error
+turn.end
+turn.start
+error
+turn.end
+turn.start
+turn.end
+turn.start
+tool.start Shell step6:1
+tool.end step6:1
+activity
+turn.end
+turn.start
+tool.start Shell step7:1
+tool.start Read step7:2
+tool.end step7:1
+tool.end step7:2
+tool.start Write step8:1
+tool.start StrReplace step8:2
+tool.end step8:1
+tool.end step8:2
+tool.start Shell step9:1
+tool.end step9:1
+tool.start Read step10:1
+tool.end step10:1
+activity
+turn.end"
+`;
+
+exports[`fixtures (de-identified real transcripts) > 00000004-0000-4000-8000-000000000000/00000004-0000-4000-8000-000000000000.jsonl 1`] = `
+"session.start
+session.meta "fixture-project"
+turn.start
+tool.start GetMcpTools step1:1
+tool.start Glob step1:2
+tool.start Read step1:3
+tool.start Read step1:4
+tool.start Read step1:5
+tool.start Shell step1:6
+tool.start GetMcpTools step1:7
+tool.end step1:1
+tool.end step1:2
+tool.end step1:3
+tool.end step1:4
+tool.end step1:5
+tool.end step1:6
+tool.end step1:7
+tool.start GetMcpTools step2:1
+tool.start Glob step2:2
+tool.start Glob step2:3
+tool.start Read step2:4
+tool.start Read step2:5
+tool.start Read step2:6
+tool.start Read step2:7
+tool.start Glob step2:8
+tool.end step2:1
+tool.end step2:2
+tool.end step2:3
+tool.end step2:4
+tool.end step2:5
+tool.end step2:6
+tool.end step2:7
+tool.end step2:8
+tool.start Glob step3:1
+tool.start Glob step3:2
+tool.start Glob step3:3
+tool.start Grep step3:4
+tool.start Grep step3:5
+tool.start Read step3:6
+tool.start Read step3:7
+tool.start Shell step3:8
+tool.end step3:1
+tool.end step3:2
+tool.end step3:3
+tool.end step3:4
+tool.end step3:5
+tool.end step3:6
+tool.end step3:7
+tool.end step3:8
+tool.start Glob step4:1
+tool.start Grep step4:2
+tool.start Grep step4:3
+tool.start Glob step4:4
+tool.start Glob step4:5
+tool.start Shell step4:6
+tool.end step4:1
+tool.end step4:2
+tool.end step4:3
+tool.end step4:4
+tool.end step4:5
+tool.end step4:6
+tool.start Read step5:1
+tool.start Read step5:2
+tool.start Read step5:3
+tool.start Read step5:4
+tool.start Glob step5:5
+tool.end step5:1
+tool.end step5:2
+tool.end step5:3
+tool.end step5:4
+tool.end step5:5
+tool.start Read step6:1
+tool.start Read step6:2
+tool.start Read step6:3
+tool.start Read step6:4
+tool.start Grep step6:5
+tool.start Grep step6:6
+tool.end step6:1
+tool.end step6:2
+tool.end step6:3
+tool.end step6:4
+tool.end step6:5
+tool.end step6:6
+tool.start Read step7:1
+tool.start Grep step7:2
+tool.start Grep step7:3
+tool.start Read step7:4
+tool.start Shell step7:5
+tool.end step7:1
+tool.end step7:2
+tool.end step7:3
+tool.end step7:4
+tool.end step7:5
+tool.start Read step8:1
+tool.start Read step8:2
+tool.start Read step8:3
+tool.start Read step8:4
+tool.start Grep step8:5
+tool.start Read step8:6
+tool.end step8:1
+tool.end step8:2
+tool.end step8:3
+tool.end step8:4
+tool.end step8:5
+tool.end step8:6
+tool.start Grep step9:1
+tool.start Grep step9:2
+tool.start Grep step9:3
+tool.start Read step9:4
+tool.start Grep step9:5
+tool.end step9:1
+tool.end step9:2
+tool.end step9:3
+tool.end step9:4
+tool.end step9:5
+tool.start Read step10:1
+tool.start Read step10:2
+tool.start Read step10:3
+tool.start Read step10:4
+tool.start Grep step10:5
+tool.start Read step10:6
+tool.end step10:1
+tool.end step10:2
+tool.end step10:3
+tool.end step10:4
+tool.end step10:5
+tool.end step10:6
+tool.start Grep step11:1
+tool.start Read step11:2
+tool.start Grep step11:3
+tool.start Read step11:4
+tool.end step11:1
+tool.end step11:2
+tool.end step11:3
+tool.end step11:4
+tool.start Grep step12:1
+tool.start Grep step12:2
+tool.end step12:1
+tool.end step12:2
+tool.start Grep step13:1
+tool.start Glob step13:2
+tool.end step13:1
+tool.end step13:2
+tool.start Grep step14:1
+tool.start Grep step14:2
+tool.end step14:1
+tool.end step14:2
+tool.start Read step15:1
+tool.start Read step15:2
+tool.start Read step15:3
+tool.end step15:1
+tool.end step15:2
+tool.end step15:3
+tool.start Shell step16:1
+tool.end step16:1
+tool.start Shell step17:1
+tool.end step17:1
+tool.start Read step18:1
+tool.start Shell step18:2
+tool.end step18:1
+tool.end step18:2
+tool.start Read step19:1
+tool.start Read step19:2
+tool.end step19:1
+tool.end step19:2
+tool.start StrReplace step20:1
+tool.start StrReplace step20:2
+tool.start StrReplace step20:3
+tool.end step20:1
+tool.end step20:2
+tool.end step20:3
+tool.start Read step21:1
+tool.start Read step21:2
+tool.end step21:1
+tool.end step21:2
+activity
+turn.end
+turn.start
+tool.start GetMcpTools step22:1
+tool.end step22:1
+tool.start GetMcpTools step23:1
+tool.start GetMcpTools step23:2
+tool.start GetMcpTools step23:3
+tool.end step23:1
+tool.end step23:2
+tool.end step23:3
+tool.start Task step24:1
+tool.end step24:1
+tool.start StrReplace step25:1
+tool.start StrReplace step25:2
+tool.end step25:1
+tool.end step25:2
+tool.start Grep step26:1
+tool.end step26:1
+activity
+turn.start
+tool.start Grep step27:1
+tool.start Grep step27:2
+tool.start Grep step27:3
+tool.start Grep step27:4
+tool.end step27:1
+tool.end step27:2
+tool.end step27:3
+tool.end step27:4
+tool.start Grep step28:1
+tool.start Grep step28:2
+tool.end step28:1
+tool.end step28:2
+tool.start Read step29:1
+tool.start Grep step29:2
+tool.end step29:1
+tool.end step29:2
+tool.start StrReplace step30:1
+tool.start StrReplace step30:2
+tool.end step30:1
+tool.end step30:2
+activity
+turn.end
+turn.start
+tool.start Grep step31:1
+tool.start Read step31:2
+tool.start Read step31:3
+tool.end step31:1
+tool.end step31:2
+tool.end step31:3
+tool.start Read step32:1
+tool.start Grep step32:2
+tool.end step32:1
+tool.end step32:2
+tool.start Read step33:1
+tool.start Read step33:2
+tool.end step33:1
+tool.end step33:2
+tool.start Grep step34:1
+tool.start Grep step34:2
+tool.end step34:1
+tool.end step34:2
+tool.start StrReplace step35:1
+tool.start StrReplace step35:2
+tool.start StrReplace step35:3
+tool.end step35:1
+tool.end step35:2
+tool.end step35:3
+activity
+turn.end
+turn.start
+tool.start StrReplace step36:1
+tool.start StrReplace step36:2
+tool.start StrReplace step36:3
+tool.end step36:1
+tool.end step36:2
+tool.end step36:3
+activity
+turn.end
+turn.start
+tool.start Grep step37:1
+tool.start Grep step37:2
+tool.end step37:1
+tool.end step37:2
+tool.start Grep step38:1
+tool.start Grep step38:2
+tool.end step38:1
+tool.end step38:2
+tool.start Read step39:1
+tool.start Grep step39:2
+tool.end step39:1
+tool.end step39:2
+tool.start Grep step40:1
+tool.start Grep step40:2
+tool.end step40:1
+tool.end step40:2
+tool.start Read step41:1
+tool.start Grep step41:2
+tool.end step41:1
+tool.end step41:2
+activity
+turn.end
+turn.start
+tool.start StrReplace step42:1
+tool.start StrReplace step42:2
+tool.end step42:1
+tool.end step42:2
+activity
+turn.end
+turn.start
+tool.start Shell step43:1
+tool.start Shell step43:2
+tool.end step43:1
+tool.end step43:2
+tool.start Shell step44:1
+tool.start Shell step44:2
+tool.start Shell step44:3
+tool.end step44:1
+tool.end step44:2
+tool.end step44:3
+tool.start Shell step45:1
+turn.end
+turn.start
+activity
+turn.end
+activity
+turn.start
+turn.start
+activity
+turn.end
+activity
+turn.start
+turn.start
+tool.start StrReplace step46:1
+tool.start StrReplace step46:2
+tool.end step46:1
+tool.end step46:2
+activity
+turn.end
+turn.start
+tool.start Read step47:1
+tool.start Grep step47:2
+turn.end
+turn.start
+tool.start StrReplace step48:1
+tool.start StrReplace step48:2
+tool.end step48:1
+tool.end step48:2
+activity
+turn.end
+turn.start
+tool.start Read step49:1
+tool.start Grep step49:2
+tool.end step49:1
+tool.end step49:2
+tool.start StrReplace step50:1
+tool.start StrReplace step50:2
+tool.end step50:1
+tool.end step50:2
+activity
+turn.end
+activity
+turn.start
+turn.start
+tool.start StrReplace step51:1
+tool.start StrReplace step51:2
+tool.end step51:1
+tool.end step51:2
+activity
+turn.end
+turn.start
+tool.start Grep step52:1
+tool.start Grep step52:2
+tool.end step52:1
+tool.end step52:2
+tool.start Grep step53:1
+tool.start Read step53:2
+tool.end step53:1
+tool.end step53:2
+tool.start Grep step54:1
+tool.end step54:1
+activity
+turn.end
+turn.start
+tool.start Grep step55:1
+tool.start Grep step55:2
+tool.end step55:1
+tool.end step55:2
+tool.start Grep step56:1
+tool.start Read step56:2
+tool.end step56:1
+tool.end step56:2
+tool.start Grep step57:1
+tool.start Grep step57:2
+tool.end step57:1
+tool.end step57:2
+tool.start Grep step58:1
+tool.start Grep step58:2
+tool.end step58:1
+tool.end step58:2
+tool.start Read step59:1
+tool.start Read step59:2
+tool.start Grep step59:3
+tool.end step59:1
+tool.end step59:2
+tool.end step59:3
+tool.start Read step60:1
+tool.start Read step60:2
+tool.end step60:1
+tool.end step60:2
+tool.start Grep step61:1
+tool.start Read step61:2
+tool.end step61:1
+tool.end step61:2
+activity
+turn.end
+turn.start
+tool.start Grep step62:1
+tool.start Grep step62:2
+tool.end step62:1
+tool.end step62:2
+activity
+turn.end
+activity
+turn.start
+activity
+turn.end
+turn.start
+activity
+turn.start
+activity
+turn.end
+turn.start
+tool.start StrReplace step63:1
+tool.start StrReplace step63:2
+tool.end step63:1
+tool.end step63:2
+activity
+turn.end"
+`;

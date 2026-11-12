@@ -29,9 +29,24 @@
  *   transcript it has not read yet is read from its start when it was
  *   created after the initial scan and is no longer than the tail, and
  *   replayed from its tail otherwise (a resumed session). One that got
- *   smaller is logged and replayed from its tail again. A transcript the
- *   gate holds back is skipped, and not followed, until the gate lets it
- *   through.
+ *   smaller is logged and replayed from its tail again (but see
+ *   `rereadShrunk` below). A transcript the gate holds back is skipped,
+ *   and not followed, until the gate lets it through.
+ * - With `rereadShrunk` (Story 2.7: a source whose tool may write a
+ *   transcript anew, whole), the adapter keeps a short hash of each
+ *   complete line it has read from a transcript's start (of about its
+ *   first REPLAY_TAIL_BYTES; none for a transcript first read from its
+ *   tail). A transcript that got smaller, and is no longer than
+ *   REPLAY_TAIL_BYTES, is then logged (with counts) and read again from
+ *   its start, from the translation state it had, not replayed (`replay:
+ *   false`): its lines are matched against those read before, in order,
+ *   and the ones equal to them are skipped (their events were sent) until
+ *   the first that differs; it and every line after it are translated.
+ *   The matching ends with that read, unless the transcript was empty
+ *   then (emptied, to be written anew): then it goes on at the next
+ *   reads, until a line differs or every line read before has matched. A
+ *   transcript first read from its tail, or longer than REPLAY_TAIL_BYTES
+ *   once smaller, is replayed from its tail as above.
  * - A trailing read (Story 2.6): chokidar reports at most one `change` of
  *   a path per 50 ms, so a record written right after another would wait
  *   for the file's next write. After every read caused by a change, the
@@ -73,6 +88,8 @@
  *
  * The log gets codes and counts only, never a path or a record's content.
  */
+import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import nodeFs from 'node:fs';
 import path from 'node:path';
 import {
@@ -224,6 +241,39 @@ export interface JsonlLogAdapterOptions<Where extends object, State> {
   ) => DetectionEvent | null;
   /** Before a transcript is opened (default: every one is read). */
   readonly gate?: ReadGate<Where, State> | undefined;
+  /**
+   * A transcript that got smaller is read again from its start, skipping
+   * the lines read before (Story 2.7; see the module comment), instead of
+   * replayed from its tail. Without it, it is replayed from its tail.
+   */
+  readonly rereadShrunk?: true | undefined;
+}
+
+/**
+ * With `rereadShrunk`: the lines read from a transcript's start, as short
+ * hashes, to tell the lines read before from new ones once it gets smaller.
+ * Its arrays belong to that one transcript and grow as it is read.
+ */
+interface LineHashes {
+  /**
+   * The hash of each complete line read from the transcript's start, in
+   * order, while `bytes` is within REPLAY_TAIL_BYTES: the lines a
+   * transcript no longer than that can share with it.
+   */
+  readonly read: string[];
+  /** The bytes of the lines hashed in `read` (newlines included). */
+  bytes: number;
+  /**
+   * After the transcript got smaller: the hashes of the lines read before
+   * that, which the lines read from its start again are matched against
+   * (`read.length` of them matched so far); null when not matching.
+   */
+  before: readonly string[] | null;
+}
+
+/** A line's short hash, to compare lines with those read before. */
+function lineHash(line: string): string {
+  return createHash('sha256').update(line).digest('base64').slice(0, 12);
 }
 
 /** A transcript being followed. */
@@ -232,6 +282,11 @@ interface TrackedFile<State> {
   readonly offset: number;
   readonly carry: LineCarry;
   readonly state: State;
+  /**
+   * With `rereadShrunk`, the lines read from the start; null without it,
+   * or when the transcript was first read from its tail.
+   */
+  readonly hashes: LineHashes | null;
 }
 
 /** Why a transcript is read. */
@@ -263,6 +318,7 @@ export function createJsonlLogAdapter<Where extends object, State>({
   translate,
   nameEvent,
   gate,
+  rereadShrunk,
 }: JsonlLogAdapterOptions<Where, State>): DetectionAdapter {
   let context: AdapterContext | undefined;
   let watcher: TranscriptWatcher | undefined;
@@ -398,6 +454,9 @@ export function createJsonlLogAdapter<Where extends object, State>({
     let carry: LineCarry;
     let state: State;
     let replay: boolean;
+    let hashes: LineHashes | null;
+    /** It got smaller and is read again from its start. */
+    let rereading = false;
     if (tracked === undefined) {
       state = initialState;
       replay =
@@ -407,18 +466,33 @@ export function createJsonlLogAdapter<Where extends object, State>({
       ({ from, carry } = replay
         ? tailRead(stats.size, REPLAY_TAIL_BYTES)
         : { from: 0, carry: NO_CARRY });
+      hashes = startHashes(from, carry);
     } else if (stats.size < tracked.offset) {
-      log(
-        `a transcript got smaller; replaying its last ${TAIL_SIZE} again`,
-        'warn',
-      );
       state = tracked.state;
-      replay = true;
-      ({ from, carry } = tailRead(stats.size, REPLAY_TAIL_BYTES));
+      if (tracked.hashes !== null && stats.size <= REPLAY_TAIL_BYTES) {
+        rereading = true;
+        replay = false;
+        from = 0;
+        carry = NO_CARRY;
+        // Matching already: the lines it matches against were all read.
+        hashes = {
+          read: [],
+          bytes: 0,
+          before: tracked.hashes.before ?? tracked.hashes.read,
+        };
+      } else {
+        log(
+          `a transcript got smaller; replaying its last ${TAIL_SIZE} again`,
+          'warn',
+        );
+        replay = true;
+        ({ from, carry } = tailRead(stats.size, REPLAY_TAIL_BYTES));
+        hashes = startHashes(from, carry);
+      }
     } else if (stats.size === tracked.offset) {
       return;
     } else {
-      ({ offset: from, carry, state } = tracked);
+      ({ offset: from, carry, state, hashes } = tracked);
       replay = false;
     }
 
@@ -454,7 +528,12 @@ export function createJsonlLogAdapter<Where extends object, State>({
     const chunk = readRange(fs, fd, from, stats.size);
     const split = splitLines(carry, chunk);
     const events: DetectionEvent[] = [];
+    let skipped = 0;
     for (const line of split.lines) {
+      if (hashes !== null && readBefore(hashes, line)) {
+        skipped += 1;
+        continue;
+      }
       const record = parseRecordLine(line);
       if (record === null) {
         badLine();
@@ -482,10 +561,20 @@ export function createJsonlLogAdapter<Where extends object, State>({
         callbackFailed('nameEvent', error, 'sending the read without it');
       }
     }
+    if (rereading && stats.size > 0 && hashes !== null) {
+      // Not emptied: a line equal to one read before, appended later, is new.
+      hashes.before = null;
+    }
+    if (rereading) {
+      log(
+        `a transcript got smaller; read it again from its start (${skipped} lines read before skipped, ${split.lines.length - skipped} new)`,
+      );
+    }
     files.set(file, {
       offset: from + chunk.length,
       carry: split.carry,
       state,
+      hashes,
     });
     if (gate !== undefined) {
       try {
@@ -495,6 +584,43 @@ export function createJsonlLogAdapter<Where extends object, State>({
       }
     }
     deliver(events);
+  }
+
+  /**
+   * With `rereadShrunk`, the line hashes of a read starting at `from` with
+   * `carry`: empty ones for a read from the transcript's start; null for
+   * one from its tail (what came before it is not known), or without it.
+   */
+  function startHashes(from: number, carry: LineCarry): LineHashes | null {
+    return rereadShrunk === true && from === 0 && !carry.skipping
+      ? { read: [], bytes: 0, before: null }
+      : null;
+  }
+
+  /**
+   * Whether `line`, the next complete line from the transcript's start,
+   * was read before it got smaller (so it is skipped); hashes it, while
+   * within REPLAY_TAIL_BYTES. The first line that differs, or comes after
+   * every line read before, ends the matching.
+   */
+  function readBefore(hashes: LineHashes, line: string): boolean {
+    if (hashes.bytes > REPLAY_TAIL_BYTES) {
+      // Past what a transcript that got smaller can share: new.
+      hashes.before = null;
+      return false;
+    }
+    const hash = lineHash(line);
+    const index = hashes.read.length;
+    hashes.read.push(hash);
+    hashes.bytes += Buffer.byteLength(line) + 1;
+    if (hashes.before === null) {
+      return false;
+    }
+    if (index < hashes.before.length && hashes.before[index] === hash) {
+      return true;
+    }
+    hashes.before = null;
+    return false;
   }
 
   /** Reads what is new in transcript `file`, if it is one. Never throws. */

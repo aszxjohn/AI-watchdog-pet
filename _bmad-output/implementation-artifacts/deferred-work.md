@@ -187,3 +187,15 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-6-gemini-cli-adapter.md`
   summary: Gemini 的 `error` 紀錄一律送 `error`＋`turn.end`，若 Gemini CLI 出錯後自動重試、同一輪接著回覆，這一輪會被提早結束
   evidence: Story 2.6 Gemini 審查 B7（未驗證，若成立為 medium）。本機 3 個樣本都沒有 `error`；要一筆「出錯後自動重試」的真實紀錄，確認 `error` 之後還會不會有同一輪的 `gemini` 訊息。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-7-cursor-adapter.md`
+  summary: Cursor 的推測批准／提問假設 assistant 那筆在工具執行、跳出批准、`AskQuestion` 被回答之前就寫入；若「step 寫完」包含工具跑完，推測會兩個方向都錯
+  evidence: Story 2.7 審查 B2（未驗證，若成立為 medium）。結構調查看不出寫入時機。要在 Cursor 觸發一次需要批准的 `Shell` 和一次 `AskQuestion`，確認回答之前面板就已經顯示「要你批准」／「要你決定」。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-7-cursor-adapter.md`
+  summary: Cursor 可能有 `TodoWrite`、`ReadLints`、`SemanticSearch`、`LS` 這類不會跳批准的工具，以及 `CreatePlan`、`SwitchMode` 這類可能要使用者決定的工具，目前不在不推測清單或提問清單
+  evidence: Story 2.7 審查 B3（未驗證，若成立為 medium）。本機 12 個 transcript 都沒出現這些工具名，名單出自去識別化腳本的 `CURSOR_TOOLS`（開發代理依一般知識列的）。實機驗收看到這些工具時，再請使用者決定要不要加進 `sources.ts` 的清單。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-7-cursor-adapter.md`
+  summary: 共用 watcher 跟住所有歷史 session 資料夾、數量沒有上限；Cursor 一個 session 一個資料夾，被 watch 的資料夾數會隨使用歷史一直增加
+  evidence: Story 2.7 審查 B6（未驗證，若成立為 medium）。共用 `shouldFollow` 對資料夾不看新舊，claude-code 的 `<id>/`、`subagents/` 從 2.4 起就是這樣。要量幾百個 session 資料夾時的 watch handle 數與啟動 scan 時間才知道有沒有問題；可能的修法是發現 session 資料夾時先 stat 它的 transcript，不在 discovery window 內就不跟。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-7-cursor-adapter.md`
+  summary: 補讀到停在 step 中間、最後是可推測工具的 transcript（例如 Cursor 當掉）時，會一直顯示「要你批准（推測）」直到 session 過期
+  evidence: Story 2.7 審查 B7（low）。這是 2.6 推測機制的既有設計：補讀的工具呼叫從回填的開始時間起算，同步時就推測（`inference.ts` 模組註解），gemini 也一樣。可能的修法是補讀時對已經很舊的開啟工具不做推測。

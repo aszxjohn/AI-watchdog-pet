@@ -63,9 +63,13 @@ export interface SourceCapability {
    */
   readonly questionTools: readonly string[];
   /**
-   * Tools that run long by design (a subagent, a web search), matched by
-   * exact `toolName`. However long one runs, main/detection/inference
-   * guesses nothing for it: it stays `working`.
+   * Tools that never wait on the user, matched by exact `toolName`: no
+   * approval or question is guessed for them. Two kinds: tools that run
+   * long by design (a subagent, a web search), and tools whose end is
+   * known only once the source writes its next record (Cursor's `Read`,
+   * `Glob`, `Grep`: written once the step is done, then nothing until the
+   * model's next step). However long one stays open,
+   * main/detection/inference guesses nothing for it: it stays `working`.
    */
   readonly noInferTools: readonly string[];
 }
@@ -116,7 +120,16 @@ function capability({
  *   a call after the fact), and no turn end is written at all: the turn is
  *   guessed to end TURN_END_INFER_MS after a reply with nothing newer
  *   (Story 2.6).
- * - `cursor`: approvals are not written; questions are.
+ * - `cursor`: neither is written to its agent transcripts: a record is
+ *   written per step, once the step is done, and the answer to
+ *   `AskQuestion`, its question tool, is never written (the next record is
+ *   the model's). Its turn ends are written (`turn_ended`). Its no-guess
+ *   tools are the ones that ask for no approval and are often followed by
+ *   more than approvalInferMs of the model's work before the next record:
+ *   reading and searching (`Read`, `Glob`, `Grep`, `SearchConversations`,
+ *   `GetMcpTools`, `WebSearch`), `UpdateCurrentStep` and subagents
+ *   (`Task`). The others (`Shell`, `StrReplace`, `Write`, `CallMcpTool`,
+ *   `WebFetch`, ...) may ask for approval and are guessed at (Story 2.7).
  * - `copilot`: questions are not written. Question tools come with its
  *   adapter (Epic 6).
  * - `demo`: the demo adapter emits every request itself.
@@ -146,7 +159,22 @@ export const SOURCE_CAPABILITIES: Readonly<
     turnEnd: 'none',
     questionTools: ['ask_user'],
   }),
-  cursor: capability({ approval: 'none', question: 'exact', turnEnd: 'exact' }),
+  cursor: capability({
+    approval: 'none',
+    question: 'none',
+    turnEnd: 'exact',
+    questionTools: ['AskQuestion'],
+    noInferTools: [
+      'Read',
+      'Glob',
+      'Grep',
+      'SearchConversations',
+      'GetMcpTools',
+      'WebSearch',
+      'UpdateCurrentStep',
+      'Task',
+    ],
+  }),
   copilot: capability({
     approval: 'exact',
     question: 'none',

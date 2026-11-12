@@ -77,9 +77,19 @@ describe('SOURCE_CAPABILITIES', () => {
       },
       cursor: {
         approval: 'none',
-        question: 'exact',
+        question: 'none',
         turnEnd: 'exact',
-        ...none,
+        questionTools: ['AskQuestion'],
+        noInferTools: [
+          'Read',
+          'Glob',
+          'Grep',
+          'SearchConversations',
+          'GetMcpTools',
+          'WebSearch',
+          'UpdateCurrentStep',
+          'Task',
+        ],
       },
       copilot: {
         approval: 'exact',

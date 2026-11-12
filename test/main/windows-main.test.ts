@@ -245,6 +245,15 @@ vi.mock('../../src/main/detection/adapters/gemini/gemini', () => ({
   },
 }));
 
+vi.mock('../../src/main/detection/adapters/cursor/cursor', () => ({
+  createCursorAdapter: (options: { root: string }) => {
+    // The real home folder's projects folder; only its tail is checked.
+    const tail = options.root.split(/[\\/]/).slice(-2).join('/');
+    state.order.push(`createCursorAdapter root=~/${tail}`);
+    return { fake: 'cursor-adapter' };
+  },
+}));
+
 vi.mock('../../src/main/detection/detection', () => ({
   createDetection: (options: { settings: unknown; adapters?: unknown }) => {
     state.order.push(
@@ -497,7 +506,8 @@ describe('the primary instance', () => {
       'createWindowsStageSource',
       'createClaudeCodeAdapter root=~/.claude/projects',
       'createGeminiAdapter root=~/.gemini/tmp',
-      'createDetection settings={"fake":"settings"} adapters=[{"fake":"claude-code-adapter"},{"fake":"gemini-adapter"}]',
+      'createCursorAdapter root=~/.cursor/projects',
+      'createDetection settings={"fake":"settings"} adapters=[{"fake":"claude-code-adapter"},{"fake":"gemini-adapter"},{"fake":"cursor-adapter"}]',
       'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} detection={"fake":"detection"}',
       'registerIpcHandler app:get-version ["panels"]',
       'registerSettingsHandlers',

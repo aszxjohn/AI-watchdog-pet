@@ -1,0 +1,27 @@
+{"role":"user","message":{"content":[{"type":"text","text":"範例提示"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"範例回覆"},{"type":"tool_use","name":"GetMcpTools","input":{}},{"type":"tool_use","name":"Glob","input":{}},{"type":"tool_use","name":"Shell","input":{}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"範例回覆"},{"type":"tool_use","name":"CallMcpTool","input":{}},{"type":"tool_use","name":"Shell","input":{}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"範例回覆"},{"type":"tool_use","name":"Shell","input":{}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"範例回覆"},{"type":"tool_use","name":"Shell","input":{}}]}}
+{"type":"turn_ended","status":"error","error":"User aborted request"}
+{"role":"user","message":{"content":[{"type":"text","text":"範例提示"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"範例回覆"},{"type":"tool_use","name":"Shell","input":{}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"範例回覆"}]}}
+{"type":"turn_ended","status":"success"}
+{"role":"user","message":{"content":[{"type":"text","text":"範例提示"}]}}
+{"type":"turn_ended","status":"error","error":"fixture error"}
+{"role":"user","message":{"content":[{"type":"text","text":"範例提示"}]}}
+{"type":"turn_ended","status":"error","error":"fixture error"}
+{"role":"user","message":{"content":[{"type":"text","text":"範例提示"}]}}
+{"type":"turn_ended","status":"error","error":"User aborted request"}
+{"role":"user","message":{"content":[{"type":"text","text":"範例提示"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"範例回覆"},{"type":"tool_use","name":"Shell","input":{}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"範例回覆"}]}}
+{"type":"turn_ended","status":"success"}
+{"role":"user","message":{"content":[{"type":"text","text":"範例提示"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"範例回覆"},{"type":"tool_use","name":"Shell","input":{}},{"type":"tool_use","name":"Read","input":{}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"範例回覆"},{"type":"tool_use","name":"Write","input":{}},{"type":"tool_use","name":"StrReplace","input":{}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"範例回覆"},{"type":"tool_use","name":"Shell","input":{}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"範例回覆"},{"type":"tool_use","name":"Read","input":{}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"範例回覆"}]}}
+{"type":"turn_ended","status":"success"}

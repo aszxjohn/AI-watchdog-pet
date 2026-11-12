@@ -6,7 +6,9 @@
  *   a transcript not followed until that line is there;
  * - every callback a source hands in may throw: the adapter keeps going,
  *   skips what it must, still sends `sync.ready`, and logs the callback and
- *   error code once.
+ *   error code once;
+ * - `rereadShrunk` (Story 2.7): a transcript that got smaller is read
+ *   again from its start, the lines read before skipped.
  *
  * A temporary records folder and a fake watcher; nothing real is read.
  */
@@ -16,6 +18,7 @@ import {
   mkdtempSync,
   realpathSync,
   rmSync,
+  truncateSync,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
@@ -594,5 +597,175 @@ describe('a source callback that throws', () => {
     const logged = consoleCalls().join('\n');
     expect(logged).not.toContain('private');
     expect(logged).not.toContain(tmp);
+  });
+});
+
+describe('rereadShrunk', () => {
+  const start = () => startAdapter({ rereadShrunk: true });
+  /** Every event emitted after the first `count`. */
+  const after = (
+    emitted: readonly { outputs: readonly AdapterOutput[] }[],
+    count: number,
+  ) => events(emitted.slice(count));
+  const filler = (n: number) => ({ type: 'other', n, pad: 'x'.repeat(1000) });
+  const fillers = (count: number) =>
+    Array.from({ length: count }, (_, n) => filler(n));
+
+  it('a transcript that got smaller is read again from its start: the lines read before are skipped, the rest sent, not replayed', () => {
+    const { emitted } = start();
+    watcher.on().ready();
+    write('a', [
+      { type: 'prompt' },
+      { type: 'other', n: 1 },
+      { type: 'other', n: 2, pad: 'x'.repeat(100) },
+    ]);
+    const count = emitted.length;
+    writeFileSync(
+      file('a'),
+      lines([{ type: 'prompt' }, { type: 'other', n: 1 }, { type: 'prompt' }]),
+    );
+    watcher.on().changed(file('a'));
+    // The translation state goes on: no second session.start.
+    expect(after(emitted, count)).toStrictEqual(['codex:a turn.start']);
+    expect(consoleCalls()).toContain(
+      '[detection] core-test: a transcript got smaller; read it again from its start (2 lines read before skipped, 1 new)',
+    );
+    expect(consoleCalls().join('\n')).not.toContain('replaying');
+
+    // Read on from there as usual.
+    write('a', [{ type: 'other' }], false);
+    expect(after(emitted, count)).toStrictEqual([
+      'codex:a turn.start',
+      'codex:a activity',
+    ]);
+  });
+
+  it('from the first line that differs, every line is sent, even one equal to the line read before at its place', () => {
+    const { emitted } = start();
+    watcher.on().ready();
+    write('a', [
+      { type: 'prompt' },
+      { type: 'other', n: 1, pad: 'x'.repeat(100) },
+      { type: 'other', n: 2 },
+    ]);
+    const count = emitted.length;
+    writeFileSync(
+      file('a'),
+      lines([{ type: 'prompt' }, { type: 'prompt' }, { type: 'other', n: 2 }]),
+    );
+    watcher.on().changed(file('a'));
+    expect(after(emitted, count)).toStrictEqual([
+      'codex:a turn.start',
+      'codex:a activity',
+    ]);
+    expect(consoleCalls()).toContain(
+      '[detection] core-test: a transcript got smaller; read it again from its start (1 lines read before skipped, 2 new)',
+    );
+  });
+
+  it('emptied, then written anew: the lines read before are still skipped at the next read', () => {
+    const { emitted } = start();
+    watcher.on().ready();
+    const before = [{ type: 'prompt' }, { type: 'other', n: 1 }];
+    write('a', before);
+    const count = emitted.length;
+    truncateSync(file('a'), 0);
+    watcher.on().changed(file('a'));
+    expect(after(emitted, count)).toStrictEqual([]);
+    // Written in two pieces; the second ends in the middle of a line.
+    appendFileSync(file('a'), lines(before.slice(0, 1)));
+    watcher.on().changed(file('a'));
+    const rest = lines([...before.slice(1), { type: 'prompt' }]);
+    appendFileSync(file('a'), rest.slice(0, -5));
+    watcher.on().changed(file('a'));
+    expect(after(emitted, count)).toStrictEqual([]);
+    appendFileSync(file('a'), rest.slice(-5));
+    watcher.on().changed(file('a'));
+    expect(after(emitted, count)).toStrictEqual(['codex:a turn.start']);
+  });
+
+  it('cut to its first lines (not emptied): a line appended later is new, even one equal to the line read before at its place', () => {
+    const { emitted } = start();
+    watcher.on().ready();
+    write('a', [{ type: 'prompt' }, { type: 'other', n: 1 }]);
+    const count = emitted.length;
+    writeFileSync(file('a'), lines([{ type: 'prompt' }]));
+    watcher.on().changed(file('a'));
+    expect(after(emitted, count)).toStrictEqual([]);
+    write('a', [{ type: 'other', n: 1 }], false);
+    expect(after(emitted, count)).toStrictEqual(['codex:a activity']);
+  });
+
+  it('every line read before matched: the next one is new', () => {
+    const { emitted } = start();
+    watcher.on().ready();
+    write('a', [{ type: 'prompt' }, { type: 'other', pad: 'x'.repeat(100) }]);
+    const count = emitted.length;
+    writeFileSync(file('a'), lines([{ type: 'prompt' }]));
+    watcher.on().changed(file('a'));
+    write('a', [{ type: 'prompt' }], false);
+    expect(after(emitted, count)).toStrictEqual(['codex:a turn.start']);
+  });
+
+  it(`grown past ${REPLAY_TAIL_BYTES} bytes, then smaller than that: the lines read before are still skipped`, () => {
+    const { emitted } = start();
+    watcher.on().ready();
+    const many = fillers(Math.ceil(REPLAY_TAIL_BYTES / 1000) + 500);
+    write('a', [{ type: 'prompt' }]);
+    write('a', many, false);
+    const count = emitted.length;
+    writeFileSync(
+      file('a'),
+      lines([{ type: 'prompt' }, ...many.slice(0, 1500), { type: 'prompt' }]),
+    );
+    watcher.on().changed(file('a'));
+    expect(after(emitted, count)).toStrictEqual(['codex:a turn.start']);
+  });
+
+  it(`still longer than ${REPLAY_TAIL_BYTES} bytes once smaller: replayed from its tail, as without it`, () => {
+    const { emitted } = start();
+    watcher.on().ready();
+    write('a', [{ type: 'prompt' }]);
+    write('a', fillers(Math.ceil(REPLAY_TAIL_BYTES / 1000) + 1000), false);
+    const count = emitted.length;
+    truncateSync(file('a'), REPLAY_TAIL_BYTES + 500_000);
+    watcher.on().changed(file('a'));
+    const replayed = after(emitted, count);
+    expect(replayed.length).toBeGreaterThan(1000);
+    expect(replayed.every((line) => line === 'codex:a activity replay')).toBe(
+      true,
+    );
+    expect(consoleCalls()).toContain(
+      '[detection] core-test: a transcript got smaller; replaying its last 2 MiB again',
+    );
+  });
+
+  it(`first read from its tail (longer than ${REPLAY_TAIL_BYTES} bytes): once smaller, replayed from its tail, as without it`, () => {
+    writeFileSync(
+      file('a'),
+      lines([
+        { type: 'prompt' },
+        ...fillers(Math.ceil(REPLAY_TAIL_BYTES / 1000) + 10),
+      ]),
+    );
+    const { emitted } = start();
+    watcher.on().ready();
+    const count = emitted.length;
+    writeFileSync(file('a'), lines([{ type: 'prompt' }]));
+    watcher.on().changed(file('a'));
+    expect(after(emitted, count)).toStrictEqual(['codex:a turn.start replay']);
+    expect(consoleCalls()).toContain(
+      '[detection] core-test: a transcript got smaller; replaying its last 2 MiB again',
+    );
+  });
+
+  it('without it, a transcript that got smaller is replayed from its tail', () => {
+    const { emitted } = startAdapter();
+    watcher.on().ready();
+    write('a', [{ type: 'prompt' }, { type: 'other', pad: 'x'.repeat(100) }]);
+    const count = emitted.length;
+    writeFileSync(file('a'), lines([{ type: 'prompt' }]));
+    watcher.on().changed(file('a'));
+    expect(after(emitted, count)).toStrictEqual(['codex:a turn.start replay']);
   });
 });
