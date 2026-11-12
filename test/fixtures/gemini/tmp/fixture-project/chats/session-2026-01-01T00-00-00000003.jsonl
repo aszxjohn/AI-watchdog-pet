@@ -1,0 +1,14 @@
+{"sessionId":"00000003-0000-4000-8000-000000000000","projectHash":"0000000000000000000000000000000000000000000000000000000000000000","startTime":"2026-01-01T00:00:00.000Z","lastUpdated":"2026-01-01T00:00:00.000Z","kind":"main"}
+{"$set":{"messages":[],"lastUpdated":null}}
+{"type":"info","id":"20000000-0000-4000-8000-000000000042","timestamp":"2026-01-01T00:00:05.238Z","content":"範例回覆"}
+{"$set":{"lastUpdated":null}}
+{"type":"info","id":"20000000-0000-4000-8000-000000000043","timestamp":"2026-01-01T00:00:05.241Z","content":"範例回覆"}
+{"$set":{"lastUpdated":null}}
+{"type":"info","id":"20000000-0000-4000-8000-000000000044","timestamp":"2026-01-01T00:00:13.006Z","content":"範例回覆"}
+{"$set":{"lastUpdated":null}}
+{"type":"info","id":"20000000-0000-4000-8000-000000000045","timestamp":"2026-01-01T00:00:42.450Z","content":"範例回覆"}
+{"$set":{"lastUpdated":null}}
+{"type":"info","id":"20000000-0000-4000-8000-000000000046","timestamp":"2026-01-01T00:00:42.452Z","content":"範例回覆"}
+{"$set":{"lastUpdated":null}}
+{"type":"info","id":"20000000-0000-4000-8000-000000000047","timestamp":"2026-01-01T00:00:48.204Z","content":"範例回覆"}
+{"$set":{"lastUpdated":null}}

@@ -8,7 +8,8 @@
  *    before exiting. Only the second instance says why, on the console.
  * 2. The primary instance registers the `app` and `pack` schemes (before
  *    `ready`), then starts the run log, settings, detection (demo mode off;
- *    the Claude Code adapter reading ~/.claude/projects),
+ *    the Claude Code adapter reading ~/.claude/projects, the Gemini CLI
+ *    adapter reading ~/.gemini/tmp),
  *    StageView (settings, main/windows' displays, canvas and power sections,
  *    and main/detection's sessions and adapters) and the IPC handlers, and
  *    guards every window webContents. The canvas's hover and right-click
@@ -32,7 +33,7 @@
  * 5. Closing every window keeps the app running; only the tray menu's 結束
  *    quits, and settings still waiting for their debounce are written first.
  *    Quitting stops the canvas and detection (and with it the Claude Code
- *    adapter's watcher).
+ *    and Gemini CLI adapters' watchers).
  */
 import {
   app,
@@ -52,6 +53,7 @@ import { appGetVersion } from '../shared/ipc';
 import { MAIN_PANEL_PAGE } from '../shared/panels';
 import { createClaudeCodeAdapter } from './detection/adapters/claude-code/claude-code';
 import { DEMO_SESSION_KEY } from './detection/adapters/demo/demo';
+import { createGeminiAdapter } from './detection/adapters/gemini/gemini';
 import {
   createDetection,
   demoStateOf,
@@ -169,12 +171,16 @@ function startPrimaryInstance(): void {
   const stageSources = createWindowsStageSource();
   // main/detection owns the sessions and adapters sections. It needs no
   // Electron API, so it starts here: syncTimeoutMs counts from now. The
-  // Claude Code adapter reads the real home folder's transcripts.
+  // Claude Code and Gemini CLI adapters read the real home folder's
+  // transcripts and chat logs.
   const detection = createDetection({
     settings,
     adapters: [
       createClaudeCodeAdapter({
         root: path.join(os.homedir(), '.claude', 'projects'),
+      }),
+      createGeminiAdapter({
+        root: path.join(os.homedir(), '.gemini', 'tmp'),
       }),
     ],
   });
@@ -240,8 +246,8 @@ function startPrimaryInstance(): void {
     canvas.stop();
   });
   // Detection stops too: no more timers, no more StageView pushes, and the
-  // Claude Code adapter's watcher closes. Its own listener, so a throwing
-  // canvas.stop() cannot skip it.
+  // Claude Code and Gemini CLI adapters' watchers close. Its own listener,
+  // so a throwing canvas.stop() cannot skip it.
   app.on('before-quit', () => {
     detection.stop();
   });

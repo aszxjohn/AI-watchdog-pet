@@ -236,6 +236,15 @@ vi.mock('../../src/main/detection/adapters/claude-code/claude-code', () => ({
   },
 }));
 
+vi.mock('../../src/main/detection/adapters/gemini/gemini', () => ({
+  createGeminiAdapter: (options: { root: string }) => {
+    // The real home folder's tmp folder; only its tail is checked.
+    const tail = options.root.split(/[\\/]/).slice(-2).join('/');
+    state.order.push(`createGeminiAdapter root=~/${tail}`);
+    return { fake: 'gemini-adapter' };
+  },
+}));
+
 vi.mock('../../src/main/detection/detection', () => ({
   createDetection: (options: { settings: unknown; adapters?: unknown }) => {
     state.order.push(
@@ -487,7 +496,8 @@ describe('the primary instance', () => {
       'loadSettings',
       'createWindowsStageSource',
       'createClaudeCodeAdapter root=~/.claude/projects',
-      'createDetection settings={"fake":"settings"} adapters=[{"fake":"claude-code-adapter"}]',
+      'createGeminiAdapter root=~/.gemini/tmp',
+      'createDetection settings={"fake":"settings"} adapters=[{"fake":"claude-code-adapter"},{"fake":"gemini-adapter"}]',
       'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} detection={"fake":"detection"}',
       'registerIpcHandler app:get-version ["panels"]',
       'registerSettingsHandlers',

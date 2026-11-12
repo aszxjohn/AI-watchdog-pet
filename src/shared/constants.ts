@@ -83,3 +83,23 @@ export const RECORDS_FOLDER_RECHECK_MS = 30_000;
  * the user chose it, and it is not offered for adjustment.
  */
 export const TURN_END_INFER_MS = 10_000;
+
+/**
+ * For a source whose session id is in a transcript's first line (Gemini
+ * CLI's header), its adapter reads at most this much of a transcript's
+ * start to find that line before it follows the file (Story 2.6). A first
+ * line not complete within it is not a header: the file is not followed,
+ * and tried again at its next change.
+ */
+export const FIRST_LINE_MAX_BYTES = 1024 * 1024;
+
+/**
+ * chokidar reports at most one `change` of a path per 50 ms: a write that
+ * lands within 50 ms of the last change it reported is dropped, and would
+ * be read only at the file's next write (Story 2.6: Gemini CLI rewrites a
+ * message with its tool calls ~20 ms after writing it). So after every
+ * read caused by a change, an adapter reads that file once more this long
+ * later (above chokidar's 50 ms); a later change of the file moves that
+ * read later again.
+ */
+export const TRAILING_READ_MS = 100;

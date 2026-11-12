@@ -1,0 +1,8 @@
+{"sessionId":"00000001-0000-4000-8000-000000000000","projectHash":"0000000000000000000000000000000000000000000000000000000000000000","startTime":"2026-01-01T01:53:28.252Z","lastUpdated":"2026-01-01T01:53:28.252Z","kind":"main"}
+{"$set":{"messages":[],"lastUpdated":null}}
+{"type":"user","id":"20000000-0000-4000-8000-000000000001","timestamp":"2026-01-01T01:55:03.867Z","content":[{"text":"範例回覆"}]}
+{"$set":{"lastUpdated":null}}
+{"type":"gemini","id":"20000000-0000-4000-8000-000000000002","timestamp":"2026-01-01T01:55:11.047Z","content":""}
+{"$set":{"lastUpdated":null}}
+{"type":"info","id":"20000000-0000-4000-8000-000000000003","timestamp":"2026-01-01T02:09:37.326Z","content":"Request cancelled."}
+{"$set":{"lastUpdated":null}}

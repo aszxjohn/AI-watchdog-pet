@@ -6,7 +6,8 @@
  * which files are transcripts and what each one is, which paths the
  * watcher follows and how deep, the initial scan, the translation of a
  * record into shared events (one translation state per transcript), the
- * display name event, and a gate before a transcript is read.
+ * display name event, a gate before a transcript is read, and optionally
+ * a transcript's starting state from its first line.
  *
  * Read-only: it lists folders, takes stats, and opens only the transcripts
  * `locate` names, to read. It writes nothing, runs nothing and connects to
@@ -31,6 +32,22 @@
  *   smaller is logged and replayed from its tail again. A transcript the
  *   gate holds back is skipped, and not followed, until the gate lets it
  *   through.
+ * - A trailing read (Story 2.6): chokidar reports at most one `change` of
+ *   a path per 50 ms, so a record written right after another would wait
+ *   for the file's next write. After every read caused by a change, the
+ *   file is read once more TRAILING_READ_MS later (one timer per file,
+ *   moved later by each change of it); one that finds nothing new does
+ *   nothing. The timers are cancelled when the watcher closes, the
+ *   transcripts are forgotten, or the adapter stops, and one left from an
+ *   older watcher reads nothing.
+ * - With `startState` (Story 2.6), a transcript not followed yet is first
+ *   read for its first line (at most FIRST_LINE_MAX_BYTES of its start,
+ *   whatever part of it is read next), and the state it gives is the
+ *   transcript's starting state; with none, the transcript is not
+ *   followed and nothing is sent, and it is tried again at its next
+ *   change (a first line that is a complete record but no start is logged,
+ *   once per transcript). Without `startState`, every transcript starts at
+ *   `initialState`.
  * - Everything one read produced reaches main/detection in one emit, so
  *   the panel is updated once per read. A read that produced events ends
  *   with the source's name event, so a session that comes back after
@@ -41,8 +58,18 @@
  *   reported an error (until the folder is watched again); otherwise `ok`.
  *   Bad lines are skipped and counted, never thrown on; the next good
  *   record ends the streak.
- * - It never ends a session itself: no `session.end` (a session ends when
- *   main/detection/sessions expires it).
+ * - It never ends a session itself: it sends no `session.end` of its own
+ *   (a session ends when main/detection/sessions expires it, or when a
+ *   source's translation reads one ending in its records).
+ * - The source's callbacks may throw; none of it reaches the watcher or
+ *   stops a replay (Story 2.6). A `follow` that throws does not follow
+ *   that path; a `scan` that throws finds no transcripts (`sync.ready` is
+ *   still sent); a `locate`, `gate.allows` or `startState` that throws
+ *   skips that transcript; a `translate` that throws counts that line as
+ *   unreadable and reading goes on with the next; a `nameEvent`,
+ *   `gate.read` or `gate.reset` that throws loses nothing else: the events
+ *   read are still sent. Each is logged by callback and error code, once
+ *   per pair.
  *
  * The log gets codes and counts only, never a path or a record's content.
  */
@@ -50,8 +77,10 @@ import nodeFs from 'node:fs';
 import path from 'node:path';
 import {
   BAD_LINE_STREAK_DEGRADED,
+  FIRST_LINE_MAX_BYTES,
   RECORDS_FOLDER_RECHECK_MS,
   REPLAY_TAIL_BYTES,
+  TRAILING_READ_MS,
 } from '../../../../shared/constants';
 import type { DetectionEvent } from '../../../../shared/detection-events';
 import type { AdapterHealth, SourceCode } from '../../../../shared/sources';
@@ -163,8 +192,22 @@ export interface JsonlLogAdapterOptions<Where extends object, State> {
     root: string,
     list: (dir: string) => readonly TranscriptDirent[],
   ) => readonly ScanGroup[];
-  /** The translation state of a transcript nothing has been read from. */
+  /**
+   * The translation state of a transcript nothing has been read from, when
+   * there is no `startState`.
+   */
   readonly initialState: State;
+  /**
+   * The starting state of a transcript not followed yet, from its first
+   * line: `first` is that line's record, null when the line is not a
+   * record or not complete within FIRST_LINE_MAX_BYTES. Null when the
+   * transcript is not to be followed yet: nothing is sent, and it is tried
+   * again at its next change. Without it, every transcript starts at
+   * `initialState`.
+   */
+  readonly startState?:
+    | ((first: Fields | null, context: ReadContext<Where>) => State | null)
+    | undefined;
   /** The events `record` stands for, and the transcript's state after it. */
   readonly translate: (
     record: Fields,
@@ -216,6 +259,7 @@ export function createJsonlLogAdapter<Where extends object, State>({
   follow,
   scan,
   initialState,
+  startState,
   translate,
   nameEvent,
   gate,
@@ -227,6 +271,8 @@ export function createJsonlLogAdapter<Where extends object, State>({
   /** The records folder with symbolic links resolved, once watched. */
   let watchedRoot = root;
   let recheck: { readonly handle: unknown } | undefined;
+  /** Each transcript's trailing read waiting to run: its timer, by path. */
+  const trailing = new Map<string, unknown>();
   let stopped = false;
   /** `sync.ready` was sent (once per run). */
   let synced = false;
@@ -242,9 +288,33 @@ export function createJsonlLogAdapter<Where extends object, State>({
   const files = new Map<string, TrackedFile<State>>();
   /** Transcripts that existed at the initial scan (read from the tail). */
   const existed = new Set<string>();
+  /** The source's callbacks that threw, as `<callback> <code>`. */
+  const failures = new Set<string>();
+  /**
+   * Transcripts whose first line is a record `startState` did not start
+   * from: logged once each.
+   */
+  const unusableStarts = new Set<string>();
 
   function log(message: string, level: ConsoleLevel = 'info'): void {
     logEvent('detection', `${logPrefix}: ${message}`, level);
+  }
+
+  /**
+   * The source's `callback` threw `error`, and the adapter does `instead`:
+   * logged by error code, once per callback and code.
+   */
+  function callbackFailed(
+    callback: string,
+    error: unknown,
+    instead: string,
+  ): void {
+    const code = errorCode(error);
+    const key = `${callback} ${code}`;
+    if (!failures.has(key)) {
+      failures.add(key);
+      log(`the source's ${callback} threw (${code}); ${instead}`, 'error');
+    }
   }
 
   function health(): AdapterHealth {
@@ -296,6 +366,19 @@ export function createJsonlLogAdapter<Where extends object, State>({
   }
 
   /**
+   * The record on the first line of the open file `fd` of `size` bytes;
+   * null when that line is not one, or not complete within
+   * FIRST_LINE_MAX_BYTES.
+   */
+  function firstRecord(fd: number, size: number): Fields | null {
+    const head = readRange(fs, fd, 0, Math.min(size, FIRST_LINE_MAX_BYTES));
+    const end = head.indexOf(0x0a);
+    return end === -1
+      ? null
+      : parseRecordLine(head.toString('utf8', 0, end).replace(/\r$/, ''));
+  }
+
+  /**
    * Reads transcript `file`, open as `fd`, from where the last read stopped
    * (or its start, or its tail: see the module comment) and delivers what
    * it stands for.
@@ -339,13 +422,37 @@ export function createJsonlLogAdapter<Where extends object, State>({
       replay = false;
     }
 
-    const chunk = readRange(fs, fd, from, stats.size);
-    const split = splitLines(carry, chunk);
     const readContext: ReadContext<Where> = {
       ...where,
       replay,
       fallbackTs: Math.max(0, Math.floor(stats.mtimeMs)),
     };
+    if (tracked === undefined && startState !== undefined) {
+      const first = firstRecord(fd, stats.size);
+      let started: State | null;
+      try {
+        started = startState(first, readContext);
+      } catch (error) {
+        callbackFailed('startState', error, 'skipping that transcript');
+        return;
+      }
+      if (started === null) {
+        // An incomplete first line is not news; a complete one the source
+        // cannot start from (its format changed?) is, once.
+        if (first !== null && !unusableStarts.has(file)) {
+          unusableStarts.add(file);
+          log(
+            "a transcript's first line is not a usable start; not followed",
+            'warn',
+          );
+        }
+        return;
+      }
+      state = started;
+    }
+
+    const chunk = readRange(fs, fd, from, stats.size);
+    const split = splitLines(carry, chunk);
     const events: DetectionEvent[] = [];
     for (const line of split.lines) {
       const record = parseRecordLine(line);
@@ -353,15 +460,26 @@ export function createJsonlLogAdapter<Where extends object, State>({
         badLine();
         continue;
       }
+      let translation: RecordTranslation<State>;
+      try {
+        translation = translate(record, state, readContext);
+      } catch (error) {
+        callbackFailed('translate', error, 'counting that line as unreadable');
+        badLine();
+        continue;
+      }
       goodRecord();
-      const translation = translate(record, state, readContext);
       state = translation.state;
       events.push(...translation.events);
     }
     if (events.length > 0) {
-      const name = nameEvent(state, readContext);
-      if (name !== null) {
-        events.push(name);
+      try {
+        const name = nameEvent(state, readContext);
+        if (name !== null) {
+          events.push(name);
+        }
+      } catch (error) {
+        callbackFailed('nameEvent', error, 'sending the read without it');
       }
     }
     files.set(file, {
@@ -369,18 +487,39 @@ export function createJsonlLogAdapter<Where extends object, State>({
       carry: split.carry,
       state,
     });
-    gate?.read(where, state);
+    if (gate !== undefined) {
+      try {
+        gate.read(where, state);
+      } catch (error) {
+        callbackFailed('gate.read', error, 'going on');
+      }
+    }
     deliver(events);
   }
 
   /** Reads what is new in transcript `file`, if it is one. Never throws. */
   function read(file: string, reason: ReadReason): void {
-    const where = locate(watchedRoot, file);
+    let where: Where | null;
+    try {
+      where = locate(watchedRoot, file);
+    } catch (error) {
+      callbackFailed('locate', error, 'skipping that transcript');
+      return;
+    }
     if (where === null) {
       return;
     }
-    if (gate !== undefined && !gate.allows(where, files.has(file))) {
-      return;
+    if (gate !== undefined) {
+      let allowed: boolean;
+      try {
+        allowed = gate.allows(where, files.has(file));
+      } catch (error) {
+        callbackFailed('gate.allows', error, 'skipping that transcript');
+        return;
+      }
+      if (!allowed) {
+        return;
+      }
     }
     let fd: number;
     try {
@@ -434,7 +573,14 @@ export function createJsonlLogAdapter<Where extends object, State>({
     readonly label: string;
     readonly recent: readonly Found[];
   }[] {
-    return scan(watchedRoot, list).map(({ label, files: found }) => {
+    let groups: readonly ScanGroup[];
+    try {
+      groups = scan(watchedRoot, list);
+    } catch (error) {
+      callbackFailed('scan', error, 'replaying nothing');
+      groups = [];
+    }
+    return groups.map(({ label, files: found }) => {
       const inWindow: Found[] = [];
       for (const file of found) {
         existed.add(file);
@@ -473,11 +619,16 @@ export function createJsonlLogAdapter<Where extends object, State>({
         }
       }
     }
-    const counts = groups
-      .map(({ label, recent: found }) => `${found.length} ${label}`)
-      .join(', ');
+    const counts = [
+      groups
+        .map(({ label, recent: found }) => `${found.length} ${label}`)
+        .join(', '),
+      `${existed.size} transcripts in all`,
+    ]
+      .filter((part) => part !== '')
+      .join('; ');
     log(
-      `replayed ${replayed} transcripts modified within the discovery window (${counts}; ${existed.size} transcripts in all)${synced ? '' : '; sync.ready'}`,
+      `replayed ${replayed} transcripts modified within the discovery window (${counts})${synced ? '' : '; sync.ready'}`,
     );
     sync();
   }
@@ -496,12 +647,53 @@ export function createJsonlLogAdapter<Where extends object, State>({
 
   /** Forgets every transcript (the folder is gone, or the adapter stops). */
   function forgetAll(): void {
+    cancelTrailingReads();
     files.clear();
     existed.clear();
-    gate?.reset();
+    unusableStarts.clear();
+    try {
+      gate?.reset();
+    } catch (error) {
+      callbackFailed('gate.reset', error, 'going on');
+    }
+  }
+
+  /** Cancels every trailing read waiting to run. */
+  function cancelTrailingReads(): void {
+    for (const handle of trailing.values()) {
+      context?.clearTimer(handle);
+    }
+    trailing.clear();
+  }
+
+  /**
+   * Reads `file` again TRAILING_READ_MS from now, for watcher `mine`: for
+   * what chokidar did not report (see the module comment). A trailing read
+   * already waiting for the file is moved to then.
+   */
+  function armTrailingRead(file: string, mine: number): void {
+    if (context === undefined || stopped) {
+      return;
+    }
+    const waiting = trailing.get(file);
+    if (waiting !== undefined) {
+      context.clearTimer(waiting);
+    }
+    trailing.set(
+      file,
+      context.setTimer(() => {
+        trailing.delete(file);
+        if (mine === generation && scanned) {
+          guarded('a trailing read', () => {
+            read(file, 'change');
+          });
+        }
+      }, TRAILING_READ_MS),
+    );
   }
 
   function closeWatcher(): void {
+    cancelTrailingReads();
     generation += 1;
     const closing = watcher;
     watcher = undefined;
@@ -581,6 +773,7 @@ export function createJsonlLogAdapter<Where extends object, State>({
     const changed = current('reading a change', (file: string) => {
       if (scanned) {
         read(file, 'change');
+        armTrailingRead(file, mine);
       }
     });
     try {
@@ -588,7 +781,14 @@ export function createJsonlLogAdapter<Where extends object, State>({
         real,
         {
           depth: watchDepth,
-          follow: (entry, stats) => follow(real, entry, stats, recent),
+          follow: (entry, stats) => {
+            try {
+              return follow(real, entry, stats, recent);
+            } catch (error) {
+              callbackFailed('follow', error, 'not following that path');
+              return false;
+            }
+          },
         },
         {
           ready: current('the initial replay', replayAll),

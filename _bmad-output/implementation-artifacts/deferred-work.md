@@ -181,3 +181,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-6-turn-end-inference.md`
   summary: 架構文件的 AD-21 事件清單還沒有 `turn.reply`，AD-22 推測範圍還沒有「一輪結束」與能力表的「一輪結束」欄位
   evidence: Story 2.6 推測一輪結束審查 B10c。規格 Design Notes 決定留到 Epic 2 回顧時一起對齊；程式註解已引用 AD-21／AD-22 說明新事件與新推測，架構文件仍是 13 種事件、只推測請求。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-6-gemini-cli-adapter.md`
+  summary: 只補讀檔尾 2 MiB 時，檔尾之前的名稱與 session id 紀錄讀不到：Gemini 的 `$set.summary`、`$set.sessionId`，claude-code 的標題紀錄同樣
+  evidence: Story 2.6 Gemini 審查 B4／VG-O1（medium）。app 重啟後，超過 2 MiB 的 chat log 名稱退回專案資料夾名，`$set.sessionId` 之後的事件掛在 header 的舊 id。來自 2.4 起的「補讀最後 2 MiB」規則；修法是補讀時另外掃檔尾之前的 `$set`（或標題）行，只取最新值。已列在 `gemini.ts` 的已知限制。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-6-gemini-cli-adapter.md`
+  summary: Gemini 的 `error` 紀錄一律送 `error`＋`turn.end`，若 Gemini CLI 出錯後自動重試、同一輪接著回覆，這一輪會被提早結束
+  evidence: Story 2.6 Gemini 審查 B7（未驗證，若成立為 medium）。本機 3 個樣本都沒有 `error`；要一筆「出錯後自動重試」的真實紀錄，確認 `error` 之後還會不會有同一輪的 `gemini` 訊息。

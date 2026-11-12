@@ -88,6 +88,7 @@ context:
 - shared 的兩個既有斷言照 Decisions 改了：事件清單多 `turn.reply`、gemini 那一列改為 approval／question `none`、`ask_user`。與 AC「既有斷言沒改」字面衝突，是規格本身的矛盾（審查 E6）；reducer、inference、sessions 的既有斷言沒改。
 - 審查修補後主 session 重跑：typecheck、lint、depcruise（0 違規）、`CI=true npm test`（48 個檔案、2219 個測試）全過；diff 裡沒有刪掉的 `expect(`。
 - 沒有手動驗收：還沒有會送 `turn.reply` 的來源，Gemini 轉接器完成時一起驗。
+- CI：使用者 commit `abcad49`（2026-11-11）後，GitHub Actions 的 macOS、Windows 都通過（run 42992047967）。
 - sprint 狀態：`2-6-gemini-cli-轉接器` 維持 `in-progress`，Gemini 轉接器本體（`spec-2-6-gemini-cli-adapter.md`）還沒做。
 
 ## Spec Change Log

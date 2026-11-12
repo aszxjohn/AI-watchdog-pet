@@ -17,9 +17,9 @@
  * - Demo mode is off at every start and never saved. Turning it on starts
  *   the demo adapter (health `ok`); turning it off stops it, which ends its
  *   session.
- * - The source adapters it is given (main.ts: Claude Code's) start with it
- *   and stop with it. Each reports its health itself; what one read of
- *   theirs produced reaches sessions as one change.
+ * - The source adapters it is given (main.ts: Claude Code's and Gemini
+ *   CLI's) start with it and stop with it. Each reports its health itself;
+ *   what one read of theirs produced reaches sessions as one change.
  * - One change, one notification: what a demo switch, a settings change or
  *   a resume does to the sections is heard once, when it is done. Listeners
  *   hear only the sections that changed.
