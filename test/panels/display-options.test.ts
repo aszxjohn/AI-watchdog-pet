@@ -352,6 +352,7 @@ describe('the StageView status line', () => {
           power: { suspended: false, locked: false },
           sessions: [],
           adapters: [],
+          pool: { released: [] },
         },
       }),
     ).toBe('StageView rev 9｜畫布螢幕：主螢幕（暫用主螢幕）');

@@ -196,6 +196,24 @@ body {
   font-size: 12px;
 }
 
+/* A released session: still listed with its state, the whole row faded. */
+.session-table tr.is-released > td {
+  opacity: 0.5;
+}
+
+.released-mark {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border: 1px solid var(--muted);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.session-action {
+  white-space: nowrap;
+}
+
 .adapter-list {
   list-style: none;
   margin: 0;

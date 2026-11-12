@@ -62,6 +62,10 @@ const state = vi.hoisted(() => {
       | undefined,
     /** The listener main.ts passed to watchDemoState. */
     demoListener: undefined as ((state: string | null) => void) | undefined,
+    /** The listener main.ts passed to detection.onSynced. */
+    syncedListener: undefined as
+      | ((reported: ReadonlySet<string>) => void)
+      | undefined,
     reset() {
       s.squirrel = false;
       s.lock = true;
@@ -83,6 +87,7 @@ const state = vi.hoisted(() => {
       s.openMenu = undefined;
       s.menuArgs = undefined;
       s.demoListener = undefined;
+      s.syncedListener = undefined;
       s.ready = new Promise<void>((resolve) => {
         s.resolveReady = resolve;
       });
@@ -180,14 +185,36 @@ vi.mock('../../src/main/settings/store', () => ({
     state.order.push('loadSettings');
     return { fake: 'settings' };
   },
-  // Like the real one: a will-quit listener that writes pending settings.
-  flushSettingsOnQuit: (app: {
-    on(event: string, listener: Listener): void;
-  }) => {
-    state.order.push('flushSettingsOnQuit');
+  // Like the real one: a will-quit listener that writes what the store
+  // (settings or pool) has pending.
+  flushSettingsOnQuit: (
+    app: {
+      on(event: string, listener: Listener): void;
+    },
+    store: { fake: string },
+  ) => {
+    state.order.push(`flushSettingsOnQuit ${store.fake}`);
     app.on('will-quit', () => {
-      state.events.push('settings flushed');
+      state.events.push(`${store.fake} flushed`);
     });
+  },
+}));
+
+vi.mock('../../src/main/pool/store', () => ({
+  loadPool: (options: { file: string }) => {
+    state.order.push(`loadPool ${options.file.replaceAll('\\', '/')}`);
+    return {
+      fake: 'pool',
+      sweep: (reported: ReadonlySet<string>) => {
+        state.order.push(`pool.sweep ${JSON.stringify([...reported])}`);
+      },
+    };
+  },
+}));
+
+vi.mock('../../src/main/pool/ipc', () => ({
+  registerPoolHandlers: (store: { fake: string }) => {
+    state.order.push(`registerPoolHandlers ${store.fake}`);
   },
 }));
 
@@ -262,6 +289,10 @@ vi.mock('../../src/main/detection/detection', () => ({
     return {
       fake: 'detection',
       get: () => ({ sessions: ['fake sessions'], adapters: [] }),
+      onSynced: (listener: (reported: ReadonlySet<string>) => void) => {
+        state.order.push('detection.onSynced');
+        state.syncedListener = listener;
+      },
       setDemo: (demoState: string | null) => {
         state.order.push(`detection.setDemo ${String(demoState)}`);
       },
@@ -508,12 +539,16 @@ describe('the primary instance', () => {
       'createGeminiAdapter root=~/.gemini/tmp',
       'createCursorAdapter root=~/.cursor/projects',
       'createDetection settings={"fake":"settings"} adapters=[{"fake":"claude-code-adapter"},{"fake":"gemini-adapter"},{"fake":"cursor-adapter"}]',
-      'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} detection={"fake":"detection"}',
+      'loadPool /fake/userData/assignments.json',
+      'detection.onSynced',
+      'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} detection={"fake":"detection"} pool={"fake":"pool"}',
       'registerIpcHandler app:get-version ["panels"]',
       'registerSettingsHandlers',
+      'registerPoolHandlers pool',
       'registerStageViewHandlers',
       'registerCanvasReadyHandler',
-      'flushSettingsOnQuit',
+      'flushSettingsOnQuit settings',
+      'flushSettingsOnQuit pool',
       'installWebContentsGuards',
       'createDockController',
       'createPanelWindows panels.cjs',
@@ -808,12 +843,27 @@ describe('the primary instance', () => {
     expect(state.order).toStrictEqual(['panels.close']);
   });
 
-  it('on will-quit, writes pending settings first, then logs the quit', async () => {
+  it('on will-quit, writes pending settings first, then pending releases, then logs the quit', async () => {
     await startMain();
-    expect(state.listeners.get('will-quit')).toHaveLength(2);
+    expect(state.listeners.get('will-quit')).toHaveLength(3);
     state.events = [];
     emit('will-quit');
-    expect(state.events).toStrictEqual(['settings flushed', 'log app: quit']);
+    expect(state.events).toStrictEqual([
+      'settings flushed',
+      'pool flushed',
+      'log app: quit',
+    ]);
+  });
+
+  it('sweeps the pool with the keys detection reports at its start-up sync', async () => {
+    await startMain();
+    state.order = [];
+
+    state.syncedListener?.(new Set(['claude-code:a', 'demo:1']));
+
+    expect(state.order).toStrictEqual([
+      'pool.sweep ["claude-code:a","demo:1"]',
+    ]);
   });
 
   it('shows why and exits when the panels preload bundle is missing', async () => {

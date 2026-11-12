@@ -23,8 +23,17 @@
  * - One change, one notification: what a demo switch, a settings change or
  *   a resume does to the sections is heard once, when it is done. Listeners
  *   hear only the sections that changed.
+ * - Start-up sync (Story 2.8): once every source adapter it was given has
+ *   sent `sync.ready`, or syncTimeoutMs (its value at creation) has passed
+ *   since creation, whichever comes first, onSynced listeners hear, once,
+ *   the key of every session an adapter's event named since creation (demo
+ *   mode's included; demo mode itself is not waited for). With no source
+ *   adapter that is at creation. main/pool sweeps its saved releases with
+ *   it; the keys are collected here, not read from the published list,
+ *   because main/detection/sessions may publish a source's sessions only
+ *   after the deadline has passed.
  */
-import type { AdapterOutput } from '../../shared/detection-events';
+import type { AdapterOutput, SessionKey } from '../../shared/detection-events';
 import type { DetectionTimings, SettingsState } from '../../shared/settings';
 import type { AdapterHealth, SourceCode } from '../../shared/sources';
 import type { StageViewDetectionSections } from '../../shared/stage-view';
@@ -41,6 +50,11 @@ import { createSessions, type DetectedSession } from './sessions';
 
 export type DetectionSectionsListener = (
   sections: Partial<StageViewDetectionSections>,
+) => void;
+
+/** Hears the session keys adapters reported until start-up sync. */
+export type DetectionSyncedListener = (
+  reported: ReadonlySet<SessionKey>,
 ) => void;
 
 export interface DetectionOptions {
@@ -70,6 +84,14 @@ export interface Detection {
   /** Hears the sections each change changed. Returns an unsubscribe. */
   onChange(listener: DetectionSectionsListener): () => void;
   /**
+   * Hears, once, when start-up sync is over (every source adapter sent
+   * `sync.ready`, or syncTimeoutMs passed since creation): the key of every
+   * session an adapter's event named until then. That is heard after the
+   * sections the same change changed. Subscribing afterwards calls
+   * `listener` at once with the same set. Returns an unsubscribe.
+   */
+  onSynced(listener: DetectionSyncedListener): () => void;
+  /**
    * Demo mode: shows `state` on the demo session, turning demo mode on if
    * it is off; null turns it off.
    */
@@ -79,9 +101,9 @@ export interface Detection {
   /** The system woke up. */
   resume(): void;
   /**
-   * Stops every adapter (closing their watchers) and the sessions' timer,
-   * with no further notification (the app is quitting). Afterwards nothing
-   * happens.
+   * Stops every adapter (closing their watchers), the sessions' timer and
+   * the sync deadline, with no further notification (the app is quitting).
+   * Afterwards nothing happens.
    */
   stop(): void;
 }
@@ -133,6 +155,88 @@ export function createDetection({
   let batching = 0;
   let stopped = false;
 
+  /**
+   * The source adapters that have not sent their own source's `sync.ready`
+   * yet (tracked per adapter, so two adapters of one source are both
+   * waited for).
+   */
+  const awaitingSync = new Set<DetectionAdapter>(adapters);
+  /** Every session key an adapter's event named until sync. */
+  const reported = new Set<SessionKey>();
+  let synced = false;
+  let syncDeadlinePassed = false;
+  let syncTimer: { readonly handle: unknown } | undefined;
+  const syncedListeners = new Set<DetectionSyncedListener>();
+
+  /**
+   * Notes what an output tells about start-up sync: `from` is the source
+   * adapter that sent it, undefined for demo mode (not waited for). Only a
+   * `sync.ready` of the adapter's own source counts as its sync.
+   */
+  function noteForSync(
+    output: AdapterOutput,
+    from: DetectionAdapter | undefined,
+  ): void {
+    if (synced) {
+      return;
+    }
+    if (output.type === 'sync.ready') {
+      if (from !== undefined && output.source === from.source) {
+        awaitingSync.delete(from);
+      }
+      return;
+    }
+    if (typeof output.sessionKey === 'string') {
+      reported.add(output.sessionKey);
+    }
+  }
+
+  function callSynced(listener: DetectionSyncedListener): void {
+    try {
+      listener(reported);
+    } catch (error) {
+      log(`a synced listener failed (${errorCode(error)})`, 'error');
+    }
+  }
+
+  /**
+   * Ends start-up sync if it is due, outside any batch (so after the
+   * sections that change changed were published), and tells the listeners.
+   */
+  function settleSync(): void {
+    if (
+      synced ||
+      stopped ||
+      batching > 0 ||
+      (awaitingSync.size > 0 && !syncDeadlinePassed)
+    ) {
+      return;
+    }
+    synced = true;
+    if (syncTimer !== undefined) {
+      clearTimer(syncTimer.handle);
+      syncTimer = undefined;
+    }
+    // Codes and counts only. With no source adapter there was nothing to
+    // wait for, and nothing to say.
+    if (adapters.length > 0) {
+      const waiting = [...awaitingSync].map((adapter) => adapter.source);
+      log(
+        `start-up sync over: ${
+          waiting.length === 0
+            ? 'every adapter sent sync.ready'
+            : `syncTimeoutMs passed, still waiting for ${waiting.join(', ')}`
+        }; ${reported.size} sessions reported`,
+      );
+    }
+    // The live set: a listener that another unsubscribes while they are
+    // called has left it and is not reached. Cleared once all are called.
+    for (const listener of syncedListeners) {
+      callSynced(listener);
+    }
+    syncedListeners.clear();
+  }
+
   function current(): StageViewDetectionSections {
     return {
       sessions: sessions.list().map(toStageSession),
@@ -171,7 +275,10 @@ export function createDetection({
     }
   }
 
-  /** Runs `run`, then publishes what it changed, once. */
+  /**
+   * Runs `run`, then publishes what it changed, once; then ends start-up
+   * sync if that change completed it.
+   */
   function batch(run: () => void): void {
     batching += 1;
     try {
@@ -179,10 +286,13 @@ export function createDetection({
     } finally {
       batching -= 1;
       publish();
+      settleSync();
     }
   }
 
+  /** Demo mode's outputs: it is not waited for, but its sessions count. */
   const emit = (output: AdapterOutput): void => {
+    noteForSync(output, undefined);
     sessions.receive(output);
   };
 
@@ -202,6 +312,7 @@ export function createDetection({
             health.set(adapter.source, adapterHealth);
           }
           for (const output of outputs) {
+            noteForSync(output, adapter);
             sessions.receive(output);
           }
         });
@@ -248,8 +359,22 @@ export function createDetection({
     });
   });
 
+  // Read now: a later settings change does not move the deadline.
+  const syncTimeoutMs = timings().syncTimeoutMs;
   for (const adapter of adapters) {
     startAdapter(adapter);
+  }
+  // Every adapter may have synced while starting (no records folder), and
+  // with none there is nothing to wait for.
+  settleSync();
+  if (!synced && !stopped) {
+    syncTimer = {
+      handle: setTimer(() => {
+        syncTimer = undefined;
+        syncDeadlinePassed = true;
+        settleSync();
+      }, syncTimeoutMs),
+    };
   }
 
   return {
@@ -259,6 +384,17 @@ export function createDetection({
       listeners.add(listener);
       return () => {
         listeners.delete(listener);
+      };
+    },
+
+    onSynced(listener) {
+      if (synced) {
+        callSynced(listener);
+        return () => {};
+      }
+      syncedListeners.add(listener);
+      return () => {
+        syncedListeners.delete(listener);
       };
     },
 
@@ -315,6 +451,11 @@ export function createDetection({
       }
       stopped = true;
       sessions.stop();
+      if (syncTimer !== undefined) {
+        clearTimer(syncTimer.handle);
+        syncTimer = undefined;
+      }
+      syncedListeners.clear();
       // stopAdapter removes each from the set; a Set iterates on safely.
       for (const adapter of running) {
         stopAdapter(adapter);

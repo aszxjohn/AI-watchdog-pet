@@ -17,9 +17,9 @@
  * Changes arrive only as patches. A patch shows up in get() and onChange
  * immediately; the file is written once SETTINGS_FLUSH_DEBOUNCE_MS after the
  * first change not yet on disk, always to a temp file renamed over
- * settings.json. flushSync() writes whatever is pending right now (app quit).
- * A failed write is logged, its temp file removed, and the values kept in
- * memory for the next flush.
+ * settings.json (main/persist). flushSync() writes whatever is pending
+ * right now (app quit). A failed write is logged, its temp file removed,
+ * and the values kept in memory for the next flush.
  *
  * fs is synchronous on purpose: the file is tiny, the order of writes is
  * fixed, and the flush on quit is a plain call. Log lines name fields and
@@ -40,8 +40,12 @@ import {
   type SettingsState,
   type SettingsValues,
 } from '../../shared/settings';
-import { localSecondStamp } from '../log/local-time';
 import { errorCode, logEvent, type ConsoleLevel } from '../log/run-log';
+import {
+  brokenBackupPath,
+  renameBroken,
+  writeFileAtomic,
+} from '../persist/files';
 import {
   SETTINGS_MIGRATIONS,
   isPlainObject,
@@ -95,9 +99,6 @@ interface Loaded {
   readonly needsWrite: boolean;
 }
 
-/** Up to how many `-N` suffixes are tried when backup names collide. */
-const MAX_BACKUP_SUFFIX = 999;
-
 function log(message: string, level: ConsoleLevel = 'info'): void {
   logEvent('settings', message, level);
 }
@@ -116,27 +117,11 @@ export function loadSettings({
 }: SettingsStoreOptions): SettingsStore {
   const fileName = path.basename(file);
 
-  /** A free `<file>.broken-<time>[-N]` path. Throws when there is none. */
-  function backupPath(): string {
-    const base = `${file}.broken-${localSecondStamp(new Date(now()))}`;
-    if (!fs.existsSync(base)) {
-      return base;
-    }
-    for (let n = 2; n <= MAX_BACKUP_SUFFIX; n += 1) {
-      const candidate = `${base}-${n}`;
-      if (!fs.existsSync(candidate)) {
-        return candidate;
-      }
-    }
-    throw new Error('no free backup name');
-  }
-
   /** Moves a broken file aside and starts from defaults. */
   function setAside(reason: string): Loaded {
     let target: string;
     try {
-      target = backupPath();
-      fs.renameSync(file, target);
+      target = renameBroken(fs, file, now());
     } catch (error) {
       log(
         `${fileName} is unusable (${reason}) and could not be renamed (${errorCode(error)}); using defaults and not writing ${fileName} this run`,
@@ -246,7 +231,7 @@ export function loadSettings({
       .join('; ');
     let target: string;
     try {
-      target = backupPath();
+      target = brokenBackupPath(fs, file, now());
       fs.copyFileSync(file, target, nodeFs.constants.COPYFILE_EXCL);
     } catch (error) {
       log(
@@ -285,24 +270,16 @@ export function loadSettings({
       return;
     }
     const text = `${JSON.stringify({ schemaVersion, ...checked.data }, null, 2)}\n`;
-    const temp = `${file}.tmp`;
     try {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      // flush: fsync the temp file before the rename, so a power loss
-      // cannot leave an empty settings.json behind.
-      fs.writeFileSync(temp, text, { encoding: 'utf8', flush: true });
-      fs.renameSync(temp, file);
+      // main/persist: temp file, fsync, rename; the temp file is removed
+      // when that fails.
+      writeFileAtomic(fs, file, text);
       dirty = false;
     } catch (error) {
       log(
         `cannot write ${fileName} (${errorCode(error)}); keeping the values in memory and retrying on the next flush`,
         'error',
       );
-      try {
-        fs.unlinkSync(temp);
-      } catch {
-        // The temp file may never have been created.
-      }
     }
   }
 

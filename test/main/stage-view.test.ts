@@ -15,12 +15,14 @@ import {
   createWindowsStageSource,
   type WindowsStageSource,
 } from '../../src/main/windows/stage-sources';
+import type { SessionKey } from '../../src/shared/detection-events';
 import { stageViewSubscribe } from '../../src/shared/ipc';
 import { SETTINGS_DEFAULTS } from '../../src/shared/settings';
 import {
   stageViewDeltaSchema,
   stageViewSnapshotSchema,
   type StageViewDetectionSections,
+  type StageViewPoolSections,
 } from '../../src/shared/stage-view';
 import * as fake from '../helpers/fake-electron';
 
@@ -30,6 +32,7 @@ let dir: string;
 let settings: SettingsStore;
 let windows: WindowsStageSource;
 let detection: ReturnType<typeof fakeDetection>;
+let pool: ReturnType<typeof fakePool>;
 let hub: StageViewHub;
 
 /**
@@ -60,6 +63,31 @@ function fakeDetection() {
   };
 }
 
+/**
+ * A stand-in for main/pool's section: update() replaces it and tells the
+ * listeners, as main/pool does (any value, so a test can hand StageView
+ * one that fails the schema).
+ */
+function fakePool() {
+  let sections: StageViewPoolSections = { pool: { released: [] } };
+  const listeners = new Set<(changed: StageViewPoolSections) => void>();
+  return {
+    get: () => sections,
+    onChange(listener: (changed: StageViewPoolSections) => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    update(released: readonly unknown[]) {
+      sections = { pool: { released: released as SessionKey[] } };
+      for (const listener of listeners) {
+        listener(sections);
+      }
+    },
+  };
+}
+
 /** main/windows' sections before ready. */
 const WINDOWS_BEFORE_READY = {
   displays: [],
@@ -68,6 +96,8 @@ const WINDOWS_BEFORE_READY = {
 };
 /** main/detection's sections with no session and no adapter. */
 const NO_DETECTION = { sessions: [], adapters: [] };
+/** main/pool's section with nothing released. */
+const NO_POOL = { pool: { released: [] } };
 const DEMO_SESSION = {
   sessionKey: 'demo:1',
   source: 'demo',
@@ -99,7 +129,8 @@ beforeEach(() => {
   settings = loadSettings({ file: path.join(dir, 'settings.json') });
   windows = createWindowsStageSource();
   detection = fakeDetection();
-  hub = createStageView({ settings, windows, detection });
+  pool = fakePool();
+  hub = createStageView({ settings, windows, detection, pool });
 });
 
 afterEach(() => {
@@ -129,6 +160,7 @@ describe('StageView composition', () => {
         settings: { rev: 0, values: SETTINGS_DEFAULTS },
         ...WINDOWS_BEFORE_READY,
         ...NO_DETECTION,
+        ...NO_POOL,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(snapshot).success).toBe(true);
@@ -180,6 +212,7 @@ describe('StageView composition', () => {
         settings: settings.get(),
         ...WINDOWS_BEFORE_READY,
         ...NO_DETECTION,
+        ...NO_POOL,
       },
     });
   });
@@ -188,7 +221,7 @@ describe('StageView composition', () => {
     setDisplay(1);
     setDisplay(2);
 
-    const later = createStageView({ settings, windows, detection });
+    const later = createStageView({ settings, windows, detection, pool });
 
     expect(later.snapshot().rev).toBe(0);
     expect(later.snapshot().view.settings.rev).toBe(2);
@@ -224,7 +257,7 @@ describe("main/windows' sections", () => {
   it('starts from what the windows source has', () => {
     windows.update({ displays: [DISPLAY], canvas: CANVAS });
 
-    const later = createStageView({ settings, windows, detection });
+    const later = createStageView({ settings, windows, detection, pool });
 
     expect(later.snapshot()).toStrictEqual({
       rev: 0,
@@ -234,6 +267,7 @@ describe("main/windows' sections", () => {
         canvas: CANVAS,
         power: WINDOWS_BEFORE_READY.power,
         ...NO_DETECTION,
+        ...NO_POOL,
       },
     });
   });
@@ -263,6 +297,7 @@ describe("main/windows' sections", () => {
         canvas: CANVAS,
         power: { suspended: true, locked: false },
         ...NO_DETECTION,
+        ...NO_POOL,
       },
     });
   });
@@ -314,7 +349,7 @@ describe("main/detection's sections", () => {
   it('starts from what main/detection has', () => {
     detection.update({ sessions: [DEMO_SESSION], adapters: [DEMO_ADAPTER] });
 
-    const later = createStageView({ settings, windows, detection });
+    const later = createStageView({ settings, windows, detection, pool });
 
     expect(later.snapshot()).toStrictEqual({
       rev: 0,
@@ -323,6 +358,7 @@ describe("main/detection's sections", () => {
         ...WINDOWS_BEFORE_READY,
         sessions: [DEMO_SESSION],
         adapters: [DEMO_ADAPTER],
+        ...NO_POOL,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -360,6 +396,71 @@ describe("main/detection's sections", () => {
     windows.update({ canvas: CANVAS });
 
     expect(hub.snapshot().rev).toBe(3);
+  });
+});
+
+describe("main/pool's section", () => {
+  it('starts from what main/pool has', () => {
+    pool.update(['claude-code:a', 'demo:1']);
+
+    const later = createStageView({ settings, windows, detection, pool });
+
+    expect(later.snapshot()).toStrictEqual({
+      rev: 0,
+      view: {
+        settings: settings.get(),
+        ...WINDOWS_BEFORE_READY,
+        ...NO_DETECTION,
+        pool: { released: ['claude-code:a', 'demo:1'] },
+      },
+    });
+    expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
+      true,
+    );
+  });
+
+  it('pushes one delta per change, carrying the pool section only', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    pool.update(['demo:1']);
+    pool.update([]);
+
+    expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
+      { rev: 1, sections: { pool: { released: ['demo:1'] } } },
+      { rev: 2, sections: { pool: { released: [] } } },
+    ]);
+    for (const { args } of subscriber.sent) {
+      expect(stageViewDeltaSchema.safeParse(args[0]).success).toBe(true);
+    }
+    expect(hub.snapshot().view.pool).toStrictEqual({ released: [] });
+  });
+
+  it('keeps one rev counter across detection and pool changes: a session and its release may come in different deltas, and the view at the latest rev has both', () => {
+    detection.update({ sessions: [DEMO_SESSION] });
+    pool.update(['demo:1']);
+
+    expect(hub.snapshot()).toMatchObject({
+      rev: 2,
+      view: { sessions: [DEMO_SESSION], pool: { released: ['demo:1'] } },
+    });
+  });
+
+  it('drops a pool section that fails the schema: unsorted keys', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    pool.update(['demo:1', 'codex:a']);
+
+    expect(subscriber.sent).toStrictEqual([]);
+    expect(hub.snapshot().rev).toBe(0);
+    expect(
+      vi
+        .mocked(console.error)
+        .mock.calls.map((call: unknown[]) => String(call[0])),
+    ).toStrictEqual([
+      '[stage-view] dropped a delta that fails the schema (sections: pool; fields: pool.released); rev stays 0',
+    ]);
   });
 });
 
@@ -473,6 +574,7 @@ describe('subscribers', () => {
         },
         ...WINDOWS_BEFORE_READY,
         ...NO_DETECTION,
+        ...NO_POOL,
       },
     });
     expect(hub.subscriberCount()).toBe(1);

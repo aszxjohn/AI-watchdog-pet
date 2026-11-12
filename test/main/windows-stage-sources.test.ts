@@ -71,6 +71,7 @@ describe('createWindowsStageSource', () => {
         ...source.get(),
         sessions: [],
         adapters: [],
+        pool: { released: [] },
       }).success,
     ).toBe(true);
   });

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDetection } from '../../src/main/detection/detection';
+import { loadPool } from '../../src/main/pool/store';
 import { registerSettingsHandlers } from '../../src/main/settings/ipc';
 import {
   loadSettings,
@@ -79,7 +80,10 @@ function startMain() {
   const windows = createWindowsStageSource();
   registerSettingsHandlers(settings);
   const detection = createDetection({ settings });
-  registerStageViewHandlers(createStageView({ settings, windows, detection }));
+  const pool = loadPool({ file: path.join(dir, 'assignments.json') });
+  registerStageViewHandlers(
+    createStageView({ settings, windows, detection, pool }),
+  );
   registerCanvasReadyHandler();
   return { settings, windows };
 }
@@ -121,6 +125,7 @@ describe('overlay preload', () => {
         power: { suspended: false, locked: false },
         sessions: [],
         adapters: [],
+        pool: { released: [] },
       },
     });
 

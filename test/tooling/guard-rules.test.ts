@@ -245,6 +245,8 @@ describe('dependency-cruiser rules', () => {
     'src-no-network-modules',
     'adapters-no-processes-or-electron',
     'jsonl-core-not-to-source-adapters',
+    'detection-not-to-pool',
+    'persist-not-to-owners',
     'preload-only-electron-and-shared',
     'overlay-no-react',
     'react-only-in-panels',
@@ -318,6 +320,13 @@ describe('dependency-cruiser rules', () => {
         './target',
         '../../../target',
         '../../../../shared/target',
+      ),
+      'src/main/pool/target.ts': target,
+      'src/main/settings/target.ts': target,
+      'src/main/detection/to-pool.ts': imports('../pool/target'),
+      'src/main/persist/to-owners.ts': imports(
+        '../settings/target',
+        '../pool/target',
       ),
       'src/main/runs.ts': imports(
         'node:child_process',
@@ -452,6 +461,21 @@ describe('dependency-cruiser rules', () => {
       'main-ipc-only-windows-environment',
       'src/main/ipc/to-windows.ts',
       'src/main/windows/target.ts',
+    ],
+    [
+      'detection-not-to-pool',
+      'src/main/detection/to-pool.ts',
+      'src/main/pool/target.ts',
+    ],
+    [
+      'persist-not-to-owners',
+      'src/main/persist/to-owners.ts',
+      'src/main/settings/target.ts',
+    ],
+    [
+      'persist-not-to-owners',
+      'src/main/persist/to-owners.ts',
+      'src/main/pool/target.ts',
     ],
   ])('%s: %s -> %s', (rule, from, to) => {
     expect(targets(rule, from)).toContain(to);

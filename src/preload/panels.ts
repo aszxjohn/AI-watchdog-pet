@@ -2,7 +2,13 @@
 // Sandboxed: only electron's renderer API and src/shared, no Node globals.
 import { contextBridge } from 'electron';
 import { PRELOAD_API_KEY } from '../shared/constants';
-import { appGetVersion, settingsGet, settingsPatch } from '../shared/ipc';
+import type { SessionKey } from '../shared/detection-events';
+import {
+  appGetVersion,
+  poolSetReleased,
+  settingsGet,
+  settingsPatch,
+} from '../shared/ipc';
 import type { PanelsApi } from '../shared/preload-api';
 import type { SettingsPatch } from '../shared/settings';
 import { invoke } from './invoke';
@@ -15,6 +21,10 @@ const api: PanelsApi = Object.freeze({
   settings: Object.freeze({
     get: () => invoke(settingsGet),
     patch: (patch: SettingsPatch) => invoke(settingsPatch, patch),
+  }),
+  pool: Object.freeze({
+    setReleased: (sessionKey: SessionKey, released: boolean) =>
+      invoke(poolSetReleased, sessionKey, released),
   }),
   stageView: Object.freeze({
     subscribe: subscribeStageView,

@@ -385,6 +385,7 @@ describe('registerIpcHandler', () => {
           power: { suspended: false, locked: false },
           sessions: [],
           adapters: [],
+          pool: { released: [] },
         },
       };
       const PATCH = {

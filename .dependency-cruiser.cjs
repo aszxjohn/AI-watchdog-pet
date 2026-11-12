@@ -74,6 +74,22 @@ module.exports = {
       },
     },
     {
+      name: 'detection-not-to-pool',
+      comment:
+        'main/detection does not depend on main/pool (Story 2.8): the pool hears the start-up sync through main.ts, and releases never join the sections detection owns.',
+      severity: 'error',
+      from: { path: '^src/main/detection/' },
+      to: { path: '^src/main/pool/' },
+    },
+    {
+      name: 'persist-not-to-owners',
+      comment:
+        'main/persist is the file handling main/settings and main/pool share (Story 2.8): it must not depend on either of them.',
+      severity: 'error',
+      from: { path: '^src/main/persist/' },
+      to: { path: '^src/main/(settings|pool)/' },
+    },
+    {
       name: 'preload-only-electron-and-shared',
       comment:
         'Sandboxed preloads can load only electron and their own bundle (AD-2, AD-24): no Node built-ins, no other packages.',

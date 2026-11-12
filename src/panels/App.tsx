@@ -4,13 +4,13 @@
  *
  * The page comes from the URL fragment (`#/<page id>`, src/shared/panels.ts):
  * main opens the window on a page by loading that fragment, and the links on
- * the left change it. 管理 session lists the detected sessions and the
- * running adapters' health; 舞台設定 lists the displays for the canvas;
- * 角色包 shows 即將推出 for now.
+ * the left change it. 管理 session lists the detected sessions (each can be
+ * released or shown again) and the running adapters' health; 舞台設定
+ * lists the displays for the canvas; 角色包 shows 即將推出 for now.
  *
  * Renderer state only ever comes from StageView (AD-20): a setting changes
- * through `settings.patch`, and the page shows the new choice once StageView
- * brings it back, never earlier.
+ * through `settings.patch` and a release through `pool.setReleased`, and
+ * the page shows the outcome once StageView brings it back, never earlier.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { PRELOAD_API_KEY, PRODUCT_NAME } from '../shared/constants';
@@ -28,14 +28,18 @@ import { currentHashPage, followHashPage } from './hash-page';
 import {
   ADAPTERS_HEADING,
   adapterRows,
+  createReleaseToggle,
   DEMO_MODE_HINT,
+  IDLE_RELEASE_TOGGLE,
   INFERRED_LABEL,
   inferredTitle,
   NO_ADAPTERS_TEXT,
   NO_SESSIONS_TEXT,
+  RELEASED_LABEL,
   SESSION_COLUMNS,
   SESSIONS_HEADING,
   sessionRows,
+  type ReleaseToggleState,
 } from './session-rows';
 
 interface StatusLine {
@@ -199,9 +203,32 @@ function StageSettings({
 /**
  * 管理 session: the sessions main/detection publishes and the health of
  * each running adapter, read from StageView only. Text and order come from
- * session-rows.ts; an inferred state carries a 推測 mark.
+ * session-rows.ts; an inferred state carries a 推測 mark, a released
+ * session is faded and marked 已釋放. The 釋放 / 改回顯示 logic (buttons
+ * disabled until main answers, a failure shown with the rows left as
+ * StageView has them) is createReleaseToggle; this only renders it.
  */
-function Sessions({ snapshot }: { snapshot: StageViewSnapshot | null }) {
+function Sessions({
+  awp,
+  snapshot,
+}: {
+  awp: PanelsApi | undefined;
+  snapshot: StageViewSnapshot | null;
+}) {
+  const [release, setRelease] =
+    useState<ReleaseToggleState>(IDLE_RELEASE_TOGGLE);
+  const toggle = useMemo(
+    () =>
+      awp === undefined
+        ? undefined
+        : createReleaseToggle(
+            (sessionKey, released) =>
+              awp.pool.setReleased(sessionKey, released),
+            setRelease,
+          ),
+    [awp],
+  );
+
   if (snapshot === null) {
     return <p className="coming-soon">讀取中…</p>;
   }
@@ -230,9 +257,18 @@ function Sessions({ snapshot }: { snapshot: StageViewSnapshot | null }) {
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.key} data-state={row.stateCode}>
+                <tr
+                  key={row.key}
+                  data-state={row.stateCode}
+                  className={row.released ? 'is-released' : undefined}
+                >
                   <td>{row.source}</td>
-                  <td>{row.name}</td>
+                  <td>
+                    {row.name}
+                    {row.released ? (
+                      <span className="released-mark">{RELEASED_LABEL}</span>
+                    ) : null}
+                  </td>
                   <td>
                     <span
                       className={
@@ -252,10 +288,27 @@ function Sessions({ snapshot }: { snapshot: StageViewSnapshot | null }) {
                       </span>
                     ) : null}
                   </td>
+                  <td className="session-action">
+                    <button
+                      type="button"
+                      aria-label={`${row.action} ${row.name}`}
+                      disabled={release.sending || toggle === undefined}
+                      onClick={() => {
+                        void toggle?.toggle(row);
+                      }}
+                    >
+                      {row.action}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        )}
+        {release.error === null ? null : (
+          <p className="setting-error" role="alert">
+            {release.error}
+          </p>
         )}
       </section>
       <section className="adapters" aria-labelledby="adapters-heading">
@@ -305,7 +358,7 @@ export function App({ awp }: { awp: PanelsApi | undefined }) {
         {page === 'settings' ? (
           <StageSettings awp={awp} snapshot={stageView.snapshot} />
         ) : page === 'sessions' ? (
-          <Sessions snapshot={stageView.snapshot} />
+          <Sessions awp={awp} snapshot={stageView.snapshot} />
         ) : (
           <p className="coming-soon">即將推出</p>
         )}

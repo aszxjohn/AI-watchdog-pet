@@ -3,6 +3,7 @@ import {
   DETECTION_ID_MAX_LENGTH,
   sessionKeySchema,
 } from './detection-events';
+import { stagePoolSchema } from './pool';
 import { settingsStateSchema } from './settings';
 import { adapterHealthSchema, sourceCodeSchema } from './sources';
 import { stateCodeSchema } from './states';
@@ -15,7 +16,11 @@ import { z } from './zod-setup';
  *
  * - `settings`: main/settings;
  * - `displays`, `canvas`, `power`: main/windows (Story 1.6);
- * - `sessions`, `adapters`: main/detection (Story 2.3).
+ * - `sessions`, `adapters`: main/detection (Story 2.3);
+ * - `pool`: main/pool (Story 2.8), the released session keys. A panel
+ *   matches them to `sessions` by key. Any one snapshot is a consistent
+ *   view at a single `rev`; a session and its release may still arrive in
+ *   different deltas (each delta is rev + 1).
  */
 
 /**
@@ -147,6 +152,7 @@ export const stageViewSchema = z.strictObject({
   power: stagePowerSchema,
   sessions: stageSessionsSchema,
   adapters: stageAdaptersSchema,
+  pool: stagePoolSchema,
 });
 
 export type StageView = z.infer<typeof stageViewSchema>;
@@ -164,6 +170,9 @@ export type StageViewDetectionSections = Pick<
   StageView,
   'sessions' | 'adapters'
 >;
+
+/** The section main/pool owns. */
+export type StageViewPoolSections = Pick<StageView, 'pool'>;
 
 /** The answer to `stage-view:subscribe`: the whole view at `rev`. */
 export const stageViewSnapshotSchema = z.strictObject({
@@ -186,6 +195,7 @@ export const stageViewSectionsSchema = z
     power: stagePowerSchema.exactOptional(),
     sessions: stageSessionsSchema.exactOptional(),
     adapters: stageAdaptersSchema.exactOptional(),
+    pool: stagePoolSchema.exactOptional(),
   })
   .refine((sections) => Object.keys(sections).length > 0, {
     message: 'a delta carries at least one section',

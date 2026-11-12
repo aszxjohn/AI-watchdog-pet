@@ -30,6 +30,7 @@ const SNAPSHOT: StageViewSnapshot = {
     power: { suspended: false, locked: false },
     sessions: [],
     adapters: [],
+    pool: { released: [] },
   },
 };
 

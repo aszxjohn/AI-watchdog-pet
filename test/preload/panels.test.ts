@@ -4,6 +4,8 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDetection } from '../../src/main/detection/detection';
 import { registerIpcHandler } from '../../src/main/ipc/register';
+import { registerPoolHandlers } from '../../src/main/pool/ipc';
+import { loadPool, type PoolStore } from '../../src/main/pool/store';
 import { registerSettingsHandlers } from '../../src/main/settings/ipc';
 import {
   loadSettings,
@@ -24,16 +26,19 @@ vi.mock('electron', () => import('../helpers/fake-electron'));
 
 let dir: string;
 let settings: SettingsStore | undefined;
+let pool: PoolStore | undefined;
 
 beforeEach(() => {
   fake.resetFakeElectron();
   vi.resetModules();
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awp-panels-'));
   settings = undefined;
+  pool = undefined;
 });
 
 afterEach(() => {
   settings?.flushSync();
+  pool?.flushSync();
   vi.restoreAllMocks();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -43,16 +48,23 @@ async function loadApi(): Promise<PanelsApi> {
   return fake.exposed.get('awp') as PanelsApi;
 }
 
-/** main as main.ts wires it, with settings.json in a temp folder. */
+/**
+ * main as main.ts wires it, with settings.json and assignments.json in a
+ * temp folder.
+ */
 function startMain(): SettingsStore {
   vi.spyOn(console, 'info').mockImplementation(() => {});
   settings = loadSettings({ file: path.join(dir, 'settings.json') });
+  const detection = createDetection({ settings });
+  pool = loadPool({ file: path.join(dir, 'assignments.json') });
   registerSettingsHandlers(settings);
+  registerPoolHandlers(pool);
   registerStageViewHandlers(
     createStageView({
       settings,
       windows: createWindowsStageSource(),
-      detection: createDetection({ settings }),
+      detection,
+      pool,
     }),
   );
   return settings;
@@ -69,10 +81,13 @@ describe('panels preload', () => {
     expect([...fake.exposed.keys()]).toStrictEqual(['awp']);
     expect(Object.keys(api).sort()).toStrictEqual([
       'app',
+      'pool',
       'settings',
       'stageView',
     ]);
+    expect(Object.keys(api.pool)).toStrictEqual(['setReleased']);
     expect(Object.isFrozen(api)).toBe(true);
+    expect(Object.isFrozen(api.pool)).toBe(true);
     expect(Object.isFrozen(api.settings)).toBe(true);
     expect(Object.isFrozen(api.stageView)).toBe(true);
   });
@@ -112,6 +127,7 @@ describe('panels preload', () => {
         power: { suspended: false, locked: false },
         sessions: [],
         adapters: [],
+        pool: { released: [] },
       },
     });
 
@@ -149,5 +165,64 @@ describe('panels preload', () => {
       error: { code: 'invalid-input' },
     });
     expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it('a pool.setReleased reaches a StageView listener through the pool section, and showing again removes it', async () => {
+    startMain();
+    const api = await loadApi();
+    const listener = vi.fn<(snapshot: StageViewSnapshot) => void>();
+    api.stageView.subscribe(listener);
+    await settle();
+
+    const released = await api.pool.setReleased('demo:1', true);
+    await settle();
+
+    expect(released).toStrictEqual({ ok: true, data: null });
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(listener.mock.lastCall?.[0]).toMatchObject({
+      rev: 1,
+      view: { pool: { released: ['demo:1'] } },
+    });
+
+    // Releasing it again changes nothing: success, no delta.
+    expect(await api.pool.setReleased('demo:1', true)).toStrictEqual({
+      ok: true,
+      data: null,
+    });
+    await settle();
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    expect(await api.pool.setReleased('demo:1', false)).toStrictEqual({
+      ok: true,
+      data: null,
+    });
+    await settle();
+    expect(listener).toHaveBeenCalledTimes(3);
+    expect(listener.mock.lastCall?.[0]).toMatchObject({
+      rev: 2,
+      view: { pool: { released: [] } },
+    });
+  });
+
+  it('pool.setReleased answers invalid-input to a bad key and nothing changes', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    startMain();
+    const api = await loadApi();
+    const listener = vi.fn();
+    api.stageView.subscribe(listener);
+    await settle();
+
+    const result = await api.pool.setReleased(
+      'vim:1' as unknown as 'demo:1',
+      true,
+    );
+    await settle();
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'invalid-input' },
+    });
+    expect(listener).toHaveBeenCalledOnce();
+    expect(pool?.get()).toStrictEqual({ pool: { released: [] } });
   });
 });

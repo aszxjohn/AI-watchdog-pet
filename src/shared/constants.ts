@@ -37,6 +37,12 @@ export const IPC_HANDLER_TIMEOUT_MS = 10_000;
  */
 export const SETTINGS_FLUSH_DEBOUNCE_MS = 500;
 
+/**
+ * How long main/pool waits, from the first change not yet on disk, before
+ * writing assignments.json once for every change made in that window.
+ */
+export const POOL_FLUSH_DEBOUNCE_MS = 500;
+
 /** Run log files whose hour started longer ago than this are deleted. */
 export const RUN_LOG_RETENTION_MS = 24 * 60 * 60 * 1000;
 

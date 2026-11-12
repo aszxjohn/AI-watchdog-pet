@@ -11,6 +11,7 @@ import {
   ipcResultSchema,
   isIpcChannelName,
   parseIpcResult,
+  poolSetReleased,
   settingsGet,
   settingsPatch,
   stageViewDelta,
@@ -198,6 +199,7 @@ describe('settings and StageView contracts', () => {
       power: { suspended: false, locked: false },
       sessions: [],
       adapters: [],
+      pool: { released: [] },
     },
   };
   const DELTA = { rev: 6, sections: { settings: STATE } };
@@ -371,5 +373,44 @@ describe('canvas:context-menu contract', () => {
     expectRoundTrip(canvasContextMenu.output, null);
     expectRejected(canvasContextMenu.output, undefined);
     expectRejected(canvasContextMenu.output, 'menu');
+  });
+});
+
+describe('pool:set-released contract', () => {
+  it('uses a valid channel name', () => {
+    expect(poolSetReleased.channel).toBe('pool:set-released');
+    expect(isIpcChannelName(poolSetReleased.channel)).toBe(true);
+  });
+
+  it.each([
+    ['release the demo session', ['demo:1', true]],
+    [
+      'show a Claude Code session again',
+      ['claude-code:0b9a7c2e-4f1d-4a8e-9c3b-5d6e7f8a9b0c', false],
+    ],
+    ['a native id with a colon', ['codex:a:b', true]],
+  ])('takes a key and a flag: %s', (_label, args) => {
+    expectRoundTrip(poolSetReleased.input, args);
+  });
+
+  it.each([
+    ['no arguments', []],
+    ['a key only', ['demo:1']],
+    ['the flag first', [true, 'demo:1']],
+    ['a request object', [{ sessionKey: 'demo:1', released: true }]],
+    ['an unknown source', ['vim:1', true]],
+    ['an empty native id', ['demo:', true]],
+    ['a native id past the limit', ['demo:'.padEnd(262, 'x'), true]],
+    ['a control character', ['demo:1\n', true]],
+    ['a flag that is not a boolean', ['demo:1', 1]],
+    ['three arguments', ['demo:1', true, false]],
+  ])('rejects %s', (_label, args) => {
+    expectRejected(poolSetReleased.input, args);
+  });
+
+  it('answers null', () => {
+    expectRoundTrip(poolSetReleased.output, null);
+    expectRejected(poolSetReleased.output, undefined);
+    expectRejected(poolSetReleased.output, true);
   });
 });

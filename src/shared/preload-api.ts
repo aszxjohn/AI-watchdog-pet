@@ -10,6 +10,7 @@ import type {
   canvasContextMenu,
   canvasReady,
   canvasSetHover,
+  poolSetReleased,
   settingsGet,
   settingsPatch,
 } from './ipc';
@@ -44,6 +45,17 @@ export interface PanelsApi {
     patch(
       patch: SettingsPatch,
     ): Promise<IpcResult<IpcData<typeof settingsPatch>>>;
+  };
+  readonly pool: {
+    /**
+     * Releases the session at `sessionKey` (true) or shows it again
+     * (false) (Story 2.8). The result comes back through StageView's
+     * `pool` section; do not update local state from the reply.
+     */
+    setReleased(
+      sessionKey: SessionKey,
+      released: boolean,
+    ): Promise<IpcResult<IpcData<typeof poolSetReleased>>>;
   };
   readonly stageView: StageViewApi;
 }

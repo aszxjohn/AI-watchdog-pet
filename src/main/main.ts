@@ -10,13 +10,14 @@
  *    `ready`), then starts the run log, settings, detection (demo mode off;
  *    the Claude Code adapter reading ~/.claude/projects, the Gemini CLI
  *    adapter reading ~/.gemini/tmp, the Cursor adapter reading
- *    ~/.cursor/projects),
+ *    ~/.cursor/projects), the pool (the released sessions, from
+ *    assignments.json; swept once detection's start-up sync is over),
  *    StageView (settings, main/windows' displays, canvas and power sections,
- *    and main/detection's sessions and adapters) and the IPC handlers, and
- *    guards every window webContents. The canvas's hover and right-click
- *    handlers come once the canvas windows exist; a right-click on the demo
- *    session's square opens the demo menu, which calls detection.setDemo
- *    as the tray's 示範模式 does.
+ *    main/detection's sessions and adapters, and main/pool's pool) and the
+ *    IPC handlers, and guards every window webContents. The canvas's hover
+ *    and right-click handlers come once the canvas windows exist; a
+ *    right-click on the demo session's square opens the demo menu, which
+ *    calls detection.setDemo as the tray's 示範模式 does.
  * 3. Once ready: the session guards, the application menu, the `app://`
  *    handler, the Dock icon hidden, the tray icon (its 示範模式 check mark
  *    follows detection, whichever menu changed it), then the stage: the
@@ -32,7 +33,8 @@
  *    page it shows, or open the main panel when none is open; a failure
  *    there is logged too.
  * 5. Closing every window keeps the app running; only the tray menu's 結束
- *    quits, and settings still waiting for their debounce are written first.
+ *    quits, and settings, then released sessions, still waiting for their
+ *    debounce are written first.
  *    Quitting stops the canvas and detection (and with it the Claude
  *    Code, Gemini CLI and Cursor adapters' watchers).
  */
@@ -64,6 +66,8 @@ import {
 } from './detection/detection';
 import { registerIpcHandler } from './ipc/register';
 import { errorCode, initRunLog, logEvent } from './log/run-log';
+import { registerPoolHandlers } from './pool/ipc';
+import { loadPool } from './pool/store';
 import { registerSettingsHandlers } from './settings/ipc';
 import { flushSettingsOnQuit, loadSettings } from './settings/store';
 import {
@@ -152,9 +156,9 @@ function startupStep(name: string, run: () => void): void {
 }
 
 function startPrimaryInstance(): void {
-  // Startup order: run log, settings, StageView, IPC handlers, window
-  // guards; the tray and windows once ready. userData is the same folder
-  // for `npm start` and the packaged app.
+  // Startup order: run log, settings, detection, pool, StageView, IPC
+  // handlers, window guards; the tray and windows once ready. userData is
+  // the same folder for `npm start` and the packaged app.
   const userData = app.getPath('userData');
   initRunLog(path.join(userData, 'logs'));
   logEvent(
@@ -189,20 +193,32 @@ function startPrimaryInstance(): void {
       }),
     ],
   });
+  // main/pool owns the released sessions (assignments.json) and the pool
+  // section. Once detection's start-up sync is over (every adapter sent
+  // sync.ready, or syncTimeoutMs passed), it drops the saved releases of
+  // sessions not reported since start; detection knows nothing of it.
+  const pool = loadPool({ file: path.join(userData, 'assignments.json') });
+  detection.onSynced((reported) => {
+    pool.sweep(reported);
+  });
   const stageView = createStageView({
     settings,
     windows: stageSources,
     detection,
+    pool,
   });
 
   registerIpcHandler(appGetVersion, ['panels'], () => app.getVersion());
   registerSettingsHandlers(settings);
+  registerPoolHandlers(pool);
   registerStageViewHandlers(stageView);
   registerCanvasReadyHandler();
 
-  // Write settings that are still waiting for their debounce before exiting,
-  // then log the quit (will-quit listeners run in the order they were added).
+  // Write settings, then released sessions, that are still waiting for
+  // their debounce before exiting, then log the quit (will-quit listeners
+  // run in the order they were added).
   flushSettingsOnQuit(app, settings);
+  flushSettingsOnQuit(app, pool);
   app.on('will-quit', () => {
     logEvent('app', 'quit');
   });

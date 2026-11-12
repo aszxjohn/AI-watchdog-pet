@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ADAPTERS_HEADING,
   adapterRows,
+  createReleaseToggle,
   DEMO_MODE_HINT,
+  IDLE_RELEASE_TOGGLE,
   INFERRED_LABEL,
   INFERRED_TITLE,
   INFERRED_TURN_END_TITLE,
@@ -10,10 +12,18 @@ import {
   nativeIdOf,
   NO_ADAPTERS_TEXT,
   NO_SESSIONS_TEXT,
+  RELEASE_ACTION,
+  RELEASED_LABEL,
+  releaseErrorText,
   SESSION_COLUMNS,
   sessionRows,
   SESSIONS_HEADING,
+  SHOW_AGAIN_ACTION,
+  type ReleaseToggleState,
 } from '../../src/panels/session-rows';
+import type { SessionKey } from '../../src/shared/detection-events';
+import type { IpcResult } from '../../src/shared/ipc';
+import type { StagePool } from '../../src/shared/pool';
 import type { StageAdapter, StageSession } from '../../src/shared/stage-view';
 import { STATE_CODES, STATE_DISPLAY_NAMES } from '../../src/shared/states';
 
@@ -25,13 +35,17 @@ const DEMO: StageSession = {
   confidence: 'exact',
 };
 
+const NOTHING_RELEASED: StagePool = { released: [] };
+
 function session(fields: Partial<StageSession>): StageSession {
   return { ...DEMO, ...fields };
 }
 
 describe('sessionRows', () => {
   it('I/O matrix 打開示範模式: the demo session reads 示範 / 示範 / 要你批准', () => {
-    expect(sessionRows({ sessions: [DEMO] })).toStrictEqual([
+    expect(
+      sessionRows({ sessions: [DEMO], pool: NOTHING_RELEASED }),
+    ).toStrictEqual([
       {
         key: 'demo:1',
         source: '示範',
@@ -39,18 +53,24 @@ describe('sessionRows', () => {
         state: '要你批准',
         stateCode: 'approval',
         inferred: false,
+        released: false,
+        action: '釋放',
       },
     ]);
   });
 
   it.each(STATE_CODES)('shows the state %s by its Chinese name', (state) => {
-    const [row] = sessionRows({ sessions: [session({ state })] });
+    const [row] = sessionRows({
+      sessions: [session({ state })],
+      pool: NOTHING_RELEASED,
+    });
     expect(row?.state).toBe(STATE_DISPLAY_NAMES[state]);
     expect(row?.stateCode).toBe(state);
   });
 
   it('I/O matrix 推測標示: an inferred state is marked, an exact one is not', () => {
     const rows = sessionRows({
+      pool: NOTHING_RELEASED,
       sessions: [
         session({
           sessionKey: 'codex:a',
@@ -100,6 +120,7 @@ describe('sessionRows', () => {
 
   it('shows the native id while the session has no display name', () => {
     const [row] = sessionRows({
+      pool: NOTHING_RELEASED,
       sessions: [
         session({
           sessionKey: 'claude-code:5f0c-a:b',
@@ -114,6 +135,7 @@ describe('sessionRows', () => {
 
   it('orders rows by source, then name, then key, whatever order they come in', () => {
     const rows = sessionRows({
+      pool: NOTHING_RELEASED,
       sessions: [
         session({ sessionKey: 'demo:1', source: 'demo', displayName: '示範' }),
         session({ sessionKey: 'codex:z', source: 'codex', displayName: 'b' }),
@@ -142,8 +164,11 @@ describe('sessionRows', () => {
       session({ sessionKey: 'codex:a', source: 'codex', displayName: 'a' }),
       session({ sessionKey: 'codex:b', source: 'codex', displayName: 'b' }),
     ];
-    const before = sessionRows({ sessions }).map((row) => row.key);
+    const before = sessionRows({ sessions, pool: NOTHING_RELEASED }).map(
+      (row) => row.key,
+    );
     const after = sessionRows({
+      pool: NOTHING_RELEASED,
       sessions: [
         { ...sessions[1], state: 'error' } as StageSession,
         { ...sessions[0], state: 'idle' } as StageSession,
@@ -153,7 +178,9 @@ describe('sessionRows', () => {
   });
 
   it('I/O matrix 沒有 session: no row, and the page text says so and points at 示範模式', () => {
-    expect(sessionRows({ sessions: [] })).toStrictEqual([]);
+    expect(sessionRows({ sessions: [], pool: NOTHING_RELEASED })).toStrictEqual(
+      [],
+    );
     expect(NO_SESSIONS_TEXT).toBe('目前沒有偵測到 session');
     // The icon is in the menu bar on macOS, the notification area on Windows.
     expect(DEMO_MODE_HINT).toContain('選單列或系統匣');
@@ -165,16 +192,303 @@ describe('sessionRows', () => {
       session({ sessionKey: 'demo:2' }),
       session({ sessionKey: 'demo:1' }),
     ]);
-    sessionRows({ sessions: sessions as StageSession[] });
+    sessionRows({
+      sessions: sessions as StageSession[],
+      pool: NOTHING_RELEASED,
+    });
     expect(sessions.map((s) => s.sessionKey)).toStrictEqual([
       'demo:2',
       'demo:1',
     ]);
   });
 
-  it('has the column headings 來源, 名稱, 狀態', () => {
-    expect([...SESSION_COLUMNS]).toStrictEqual(['來源', '名稱', '狀態']);
+  it('has the column headings 來源, 名稱, 狀態, 操作 (the 釋放 / 改回顯示 button)', () => {
+    expect([...SESSION_COLUMNS]).toStrictEqual([
+      '來源',
+      '名稱',
+      '狀態',
+      '操作',
+    ]);
     expect(SESSIONS_HEADING).toContain('session');
+  });
+});
+
+describe('released sessions (Story 2.8)', () => {
+  const sessions = [
+    session({ sessionKey: 'codex:a', source: 'codex', displayName: 'a' }),
+    session({
+      sessionKey: 'codex:b',
+      source: 'codex',
+      displayName: 'b',
+      state: 'working',
+      confidence: 'inferred',
+    }),
+    session({ sessionKey: 'demo:1' }),
+  ];
+
+  it('I/O matrix 釋放: a released row keeps its state, is marked released and offers 改回顯示', () => {
+    const rows = sessionRows({
+      sessions,
+      pool: { released: ['codex:b', 'demo:1'] },
+    });
+
+    expect(
+      rows.map((row) => [
+        row.key,
+        row.state,
+        row.inferred,
+        row.released,
+        row.action,
+      ]),
+    ).toStrictEqual([
+      ['codex:a', '要你批准', false, false, '釋放'],
+      ['codex:b', '工作中', true, true, '改回顯示'],
+      ['demo:1', '要你批准', false, true, '改回顯示'],
+    ]);
+    expect(RELEASED_LABEL).toBe('已釋放');
+    expect(RELEASE_ACTION).toBe('釋放');
+    expect(SHOW_AGAIN_ACTION).toBe('改回顯示');
+  });
+
+  it('I/O matrix 改回顯示: once the key leaves the pool, the mark goes and the button is 釋放 again', () => {
+    const [row] = sessionRows({
+      sessions: [sessions[0] as StageSession],
+      pool: NOTHING_RELEASED,
+    });
+    expect(row?.released).toBe(false);
+    expect(row?.action).toBe('釋放');
+  });
+
+  it('keeps the order when a session is released or shown again: the row does not move', () => {
+    const order = (released: SessionKey[]) =>
+      sessionRows({ sessions, pool: { released } }).map((row) => row.key);
+    const before = order([]);
+
+    expect(order(['codex:a'])).toStrictEqual(before);
+    expect(order(['codex:a', 'codex:b', 'demo:1'])).toStrictEqual(before);
+  });
+
+  it('ignores a released key with no session (saved from an earlier run, or ended)', () => {
+    const rows = sessionRows({
+      sessions: [sessions[0] as StageSession],
+      pool: { released: ['claude-code:gone'] },
+    });
+    expect(rows.map((row) => [row.key, row.released])).toStrictEqual([
+      ['codex:a', false],
+    ]);
+  });
+});
+
+describe('releaseErrorText', () => {
+  it('says which request failed, with the error code when there is one', () => {
+    expect(
+      releaseErrorText(true, {
+        code: 'invoke-failed',
+        message: 'invoke failed',
+      }),
+    ).toBe('無法釋放 session（invoke-failed：invoke failed）');
+    expect(releaseErrorText(false, undefined)).toBe('無法改回顯示');
+  });
+});
+
+describe('createReleaseToggle', () => {
+  type Reply = IpcResult<null>;
+
+  /** A pool.setReleased whose reply the test sends when it wants. */
+  function manualSetReleased() {
+    const calls: [SessionKey, boolean][] = [];
+    const pending: {
+      resolve: (reply: Reply) => void;
+      reject: (error: unknown) => void;
+    }[] = [];
+    const setReleased = vi.fn(
+      (sessionKey: SessionKey, released: boolean) =>
+        new Promise<Reply>((resolve, reject) => {
+          calls.push([sessionKey, released]);
+          pending.push({ resolve, reject });
+        }),
+    );
+    return {
+      setReleased,
+      calls,
+      answer: (reply: Reply) => pending.shift()?.resolve(reply),
+      fail: (error: unknown) => pending.shift()?.reject(error),
+    };
+  }
+
+  function setup() {
+    const remote = manualSetReleased();
+    const states: ReleaseToggleState[] = [];
+    const logError = vi.fn();
+    const toggle = createReleaseToggle(
+      remote.setReleased,
+      (state) => {
+        states.push(state);
+      },
+      logError,
+    );
+    return { remote, states, logError, toggle };
+  }
+
+  const SHOWN = { key: 'codex:a', released: false } as const;
+  const RELEASED = { key: 'codex:a', released: true } as const;
+
+  it('starts idle', () => {
+    expect(IDLE_RELEASE_TOGGLE).toStrictEqual({ sending: false, error: null });
+  });
+
+  it('releases a shown row: reports sending while the reply is pending, then idle', async () => {
+    const { remote, states, toggle } = setup();
+
+    const done = toggle.toggle(SHOWN);
+
+    expect(states).toStrictEqual([{ sending: true, error: null }]);
+    expect(remote.calls).toStrictEqual([['codex:a', true]]);
+    remote.answer({ ok: true, data: null });
+    await done;
+    expect(states.at(-1)).toStrictEqual({ sending: false, error: null });
+  });
+
+  it('shows a released row again', async () => {
+    const { remote, toggle } = setup();
+
+    const done = toggle.toggle(RELEASED);
+
+    expect(remote.calls).toStrictEqual([['codex:a', false]]);
+    remote.answer({ ok: true, data: null });
+    await done;
+  });
+
+  it('ignores another press while one is on its way', async () => {
+    const { remote, toggle } = setup();
+
+    const first = toggle.toggle(SHOWN);
+    await toggle.toggle({ key: 'demo:1', released: false });
+
+    expect(remote.setReleased).toHaveBeenCalledOnce();
+    remote.answer({ ok: true, data: null });
+    await first;
+  });
+
+  it('shows releaseErrorText for { ok: false }, ends sending, and never touches the rows', async () => {
+    const { remote, states, logError, toggle } = setup();
+    const refused = {
+      code: 'sender-rejected',
+      message: 'sender is not allowed',
+    } as const;
+
+    const done = toggle.toggle(SHOWN);
+    remote.answer({ ok: false, error: refused });
+    await done;
+
+    expect(states).toStrictEqual([
+      { sending: true, error: null },
+      { sending: false, error: releaseErrorText(true, refused) },
+    ]);
+    expect(logError).toHaveBeenCalledOnce();
+  });
+
+  it('shows the generic error when the call rejects', async () => {
+    const { remote, states, toggle } = setup();
+
+    const done = toggle.toggle(RELEASED);
+    remote.fail(new Error('gone'));
+    await done;
+
+    expect(states.at(-1)).toStrictEqual({
+      sending: false,
+      error: '無法改回顯示',
+    });
+  });
+
+  it('never rejects, and takes the next press, when onState throws on the outcome', async () => {
+    const remote = manualSetReleased();
+    const toggle = createReleaseToggle(
+      remote.setReleased,
+      (state) => {
+        if (!state.sending) {
+          throw new Error('page gone');
+        }
+      },
+      vi.fn(),
+    );
+
+    const first = toggle.toggle(SHOWN);
+    remote.answer({ ok: true, data: null });
+    await expect(first).resolves.toBeUndefined();
+
+    // Not stuck sending: the next press is sent.
+    const second = toggle.toggle(SHOWN);
+    expect(remote.setReleased).toHaveBeenCalledTimes(2);
+    remote.answer({ ok: true, data: null });
+    await expect(second).resolves.toBeUndefined();
+  });
+
+  it('never rejects when onState throws on sending; nothing is sent and the next press still runs', async () => {
+    const remote = manualSetReleased();
+    const onState = vi.fn((state: ReleaseToggleState) => {
+      if (state.sending) {
+        throw new Error('page gone');
+      }
+    });
+    const toggle = createReleaseToggle(remote.setReleased, onState, vi.fn());
+
+    await expect(toggle.toggle(SHOWN)).resolves.toBeUndefined();
+    await expect(toggle.toggle(SHOWN)).resolves.toBeUndefined();
+
+    expect(remote.setReleased).not.toHaveBeenCalled();
+    expect(onState.mock.calls.map(([state]) => state)).toStrictEqual([
+      { sending: true, error: null },
+      { sending: false, error: releaseErrorText(true, undefined) },
+      { sending: true, error: null },
+      { sending: false, error: releaseErrorText(true, undefined) },
+    ]);
+  });
+
+  it('never rejects, ends sending and keeps the error, when logError throws', async () => {
+    const remote = manualSetReleased();
+    const states: ReleaseToggleState[] = [];
+    const toggle = createReleaseToggle(
+      remote.setReleased,
+      (state) => {
+        states.push(state);
+      },
+      () => {
+        throw new Error('console gone');
+      },
+    );
+    const refused = {
+      code: 'invoke-failed',
+      message: 'invoke failed',
+    } as const;
+
+    const done = toggle.toggle(SHOWN);
+    remote.answer({ ok: false, error: refused });
+    await expect(done).resolves.toBeUndefined();
+
+    expect(states.at(-1)).toStrictEqual({
+      sending: false,
+      error: releaseErrorText(true, refused),
+    });
+    const again = toggle.toggle(SHOWN);
+    expect(remote.setReleased).toHaveBeenCalledTimes(2);
+    remote.answer({ ok: true, data: null });
+    await again;
+  });
+
+  it('clears an earlier error on the next press, and can press again', async () => {
+    const { remote, states, toggle } = setup();
+    const failed = toggle.toggle(SHOWN);
+    remote.fail(new Error('gone'));
+    await failed;
+
+    const done = toggle.toggle(SHOWN);
+    expect(states.at(-1)).toStrictEqual({ sending: true, error: null });
+    remote.answer({ ok: true, data: null });
+    await done;
+
+    expect(states.at(-1)).toStrictEqual({ sending: false, error: null });
+    expect(remote.setReleased).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -1,4 +1,5 @@
 import { sessionKeySchema } from './detection-events';
+import { poolSetReleasedInputSchema } from './pool';
 import {
   settingsPatchResultSchema,
   settingsPatchSchema,
@@ -134,6 +135,18 @@ export const settingsPatch = {
   channel: 'settings:patch',
   input: z.tuple([settingsPatchSchema]),
   output: settingsPatchResultSchema,
+} as const satisfies IpcContract;
+
+/**
+ * `pool:set-released`: releases the session at a key (true) or shows it
+ * again (false) (Story 2.8). main/pool changes nothing when it already is
+ * so. Answers null; the change comes back through StageView's `pool`
+ * section.
+ */
+export const poolSetReleased = {
+  channel: 'pool:set-released',
+  input: poolSetReleasedInputSchema,
+  output: z.null(),
 } as const satisfies IpcContract;
 
 /**

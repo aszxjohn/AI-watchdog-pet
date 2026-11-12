@@ -1,8 +1,8 @@
 /**
  * main/stage-view (AD-20): composes StageView from the modules that own the
  * data (main/settings: `settings`; main/windows: `displays`, `canvas`,
- * `power`; main/detection: `sessions`, `adapters`) and owns nothing but its
- * own rev and the subscriber list.
+ * `power`; main/detection: `sessions`, `adapters`; main/pool: `pool`) and
+ * owns nothing but its own rev and the subscriber list.
  *
  * - Every change of a source becomes one delta, `rev` + 1, pushed to every
  *   subscriber through pushToRenderer. A delta replaces whole sections and
@@ -24,6 +24,7 @@ import {
   stageViewSectionsSchema,
   type StageView,
   type StageViewDetectionSections,
+  type StageViewPoolSections,
   type StageViewSections,
   type StageViewSnapshot,
   type StageViewWindowsSections,
@@ -62,6 +63,11 @@ export interface StageViewSources {
     onChange(
       listener: (sections: Partial<StageViewDetectionSections>) => void,
     ): () => void;
+  };
+  /** main/pool. `onChange` hears its one section after each change. */
+  readonly pool: {
+    get(): StageViewPoolSections;
+    onChange(listener: (sections: StageViewPoolSections) => void): () => void;
   };
 }
 
@@ -105,6 +111,7 @@ export function createStageView(sources: StageViewSources): StageViewHub {
     settings: sources.settings.get(),
     ...sources.windows.get(),
     ...sources.detection.get(),
+    ...sources.pool.get(),
   };
   const subscribers = new Map<number, StageViewSubscriber>();
 
@@ -149,6 +156,9 @@ export function createStageView(sources: StageViewSources): StageViewHub {
     publish(sections);
   });
   sources.detection.onChange((sections) => {
+    publish(sections);
+  });
+  sources.pool.onChange((sections) => {
     publish(sections);
   });
 

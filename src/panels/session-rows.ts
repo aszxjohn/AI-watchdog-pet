@@ -1,17 +1,25 @@
 /**
  * The 管理 session page's text and order, built from StageView alone
  * (AD-20): the `sessions` and `adapters` sections main/detection
- * publishes. No React and no DOM types, so it is unit-tested under Node.
+ * publishes, and the `pool` section main/pool publishes. No React and no
+ * DOM types, so it is unit-tested under Node.
  *
  * - A session row: its source's display name, its name (the display name,
  *   or the native id while it has none) and its state's Chinese name, with
  *   推測 beside an inferred state. Rows go by source (SOURCE_CODES order),
- *   then name, then key, so they stay put while states change.
+ *   then name, then key, so they stay put while states change, and when a
+ *   session is released or shown again.
+ * - A released session (its key is in `pool`, Story 2.8) still shows its
+ *   state; the page fades the row and marks 已釋放 beside its name. Each
+ *   row has one button: 釋放, or 改回顯示 on a released row. What pressing
+ *   it does is createReleaseToggle.
  * - An adapter row: its source's display name and its health's Chinese
  *   name, in SOURCE_CODES order.
  * - With no session, the page says so and points at 示範模式 on the menu
  *   bar or notification area icon.
  */
+import type { SessionKey } from '../shared/detection-events';
+import type { IpcError, IpcResult } from '../shared/ipc';
 import type { StageView } from '../shared/stage-view';
 import {
   ADAPTER_HEALTH_DISPLAY_NAMES,
@@ -27,7 +35,7 @@ import { STATE_DISPLAY_NAMES, type StateCode } from '../shared/states';
 export const SESSIONS_HEADING = '偵測到的 session';
 
 /** Column headings of the session list, in column order. */
-export const SESSION_COLUMNS = ['來源', '名稱', '狀態'] as const;
+export const SESSION_COLUMNS = ['來源', '名稱', '狀態', '操作'] as const;
 
 /** What the page shows when no session is detected. */
 export const NO_SESSIONS_TEXT = '目前沒有偵測到 session';
@@ -59,6 +67,15 @@ export function inferredTitle(state: StateCode): string {
     : INFERRED_TITLE;
 }
 
+/** The mark beside a released session's name. */
+export const RELEASED_LABEL = '已釋放';
+
+/** The button on a session that is shown: release it. */
+export const RELEASE_ACTION = '釋放';
+
+/** The button on a released session: show it again. */
+export const SHOW_AGAIN_ACTION = '改回顯示';
+
 /** Heading of the adapter list. */
 export const ADAPTERS_HEADING = '轉接器';
 
@@ -67,13 +84,17 @@ export const NO_ADAPTERS_TEXT = '目前沒有執行中的轉接器';
 
 export interface SessionRow {
   /** The session key: stable, unique, the React key. */
-  readonly key: string;
+  readonly key: SessionKey;
   readonly source: string;
   readonly name: string;
   readonly state: string;
   readonly stateCode: StateCode;
   /** The state is inferred: the page marks it 推測. */
   readonly inferred: boolean;
+  /** The session is released: the page fades it and marks it 已釋放. */
+  readonly released: boolean;
+  /** The button's text: 釋放, or 改回顯示 when released. */
+  readonly action: string;
 }
 
 export interface AdapterRow {
@@ -102,19 +123,27 @@ function compareText(a: string, b: string): number {
 }
 
 /** The session list's rows, in page order. */
-export function sessionRows(view: Pick<StageView, 'sessions'>): SessionRow[] {
+export function sessionRows(
+  view: Pick<StageView, 'sessions' | 'pool'>,
+): SessionRow[] {
+  const releasedKeys = new Set<string>(view.pool.released);
   return view.sessions
-    .map((session) => ({
-      order: sourceOrder(session.source),
-      row: {
-        key: session.sessionKey,
-        source: SOURCE_DISPLAY_NAMES[session.source],
-        name: session.displayName ?? nativeIdOf(session.sessionKey),
-        state: STATE_DISPLAY_NAMES[session.state],
-        stateCode: session.state,
-        inferred: session.confidence === 'inferred',
-      },
-    }))
+    .map((session) => {
+      const released = releasedKeys.has(session.sessionKey);
+      return {
+        order: sourceOrder(session.source),
+        row: {
+          key: session.sessionKey,
+          source: SOURCE_DISPLAY_NAMES[session.source],
+          name: session.displayName ?? nativeIdOf(session.sessionKey),
+          state: STATE_DISPLAY_NAMES[session.state],
+          stateCode: session.state,
+          inferred: session.confidence === 'inferred',
+          released,
+          action: released ? SHOW_AGAIN_ACTION : RELEASE_ACTION,
+        },
+      };
+    })
     .sort(
       (a, b) =>
         a.order - b.order ||
@@ -134,4 +163,94 @@ export function adapterRows(view: Pick<StageView, 'adapters'>): AdapterRow[] {
       health: ADAPTER_HEALTH_DISPLAY_NAMES[adapter.health],
       healthCode: adapter.health,
     }));
+}
+
+/**
+ * What the page shows when releasing (or showing again) fails; the row
+ * stays as StageView has it.
+ */
+export function releaseErrorText(
+  release: boolean,
+  error: IpcError | undefined,
+): string {
+  const what = release ? '無法釋放 session' : '無法改回顯示';
+  return error === undefined
+    ? what
+    : `${what}（${error.code}：${error.message}）`;
+}
+
+/** What the page shows around the buttons while a request is sent. */
+export interface ReleaseToggleState {
+  /** A request is on its way: every 釋放 / 改回顯示 button is disabled. */
+  readonly sending: boolean;
+  /** Why the last request failed, or null. */
+  readonly error: string | null;
+}
+
+export const IDLE_RELEASE_TOGGLE: ReleaseToggleState = Object.freeze({
+  sending: false,
+  error: null,
+});
+
+export interface ReleaseToggle {
+  /**
+   * Presses `row`'s button, unless a request is still on its way: reports
+   * `sending`, asks main/pool to release the session (or show it again
+   * when it is released), then reports the outcome. The row itself is
+   * never changed here; it comes back through StageView (AD-20). Never
+   * rejects.
+   */
+  toggle(row: Pick<SessionRow, 'key' | 'released'>): Promise<void>;
+}
+
+/**
+ * The 管理 session page's 釋放 / 改回顯示 logic. `setReleased` is
+ * `window.awp.pool.setReleased`; `onState` hears every sending / error
+ * change.
+ */
+export function createReleaseToggle(
+  setReleased: (
+    sessionKey: SessionKey,
+    released: boolean,
+  ) => Promise<IpcResult<null>>,
+  onState: (state: ReleaseToggleState) => void,
+  logError: (message: string, ...details: unknown[]) => void = console.error,
+): ReleaseToggle {
+  let sending = false;
+  return {
+    async toggle(row) {
+      if (sending) {
+        return;
+      }
+      const release = !row.released;
+      sending = true;
+      let error: string | null = null;
+      try {
+        onState({ sending: true, error: null });
+        const result = await setReleased(row.key, release);
+        if (!result.ok) {
+          error = releaseErrorText(release, result.error);
+          logError(
+            `[panels] pool:set-released: ${result.error.code}: ${result.error.message}`,
+          );
+        }
+      } catch (thrown) {
+        // setReleased rejected, or onState or logError threw.
+        error ??= releaseErrorText(release, undefined);
+        try {
+          logError('[panels] pool:set-released failed', thrown);
+        } catch {
+          // Nowhere left to report it; the outcome still goes to onState.
+        }
+      } finally {
+        // Whatever threw above, the next press must not be ignored.
+        sending = false;
+        try {
+          onState({ sending: false, error });
+        } catch {
+          // The page could not take the outcome; toggle still resolves.
+        }
+      }
+    },
+  };
 }

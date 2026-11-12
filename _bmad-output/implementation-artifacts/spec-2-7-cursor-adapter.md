@@ -105,6 +105,7 @@ context:
   - 名稱反查依 `/`、`-`、`_`、`.`、空白的順序試，深度優先，所以兩個資料夾都符合時取較深的。Windows 把 slug 第一段當磁碟代號，沒有實際樣本。轉接器多了 `stat`、`platform` 兩個選項給測試注入。
 - 2026-11-12 驗證：我重跑 `npm run typecheck`、`npm run lint`、`npm run depcruise`、`CI=true npm test`（58 檔、2528 個測試）全過；刪掉的 `expect(` 為 0；I/O 矩陣 16 列都有測試且都有跑。隔離 `--user-data-dir` 的 `npm start` 由開發代理執行：run log 有 cursor 啟動與 `sync.ready`、沒有 detection 錯誤，`~/.cursor/projects` 前後 470 個項目的 metadata 相同。
 - 2026-11-12 審查修補後：名稱反查改為逐層找（代價：單一資料夾名稱有 7 段以上會用完 512 次 stat、退回 slug，已寫進模組註解）；重讀只有清空後才跨讀比對；兩處註解更正；補預設 stat 的真實資料夾測試（win32 跳過）。我重跑四項檢查全過（58 檔、2533 個測試），claude-code、gemini 與判斷層沒有改動。
+- CI：使用者 commit `a28e06f`（2026-11-12）後，GitHub Actions 的 macOS、Windows 都通過（run 43166897614）；`2-7-cursor-轉接器` 設為 `done`。
 
 ## Spec Change Log
 

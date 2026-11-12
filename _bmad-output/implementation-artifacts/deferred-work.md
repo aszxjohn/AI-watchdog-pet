@@ -199,3 +199,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-7-cursor-adapter.md`
   summary: 補讀到停在 step 中間、最後是可推測工具的 transcript（例如 Cursor 當掉）時，會一直顯示「要你批准（推測）」直到 session 過期
   evidence: Story 2.7 審查 B7（low）。這是 2.6 推測機制的既有設計：補讀的工具呼叫從回填的開始時間起算，同步時就推測（`inference.ts` 模組註解），gemini 也一樣。可能的修法是補讀時對已經很舊的開啟工具不做推測。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-8-session-release.md`
+  summary: 面板的 React 這一層（`App.tsx` 把狀態畫成 class、標記、按鈕停用、點擊與錯誤區）沒有自動測試，repo 也沒有 DOM 測試環境
+  evidence: Story 2.8 審查 VG1／B9。面板邏輯刻意放在純 `.ts` 用 node 環境測（`sessionRows`、`createReleaseToggle`；1.6 的 `StageSettings` 搭 `createDisplayChooser` 也一樣），`App.tsx` 寫反條件或漏畫錯誤區時 CI 仍全綠。目前靠使用者驗收目視確認；要補時需引入 jsdom／happy-dom 或 Playwright 端到端（epic context 已列「面板有實際內容時決定」）。

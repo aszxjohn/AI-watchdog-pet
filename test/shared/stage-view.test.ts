@@ -71,6 +71,7 @@ const VIEW: StageView = {
   power: POWER,
   sessions: [SESSION],
   adapters: [ADAPTER],
+  pool: { released: ['demo:1'] },
 };
 const NEXT_SETTINGS = {
   rev: 4,
@@ -294,13 +295,22 @@ describe('stageViewSchema', () => {
     expectRoundTrip(stageViewSchema, VIEW);
   });
 
-  it('round-trips the view before ready: no displays, no canvas, no session, no adapter', () => {
+  it('round-trips the view before ready: no displays, no canvas, no session, no adapter, nothing released', () => {
     expectRoundTrip(stageViewSchema, {
       ...VIEW,
       displays: [],
       canvas: null,
       sessions: [],
       adapters: [],
+      pool: { released: [] },
+    });
+  });
+
+  it('round-trips a released key with no session: one saved from an earlier run, before the sweep', () => {
+    expectRoundTrip(stageViewSchema, {
+      ...VIEW,
+      sessions: [],
+      pool: { released: ['claude-code:a', 'demo:1'] },
     });
   });
 
@@ -311,6 +321,15 @@ describe('stageViewSchema', () => {
     ['no power section', { ...VIEW, power: undefined }],
     ['no sessions section', { ...VIEW, sessions: undefined }],
     ['no adapters section', { ...VIEW, adapters: undefined }],
+    ['no pool section', { ...VIEW, pool: undefined }],
+    [
+      'released keys out of order',
+      { ...VIEW, pool: { released: ['demo:1', 'claude-code:a'] } },
+    ],
+    [
+      'a key released twice',
+      { ...VIEW, pool: { released: ['demo:1', 'demo:1'] } },
+    ],
     [
       'two sessions with one key',
       { ...VIEW, sessions: [SESSION, { ...SESSION, state: 'done' }] },
@@ -375,6 +394,8 @@ describe('stageViewDeltaSchema', () => {
     ['no sessions any more', { sessions: [] }],
     ['adapters', { adapters: [ADAPTER] }],
     ['sessions and adapters together', { sessions: [], adapters: [] }],
+    ['pool', { pool: { released: ['codex:0199a3c2-7f1e', 'demo:1'] } }],
+    ['nothing released any more', { pool: { released: [] } }],
   ])('round-trips a delta with %s', (_label, sections) => {
     expectRoundTrip(stageViewDeltaSchema, { rev: 8, sections });
   });
@@ -391,6 +412,11 @@ describe('stageViewDeltaSchema', () => {
     ['bad power', { rev: 1, sections: { power: { suspended: true } } }],
     ['null displays', { rev: 1, sections: { displays: null } }],
     ['undefined sessions', { rev: 1, sections: { sessions: undefined } }],
+    ['undefined pool', { rev: 1, sections: { pool: undefined } }],
+    [
+      'a pool with a bad key',
+      { rev: 1, sections: { pool: { released: ['vim:1'] } } },
+    ],
     [
       'bad sessions',
       { rev: 1, sections: { sessions: [{ ...SESSION, state: 'x' }] } },
@@ -435,6 +461,7 @@ describe('applyStageViewDelta', () => {
       power: POWER,
       sessions: [SESSION],
       adapters: [ADAPTER],
+      pool: VIEW.pool,
     });
   });
 });
