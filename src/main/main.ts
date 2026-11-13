@@ -66,10 +66,11 @@ import {
 } from './detection/detection';
 import { registerIpcHandler } from './ipc/register';
 import { errorCode, initRunLog, logEvent } from './log/run-log';
+import { flushOnQuit } from './persist/quit';
 import { registerPoolHandlers } from './pool/ipc';
 import { loadPool } from './pool/store';
 import { registerSettingsHandlers } from './settings/ipc';
-import { flushSettingsOnQuit, loadSettings } from './settings/store';
+import { loadSettings } from './settings/store';
 import {
   createStageView,
   registerStageViewHandlers,
@@ -195,11 +196,13 @@ function startPrimaryInstance(): void {
   });
   // main/pool owns the released sessions (assignments.json) and the pool
   // section. Once detection's start-up sync is over (every adapter sent
-  // sync.ready, or syncTimeoutMs passed), it drops the saved releases of
-  // sessions not reported since start; detection knows nothing of it.
+  // sync.ready or failed to start, or syncTimeoutMs passed), it drops the
+  // saved releases of sessions not reported since start, except those of
+  // the sources that did not confirm (still syncing, or failed to start);
+  // detection knows nothing of it.
   const pool = loadPool({ file: path.join(userData, 'assignments.json') });
-  detection.onSynced((reported) => {
-    pool.sweep(reported);
+  detection.onSynced((reported, unconfirmed) => {
+    pool.sweep(reported, unconfirmed);
   });
   const stageView = createStageView({
     settings,
@@ -217,8 +220,8 @@ function startPrimaryInstance(): void {
   // Write settings, then released sessions, that are still waiting for
   // their debounce before exiting, then log the quit (will-quit listeners
   // run in the order they were added).
-  flushSettingsOnQuit(app, settings);
-  flushSettingsOnQuit(app, pool);
+  flushOnQuit(app, settings);
+  flushOnQuit(app, pool);
   app.on('will-quit', () => {
     logEvent('app', 'quit');
   });

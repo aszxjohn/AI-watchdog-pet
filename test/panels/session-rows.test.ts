@@ -133,7 +133,7 @@ describe('sessionRows', () => {
     expect(row?.source).toBe('Claude Code');
   });
 
-  it('orders rows by source, then name, then key, whatever order they come in', () => {
+  it('orders rows by source, then in the order StageView lists them', () => {
     const rows = sessionRows({
       pool: NOTHING_RELEASED,
       sessions: [
@@ -151,9 +151,9 @@ describe('sessionRows', () => {
     });
     expect(rows.map((row) => row.key)).toStrictEqual([
       'claude-code:q',
-      'codex:x',
-      'codex:y',
       'codex:z',
+      'codex:y',
+      'codex:x',
       'cursor:p',
       'demo:1',
     ]);
@@ -167,14 +167,28 @@ describe('sessionRows', () => {
     const before = sessionRows({ sessions, pool: NOTHING_RELEASED }).map(
       (row) => row.key,
     );
+    // StageView keeps listing them in the order they were first seen.
     const after = sessionRows({
       pool: NOTHING_RELEASED,
       sessions: [
-        { ...sessions[1], state: 'error' } as StageSession,
         { ...sessions[0], state: 'idle' } as StageSession,
+        { ...sessions[1], state: 'error' } as StageSession,
       ],
     }).map((row) => row.key);
     expect(after).toStrictEqual(before);
+  });
+
+  it('keeps every row in place when a session is released or shown again', () => {
+    const sessions = [
+      session({ sessionKey: 'codex:b', source: 'codex', displayName: 'b' }),
+      session({ sessionKey: 'codex:a', source: 'codex', displayName: 'a' }),
+    ];
+    const order = (released: SessionKey[]) =>
+      sessionRows({ sessions, pool: { released } }).map((row) => row.key);
+
+    expect(order([])).toStrictEqual(['codex:b', 'codex:a']);
+    expect(order(['codex:b'])).toStrictEqual(['codex:b', 'codex:a']);
+    expect(order(['codex:a', 'codex:b'])).toStrictEqual(['codex:b', 'codex:a']);
   });
 
   it('I/O matrix 沒有 session: no row, and the page text says so and points at 示範模式', () => {
@@ -210,6 +224,58 @@ describe('sessionRows', () => {
       '操作',
     ]);
     expect(SESSIONS_HEADING).toContain('session');
+  });
+});
+
+describe('I/O matrix', () => {
+  /** Claude Code sessions as StageView lists them: first seen first. */
+  const listed = [
+    session({
+      sessionKey: 'claude-code:b',
+      source: 'claude-code',
+      displayName: 'zeta',
+    }),
+    session({ sessionKey: 'demo:1' }),
+    session({
+      sessionKey: 'claude-code:a',
+      source: 'claude-code',
+      displayName: 'gundam-pet',
+    }),
+  ];
+
+  function keys(sessions: StageSession[]) {
+    return sessionRows({ sessions, pool: NOTHING_RELEASED }).map(
+      (row) => row.key,
+    );
+  }
+
+  it('名稱改變: a session whose name goes from its folder to its title keeps its row', () => {
+    const before = keys(listed);
+    expect(before).toStrictEqual(['claude-code:b', 'claude-code:a', 'demo:1']);
+
+    const renamed = listed.map((s) =>
+      s.sessionKey === 'claude-code:a' ? { ...s, displayName: 'aaa 修正' } : s,
+    );
+
+    expect(keys(renamed)).toStrictEqual(before);
+  });
+
+  it('新 session: one more of a source goes last among that source’s rows', () => {
+    const added = [
+      ...listed,
+      session({
+        sessionKey: 'claude-code:0',
+        source: 'claude-code',
+        displayName: 'aaa',
+      }),
+    ];
+
+    expect(keys(added)).toStrictEqual([
+      'claude-code:b',
+      'claude-code:a',
+      'claude-code:0',
+      'demo:1',
+    ]);
   });
 });
 
@@ -493,7 +559,7 @@ describe('createReleaseToggle', () => {
 });
 
 describe('nativeIdOf', () => {
-  it.each([
+  it.each<[SessionKey, string]>([
     ['demo:1', '1'],
     ['claude-code:5f0c', '5f0c'],
     ['cursor:a:b:c', 'a:b:c'],

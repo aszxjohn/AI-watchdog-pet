@@ -17,21 +17,25 @@
  * - Demo mode is off at every start and never saved. Turning it on starts
  *   the demo adapter (health `ok`); turning it off stops it, which ends its
  *   session.
- * - The source adapters it is given (main.ts: Claude Code's and Gemini
- *   CLI's) start with it and stop with it. Each reports its health itself;
- *   what one read of theirs produced reaches sessions as one change.
+ * - The source adapters it is given (main.ts: Claude Code's, Gemini CLI's
+ *   and Cursor's) start with it and stop with it. Each reports its health
+ *   itself; what one read of theirs produced reaches sessions as one change.
+ *   One whose start() throws is logged and its health is degraded.
  * - One change, one notification: what a demo switch, a settings change or
  *   a resume does to the sections is heard once, when it is done. Listeners
  *   hear only the sections that changed.
  * - Start-up sync (Story 2.8): once every source adapter it was given has
- *   sent `sync.ready`, or syncTimeoutMs (its value at creation) has passed
- *   since creation, whichever comes first, onSynced listeners hear, once,
- *   the key of every session an adapter's event named since creation (demo
- *   mode's included; demo mode itself is not waited for). With no source
- *   adapter that is at creation. main/pool sweeps its saved releases with
- *   it; the keys are collected here, not read from the published list,
- *   because main/detection/sessions may publish a source's sessions only
- *   after the deadline has passed.
+ *   sent `sync.ready` or failed to start, or syncTimeoutMs (its value at
+ *   creation) has passed since creation, whichever comes first, onSynced
+ *   listeners hear, once, the key of every session an adapter's event named
+ *   since creation (demo mode's included; demo mode itself is not waited
+ *   for), and the sources that did not confirm theirs: those of the
+ *   adapters still waited for at the deadline and of those that failed to
+ *   start (Epic 2 close-out B1). With no source adapter, or none that
+ *   started, that is at creation. main/pool sweeps its saved releases with
+ *   it, leaving an unconfirmed source's alone; the keys are collected here,
+ *   not read from the published list, because main/detection/sessions may
+ *   publish a source's sessions only after the deadline has passed.
  */
 import type { AdapterOutput, SessionKey } from '../../shared/detection-events';
 import type { DetectionTimings, SettingsState } from '../../shared/settings';
@@ -52,9 +56,14 @@ export type DetectionSectionsListener = (
   sections: Partial<StageViewDetectionSections>,
 ) => void;
 
-/** Hears the session keys adapters reported until start-up sync. */
+/**
+ * Hears the session keys adapters reported until start-up sync, and the
+ * sources that did not confirm they reported all of theirs (still syncing
+ * at the deadline, or failed to start).
+ */
 export type DetectionSyncedListener = (
   reported: ReadonlySet<SessionKey>,
+  unconfirmed: ReadonlySet<SourceCode>,
 ) => void;
 
 export interface DetectionOptions {
@@ -85,10 +94,12 @@ export interface Detection {
   onChange(listener: DetectionSectionsListener): () => void;
   /**
    * Hears, once, when start-up sync is over (every source adapter sent
-   * `sync.ready`, or syncTimeoutMs passed since creation): the key of every
-   * session an adapter's event named until then. That is heard after the
-   * sections the same change changed. Subscribing afterwards calls
-   * `listener` at once with the same set. Returns an unsubscribe.
+   * `sync.ready` or failed to start, or syncTimeoutMs passed since
+   * creation): the key of every session an adapter's event named until
+   * then, and the source of every adapter still waited for or that failed
+   * to start (empty when all synced). That is heard after the sections the
+   * same change changed. Subscribing afterwards calls `listener` at once
+   * with the same sets. Returns an unsubscribe.
    */
   onSynced(listener: DetectionSyncedListener): () => void;
   /**
@@ -158,11 +169,19 @@ export function createDetection({
   /**
    * The source adapters that have not sent their own source's `sync.ready`
    * yet (tracked per adapter, so two adapters of one source are both
-   * waited for).
+   * waited for). One that fails to start leaves it: its `sync.ready` will
+   * not come.
    */
   const awaitingSync = new Set<DetectionAdapter>(adapters);
+  /** The source adapters whose start() threw. */
+  const failedToStart = new Set<DetectionAdapter>();
   /** Every session key an adapter's event named until sync. */
   const reported = new Set<SessionKey>();
+  /**
+   * Set when sync is over: the sources of the adapters still in
+   * awaitingSync or in failedToStart then, in the order they were given.
+   */
+  let unconfirmed: ReadonlySet<SourceCode> = new Set();
   let synced = false;
   let syncDeadlinePassed = false;
   let syncTimer: { readonly handle: unknown } | undefined;
@@ -193,7 +212,7 @@ export function createDetection({
 
   function callSynced(listener: DetectionSyncedListener): void {
     try {
-      listener(reported);
+      listener(reported, unconfirmed);
     } catch (error) {
       log(`a synced listener failed (${errorCode(error)})`, 'error');
     }
@@ -217,16 +236,31 @@ export function createDetection({
       clearTimer(syncTimer.handle);
       syncTimer = undefined;
     }
+    unconfirmed = new Set(
+      adapters
+        .filter(
+          (adapter) => awaitingSync.has(adapter) || failedToStart.has(adapter),
+        )
+        .map((adapter) => adapter.source),
+    );
     // Codes and counts only. With no source adapter there was nothing to
-    // wait for, and nothing to say.
+    // wait for, and nothing to say. With none that failed to start, the
+    // line reads as it did before Epic 2's close-out.
     if (adapters.length > 0) {
       const waiting = [...awaitingSync].map((adapter) => adapter.source);
+      const failed = [...failedToStart].map((adapter) => adapter.source);
+      const outcome =
+        waiting.length > 0
+          ? `syncTimeoutMs passed, still waiting for ${waiting.join(', ')}`
+          : failed.length === adapters.length
+            ? 'no adapter started'
+            : failed.length > 0
+              ? 'every adapter that started sent sync.ready'
+              : 'every adapter sent sync.ready';
+      const failures =
+        failed.length > 0 ? `; failed to start: ${failed.join(', ')}` : '';
       log(
-        `start-up sync over: ${
-          waiting.length === 0
-            ? 'every adapter sent sync.ready'
-            : `syncTimeoutMs passed, still waiting for ${waiting.join(', ')}`
-        }; ${reported.size} sessions reported`,
+        `start-up sync over: ${outcome}${failures}; ${reported.size} sessions reported`,
       );
     }
     // The live set: a listener that another unsubscribes while they are
@@ -330,7 +364,12 @@ export function createDetection({
         `the ${adapter.source} adapter failed to start (${errorCode(error)})`,
         'error',
       );
-      // It reads less than it should: nothing, until the app restarts.
+      // It reads less than it should: nothing, until the app restarts. Its
+      // sync.ready will not come, so start-up sync does not wait for it,
+      // and its source is not confirmed. It stays running: stop() still
+      // stops it.
+      awaitingSync.delete(adapter);
+      failedToStart.add(adapter);
       batch(() => {
         health.set(adapter.source, 'degraded');
       });
@@ -364,8 +403,8 @@ export function createDetection({
   for (const adapter of adapters) {
     startAdapter(adapter);
   }
-  // Every adapter may have synced while starting (no records folder), and
-  // with none there is nothing to wait for.
+  // Every adapter may have synced or failed while starting (no records
+  // folder), and with none there is nothing to wait for.
   settleSync();
   if (!synced && !stopped) {
     syncTimer = {

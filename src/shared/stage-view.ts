@@ -119,7 +119,11 @@ export const stageSessionSchema = z
 
 export type StageSession = z.infer<typeof stageSessionSchema>;
 
-/** `sessions`: every published session, keys unique. */
+/**
+ * `sessions`: every published session, keys unique, in the order
+ * main/detection first saw them. A change of name or state does not move
+ * a session; one that ends and comes back with the same key goes last.
+ */
 export const stageSessionsSchema = z
   .array(stageSessionSchema)
   .refine(

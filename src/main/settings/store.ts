@@ -382,17 +382,3 @@ export function loadSettings({
     },
   };
 }
-
-/**
- * Writes pending settings when the app quits (`will-quit`), before Electron
- * exits. Listeners run in the order they were added, so anything registered
- * on `will-quit` after this call runs after the flush.
- */
-export function flushSettingsOnQuit(
-  app: { on(event: 'will-quit', listener: () => void): unknown },
-  store: Pick<SettingsStore, 'flushSync'>,
-): void {
-  app.on('will-quit', () => {
-    store.flushSync();
-  });
-}

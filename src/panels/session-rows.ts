@@ -7,8 +7,11 @@
  * - A session row: its source's display name, its name (the display name,
  *   or the native id while it has none) and its state's Chinese name, with
  *   推測 beside an inferred state. Rows go by source (SOURCE_CODES order),
- *   then name, then key, so they stay put while states change, and when a
- *   session is released or shown again.
+ *   then in the order StageView lists the sessions (the order
+ *   main/detection first saw them), so a row stays put while its state or
+ *   its name changes (a Claude Code session's name goes from its folder to
+ *   its title), and when it is released or shown again; a new session goes
+ *   last among its source's.
  * - A released session (its key is in `pool`, Story 2.8) still shows its
  *   state; the page fades the row and marks 已釋放 beside its name. Each
  *   row has one button: 釋放, or 改回顯示 on a released row. What pressing
@@ -18,7 +21,7 @@
  * - With no session, the page says so and points at 示範模式 on the menu
  *   bar or notification area icon.
  */
-import type { SessionKey } from '../shared/detection-events';
+import { type SessionKey, splitSessionKey } from '../shared/detection-events';
 import type { IpcError, IpcResult } from '../shared/ipc';
 import type { StageView } from '../shared/stage-view';
 import {
@@ -106,20 +109,12 @@ export interface AdapterRow {
 }
 
 /** The native id in a session key: everything after its first `:`. */
-export function nativeIdOf(sessionKey: string): string {
-  return sessionKey.slice(sessionKey.indexOf(':') + 1);
+export function nativeIdOf(sessionKey: SessionKey): string {
+  return splitSessionKey(sessionKey).nativeId;
 }
 
 function sourceOrder(source: SourceCode): number {
   return SOURCE_CODES.indexOf(source);
-}
-
-/** Code-unit order, so the result is the same in every locale. */
-function compareText(a: string, b: string): number {
-  if (a === b) {
-    return 0;
-  }
-  return a < b ? -1 : 1;
 }
 
 /** The session list's rows, in page order. */
@@ -127,6 +122,7 @@ export function sessionRows(
   view: Pick<StageView, 'sessions' | 'pool'>,
 ): SessionRow[] {
   const releasedKeys = new Set<string>(view.pool.released);
+  // A stable sort by source only: within a source, StageView's order stays.
   return view.sessions
     .map((session) => {
       const released = releasedKeys.has(session.sessionKey);
@@ -144,12 +140,7 @@ export function sessionRows(
         },
       };
     })
-    .sort(
-      (a, b) =>
-        a.order - b.order ||
-        compareText(a.row.name, b.row.name) ||
-        compareText(a.row.key, b.row.key),
-    )
+    .sort((a, b) => a.order - b.order)
     .map(({ row }) => row);
 }
 

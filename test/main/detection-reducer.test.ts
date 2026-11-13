@@ -468,6 +468,166 @@ describe('I/O matrix', () => {
       expect(reduceSession(ended, later, 100)).toBe(ended);
     }
   });
+
+  // Epic 2 close-out B2: a record replayed out of date order. Each is
+  // dated `agoMs` before the sync moment (ts SYNC_TS, monotonic 0) and fed
+  // at the time main/detection/sessions back-dates it to.
+  const SYNC_TS = 1_762_675_200_000;
+  const replayedAgo = (live: DetectionEvent, agoMs: number): Step => [
+    -agoMs,
+    detectionEventSchema.parse({ ...live, ts: SYNC_TS - agoMs, replay: true }),
+  ];
+
+  it('補讀順序: the main transcript’s turn.end replayed (3 minutes ago), then a subagent’s tool.start replayed (4 minutes ago): waiting, then idle, never working', () => {
+    const replayedSteps: Step[] = [
+      replayedAgo(turnStart(), 600_000),
+      replayedAgo(turnEnd(), 180_000),
+      replayedAgo(toolStart('s1'), 240_000),
+    ];
+    expectStates([
+      ...replayedSteps,
+      [0, 'waiting'],
+      [119_999, 'waiting'],
+      [120_000, 'idle'],
+    ]);
+    expect(feed(replayedSteps).openTools.size).toBe(0);
+  });
+
+  it('下一輪的工具: a replayed tool.start dated after the last turn.end opens as usual', () => {
+    expectStates([
+      replayedAgo(turnEnd(), 180_000),
+      replayedAgo(turnStart(), 120_000),
+      replayedAgo(toolStart('t2'), 60_000),
+      [0, 'working'],
+    ]);
+  });
+
+  it.each<[string, DetectionEvent]>([
+    ['approval.request', approvalRequest('r')],
+    ['question.request', questionRequest('q')],
+  ])(
+    '補讀的請求: a replayed %s dated before the last turn.end opens nothing',
+    (_label, request) => {
+      expectStates([
+        replayedAgo(turnEnd(), 180_000),
+        replayedAgo(request, 240_000),
+        [0, 'waiting'],
+      ]);
+    },
+  );
+
+  it('補讀順序: a replayed turn.end and tool.start with the same ts open the tool, though the later one was back-dated a millisecond earlier', () => {
+    const replayedAt = (live: DetectionEvent) =>
+      detectionEventSchema.parse({ ...live, ts: SYNC_TS, replay: true });
+    expectStates([
+      [-180_000, replayedAt(turnEnd())],
+      [-180_001, replayedAt(toolStart('a'))],
+      [0, 'working'],
+    ]);
+  });
+
+  it('即時事件: live events in order are unchanged, even at the very moment of the turn end', () => {
+    expectStates([
+      [0, turnStart()],
+      [10, turnEnd()],
+      [10, toolStart('a')],
+      [10, 'working'],
+      [10, approvalRequest('a')],
+      [10, 'approval'],
+      [10, questionRequest('q')],
+      [10, 'approval'],
+      [11, toolEnd('a')],
+      [11, 'decision'],
+    ]);
+  });
+});
+
+describe('the last turn end (Epic 2 close-out B2)', () => {
+  const TS = 1_762_675_200_000;
+  /** `live` written `agoMs` before TS, replayed. */
+  const replayedAgo = (live: DetectionEvent, agoMs: number) =>
+    detectionEventSchema.parse({ ...live, ts: TS - agoMs, replay: true });
+  const turnReply = () => event('turn.reply');
+  const guessedTurnEnd = () => event('turn.end', {}, 'inferred');
+
+  it('is absent until a turn.end, live or replayed, then the latest ts, kept when a turn starts again', () => {
+    expect('lastTurnEndTs' in feed([[0, turnStart()]])).toBe(false);
+    expect(feed([[-5000, replayedAgo(turnEnd(), 5000)]]).lastTurnEndTs).toBe(
+      TS - 5000,
+    );
+    expect(feed([[7, turnEnd()]]).lastTurnEndTs).toBe(turnEnd().ts);
+    expect(
+      feed([
+        [-5000, replayedAgo(turnEnd(), 5000)],
+        [-9000, replayedAgo(turnEnd(), 9000)],
+        [-4000, replayedAgo(turnStart(), 4000)],
+      ]).lastTurnEndTs,
+    ).toBe(TS - 5000);
+  });
+
+  it('is the record’s ts, not the back-dated time', () => {
+    expect(feed([[-123, replayedAgo(turnEnd(), 5000)]]).lastTurnEndTs).toBe(
+      TS - 5000,
+    );
+  });
+
+  it('a guessed turn end does not set it, and session.end clears it', () => {
+    const guessed = feed([
+      [0, turnStart()],
+      [1, turnReply()],
+      [10_001, guessedTurnEnd()],
+    ]);
+    expect('lastTurnEndTs' in guessed).toBe(false);
+    // A tool call written before the guess still opens.
+    expect(
+      reduceSession(guessed, replayedAgo(toolStart('a'), 60_000), 5000)
+        .openTools.size,
+    ).toBe(1);
+
+    const ended = reduceSession(feed([[0, turnEnd()]]), sessionEnd(), 1);
+    expect('lastTurnEndTs' in ended).toBe(false);
+  });
+
+  it.each<[string, DetectionEvent]>([
+    ['tool.start', replayedAgo(toolStart('a'), 60_000)],
+    ['approval.request', replayedAgo(approvalRequest('a'), 60_000)],
+    ['question.request', replayedAgo(questionRequest('a'), 60_000)],
+  ])(
+    'an earlier %s acts like activity: no condition opens, nothing else changes',
+    (_label, early) => {
+      // An error and a reply that a tool.start would clear.
+      const before = feed([
+        [100, replayedAgo(turnEnd(), 30_000)],
+        [200, turnStart()],
+        [210, error()],
+        [220, turnReply()],
+      ]);
+      expect(before.errorAt).toBe(210);
+      expect(before.replyPending).toBe(true);
+      expect(snapshot(reduceSession(before, early, 50))).toStrictEqual(
+        snapshot(reduceSession(before, activity(), 50)),
+      );
+      expect(snapshot(reduceSession(before, early, 50))).toStrictEqual(
+        snapshot(before),
+      );
+    },
+  );
+
+  it('evaluate and nextChangeAt read nothing new: the same conditions without it give the same answers', () => {
+    const conditions = feed([
+      [-180_000, replayedAgo(turnEnd(), 180_000)],
+      [0, turnEnd()],
+    ]);
+    const { lastTurnEndTs: _ignored, ...without } = conditions;
+    for (const at of [0, 4999, 5000, 299_999, 300_000]) {
+      expect(evaluate(without, at, TIMINGS)).toStrictEqual(
+        evaluate(conditions, at, TIMINGS),
+      );
+      expect(nextChangeAt(without, at, TIMINGS)).toBe(
+        nextChangeAt(conditions, at, TIMINGS),
+      );
+    }
+  });
 });
 
 describe('replayed events (Story 2.2)', () => {

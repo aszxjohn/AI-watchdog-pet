@@ -32,7 +32,10 @@ import {
   type MenuItemConstructorOptions,
 } from 'electron';
 import { PRODUCT_NAME } from '../../shared/constants';
-import type { SessionKey } from '../../shared/detection-events';
+import {
+  type SessionKey,
+  splitSessionKey,
+} from '../../shared/detection-events';
 import { PANEL_PAGES, type PanelPageId } from '../../shared/panels';
 import { DEMO_MODE_LABEL } from '../../shared/sources';
 import {
@@ -167,11 +170,6 @@ export interface DemoMenuTarget extends DemoMenuActions {
   state(): StateCode | null;
 }
 
-/** The source part of a session key, for the run log. */
-function sourceOf(sessionKey: SessionKey): string {
-  return sessionKey.slice(0, sessionKey.indexOf(':'));
-}
-
 /**
  * A right-click on the canvas at `sessionKey`. The demo session gets its
  * canvas menu, with the state it shows now checked, popped up at the
@@ -188,7 +186,7 @@ export function openCanvasMenu(
   if (sessionKey !== demo.sessionKey) {
     logEvent(
       'windows',
-      `canvas menu asked for a session that is not the demo session (source ${sourceOf(sessionKey)}); no menu`,
+      `canvas menu asked for a session that is not the demo session (source ${splitSessionKey(sessionKey).source}); no menu`,
       'warn',
     );
     return false;

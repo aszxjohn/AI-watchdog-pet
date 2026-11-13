@@ -12,9 +12,17 @@ import type { StateCode } from '../../shared/states';
  * Every time here is the caller's monotonic clock in milliseconds: when the
  * event was received, or, for a replayed event (`replay: true`), that moment
  * back-dated by the event's age (AD-22; main/detection/sessions works it
- * out). The reducer itself never reads `ts`. A replayed event rebuilds the
- * conditions only: its `turn.end` starts no `done` and its `error` holds no
- * `error`.
+ * out). No duration reads `ts`. A replayed event rebuilds the conditions
+ * only: its `turn.end` starts no `done` and its `error` holds no `error`.
+ *
+ * Replayed records need not arrive in date order (Claude Code replays every
+ * main transcript before any subagent's). So a `tool.start`,
+ * `approval.request` or `question.request` whose `ts` is earlier than the
+ * `ts` of the session's last `turn.end` from its log, replayed or not,
+ * opens nothing: that turn end already closed it (Epic 2 close-out B2).
+ * The records' own dates are compared, not the back-dated times: two
+ * records with the same `ts` may be back-dated a millisecond apart. The
+ * same `ts` still opens.
  *
  * An inferred `turn.end` (main/detection/inference's guess for a source that
  * writes no turn end) closes the turn like a real one, but, like an inferred
@@ -63,6 +71,16 @@ export interface SessionConditions {
    * replayed `turn.end` leaves it as it was.
    */
   readonly turnEndedAt: number | null;
+  /**
+   * Present once a `turn.end` that is not inferred arrived, replayed or
+   * not: the latest `ts` (epoch ms, the record's own date) of such a turn
+   * end. Unlike `turnEndedAt` it stays when a turn starts again. A
+   * `tool.start`, `approval.request` or `question.request` whose `ts` is
+   * earlier opens nothing and otherwise acts like `activity`. A guessed
+   * turn end does not set it: a fact from the log is not overruled by a
+   * guess.
+   */
+  readonly lastTurnEndTs?: number;
   /**
    * When the last `error` arrived; null once a turn or a tool starts. A
    * replayed `error` leaves it as it was.
@@ -271,6 +289,18 @@ export function reduceSession(
   // What the session does next settles a guessed turn end; only a guess
   // leaves it in place.
   const settlesGuess = inferred ? {} : { turnEndInferred: false };
+  // Something a turn end closes, written before the last turn end from
+  // the log (a record replayed out of order): that turn end closed it
+  // already.
+  if (
+    (event.type === 'tool.start' ||
+      event.type === 'approval.request' ||
+      event.type === 'question.request') &&
+    base.lastTurnEndTs !== undefined &&
+    event.ts < base.lastTurnEndTs
+  ) {
+    return update({});
+  }
 
   switch (event.type) {
     case 'session.meta':
@@ -304,6 +334,11 @@ export function reduceSession(
         replyPending: false,
         turnEndInferred: inferred,
         ...(replayed ? {} : { turnEndedAt: now }),
+        ...(inferred
+          ? {}
+          : {
+              lastTurnEndTs: Math.max(base.lastTurnEndTs ?? event.ts, event.ts),
+            }),
       });
     case 'tool.start':
       return update({

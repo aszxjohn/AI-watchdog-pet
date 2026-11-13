@@ -3,8 +3,9 @@
  * sessions. It takes what the adapters emit, keeps each session's conditions
  * through the reducer, and decides when a session ends:
  *
- * - on `session.end` (an adapter whose source has a pid also sends it once
- *   the process is gone: that is a fact, not a timeout);
+ * - on `session.end` (for now no adapter sends one when a process is gone;
+ *   that comes with Story 2.4's status-file half, as a fact, not a
+ *   timeout);
  * - once `sessionExpireMs` has passed since its last event (at
  *   `lastEventAt + sessionExpireMs` exactly, half-open like the reducer's
  *   durations).

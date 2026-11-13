@@ -64,7 +64,10 @@ const state = vi.hoisted(() => {
     demoListener: undefined as ((state: string | null) => void) | undefined,
     /** The listener main.ts passed to detection.onSynced. */
     syncedListener: undefined as
-      | ((reported: ReadonlySet<string>) => void)
+      | ((
+          reported: ReadonlySet<string>,
+          unconfirmed: ReadonlySet<string>,
+        ) => void)
       | undefined,
     reset() {
       s.squirrel = false;
@@ -185,15 +188,18 @@ vi.mock('../../src/main/settings/store', () => ({
     state.order.push('loadSettings');
     return { fake: 'settings' };
   },
+}));
+
+vi.mock('../../src/main/persist/quit', () => ({
   // Like the real one: a will-quit listener that writes what the store
   // (settings or pool) has pending.
-  flushSettingsOnQuit: (
+  flushOnQuit: (
     app: {
       on(event: string, listener: Listener): void;
     },
     store: { fake: string },
   ) => {
-    state.order.push(`flushSettingsOnQuit ${store.fake}`);
+    state.order.push(`flushOnQuit ${store.fake}`);
     app.on('will-quit', () => {
       state.events.push(`${store.fake} flushed`);
     });
@@ -205,8 +211,13 @@ vi.mock('../../src/main/pool/store', () => ({
     state.order.push(`loadPool ${options.file.replaceAll('\\', '/')}`);
     return {
       fake: 'pool',
-      sweep: (reported: ReadonlySet<string>) => {
-        state.order.push(`pool.sweep ${JSON.stringify([...reported])}`);
+      sweep: (
+        reported: ReadonlySet<string>,
+        unconfirmed: ReadonlySet<string>,
+      ) => {
+        state.order.push(
+          `pool.sweep ${JSON.stringify([...reported])} ${JSON.stringify([...unconfirmed])}`,
+        );
       },
     };
   },
@@ -289,7 +300,12 @@ vi.mock('../../src/main/detection/detection', () => ({
     return {
       fake: 'detection',
       get: () => ({ sessions: ['fake sessions'], adapters: [] }),
-      onSynced: (listener: (reported: ReadonlySet<string>) => void) => {
+      onSynced: (
+        listener: (
+          reported: ReadonlySet<string>,
+          unconfirmed: ReadonlySet<string>,
+        ) => void,
+      ) => {
         state.order.push('detection.onSynced');
         state.syncedListener = listener;
       },
@@ -547,8 +563,8 @@ describe('the primary instance', () => {
       'registerPoolHandlers pool',
       'registerStageViewHandlers',
       'registerCanvasReadyHandler',
-      'flushSettingsOnQuit settings',
-      'flushSettingsOnQuit pool',
+      'flushOnQuit settings',
+      'flushOnQuit pool',
       'installWebContentsGuards',
       'createDockController',
       'createPanelWindows panels.cjs',
@@ -855,14 +871,17 @@ describe('the primary instance', () => {
     ]);
   });
 
-  it('sweeps the pool with the keys detection reports at its start-up sync', async () => {
+  it('sweeps the pool with the keys detection reports at its start-up sync, and the sources it could not confirm', async () => {
     await startMain();
     state.order = [];
 
-    state.syncedListener?.(new Set(['claude-code:a', 'demo:1']));
+    state.syncedListener?.(
+      new Set(['claude-code:a', 'demo:1']),
+      new Set(['cursor']),
+    );
 
     expect(state.order).toStrictEqual([
-      'pool.sweep ["claude-code:a","demo:1"]',
+      'pool.sweep ["claude-code:a","demo:1"] ["cursor"]',
     ]);
   });
 

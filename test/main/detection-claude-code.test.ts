@@ -428,6 +428,37 @@ describe('I/O matrix', () => {
     ).toStrictEqual([['approval']]);
   });
 
+  it('補讀順序: the main transcript ended 3 minutes ago while its subagent’s file ends at a Bash tool_use 4 minutes ago: after the replay (main first, then the subagent), 等你回覆, not 要你批准 (inferred) (Epic 2 close-out B2)', () => {
+    append(
+      transcript(A),
+      [
+        rec.prompt(10 * MINUTE),
+        rec.toolUse('agent-1', 'Agent', 9 * MINUTE),
+        rec.toolResult('agent-1', 3 * MINUTE + 30 * SECOND),
+        rec.endTurn(3 * MINUTE),
+      ],
+      3 * MINUTE,
+    );
+    append(
+      subagent(A),
+      [rec.prompt(8 * MINUTE), rec.toolUse('s1', 'Bash', 4 * MINUTE)],
+      4 * MINUTE,
+    );
+    const detection = startDetection();
+
+    watcher.on().ready();
+
+    expect(states(detection)).toStrictEqual([`${KEY_A} waiting`]);
+    clock.advance(2 * MINUTE - 1);
+    expect(states(detection)).toStrictEqual([`${KEY_A} waiting`]);
+    clock.advance(1);
+    expect(states(detection)).toStrictEqual([`${KEY_A} idle`]);
+    const published = heard.filter((change) => change.sessions !== undefined);
+    expect(
+      published.map((change) => change.sessions?.map((s) => s.state)),
+    ).toStrictEqual([['waiting'], ['idle']]);
+  });
+
   it('太舊的紀錄: a transcript modified 3 hours ago does not show', () => {
     append(transcript(A), [rec.prompt(3 * HOUR)], 3 * HOUR);
     const detection = startDetection();

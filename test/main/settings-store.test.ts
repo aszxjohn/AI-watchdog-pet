@@ -1,4 +1,3 @@
-import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,7 +8,6 @@ import {
   migrateSettings,
 } from '../../src/main/settings/migrations';
 import {
-  flushSettingsOnQuit,
   loadSettings,
   type SettingsFs,
   type SettingsStoreOptions,
@@ -969,24 +967,6 @@ describe('the patch reply says whether settings.json is kept (saved)', () => {
     flaky.failing.on = false;
     store.flushSync();
     expect(store.patch(setDisplay(0, null)).saved).toBe(true);
-  });
-});
-
-describe('flushSettingsOnQuit', () => {
-  it('writes a pending patch on will-quit, without waiting for the debounce', () => {
-    const app = new EventEmitter();
-    const store = load();
-    flushSettingsOnQuit(app, store);
-    store.patch(setDisplay(0, DISPLAY_ID));
-    expect(files()).toStrictEqual([]);
-
-    app.emit('will-quit');
-
-    expect(readFile()).toStrictEqual({
-      schemaVersion: 1,
-      ...SETTINGS_DEFAULTS,
-      canvasDisplayId: DISPLAY_ID,
-    });
   });
 });
 

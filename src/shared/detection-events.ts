@@ -83,6 +83,25 @@ export function makeSessionKey(
   return `${source}:${nativeId}`;
 }
 
+/** The two parts of a session key. */
+export interface SessionKeyParts {
+  readonly source: SourceCode;
+  readonly nativeId: string;
+}
+
+/**
+ * The source and the native id of `sessionKey`, split at its first `:` (a
+ * native id may contain more): the inverse of makeSessionKey. It checks
+ * nothing; the key's type already starts it with a source code.
+ */
+export function splitSessionKey(sessionKey: SessionKey): SessionKeyParts {
+  const colon = sessionKey.indexOf(':');
+  return {
+    source: sessionKey.slice(0, colon) as SourceCode,
+    nativeId: sessionKey.slice(colon + 1),
+  };
+}
+
 /** A tool call id, request id, tool name or display name. */
 const detectionIdSchema = z.string().min(1).max(DETECTION_ID_MAX_LENGTH);
 

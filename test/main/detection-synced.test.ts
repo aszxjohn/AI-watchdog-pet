@@ -1,8 +1,10 @@
 /**
  * main/detection's start-up sync (Story 2.8): onSynced hears, once, the
  * session keys adapters reported until every source adapter sent
- * `sync.ready` or syncTimeoutMs passed, after the sections that change
- * published. Fake adapters and clocks; the real sessions and reducer.
+ * `sync.ready` or failed to start, or syncTimeoutMs passed, after the
+ * sections that change published, and the sources that did not confirm
+ * (Epic 2 close-out B1). Fake adapters and clocks; the real sessions and
+ * reducer.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -109,6 +111,19 @@ function event(
 
 function syncReady(source: SourceCode) {
   return { type: 'sync.ready', source } as const;
+}
+
+/** A source adapter whose start() throws; its stop() is recorded. */
+function brokenAdapter(source: SourceCode) {
+  const stop = vi.fn();
+  const adapter: DetectionAdapter = {
+    source,
+    start() {
+      throw Object.assign(new Error('x'), { code: 'EBROKEN' });
+    },
+    stop,
+  };
+  return { adapter, stop };
 }
 
 function start(...adapters: DetectionAdapter[]): Detection {
@@ -235,21 +250,22 @@ describe('onSynced', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('an adapter that throws on start is waited for until the deadline', () => {
-    const broken: DetectionAdapter = {
-      source: 'codex',
-      start() {
-        throw Object.assign(new Error('x'), { code: 'EBROKEN' });
-      },
-      stop() {},
-    };
-    const detection = start(broken);
+  it('an adapter that throws on start is not waited for: alone, sync is over at creation, with no deadline timer, and the log says no adapter started', () => {
+    const detection = start(brokenAdapter('codex').adapter);
+    expect(clock.pendingCount()).toBe(0);
+
     const { calls } = listen(detection);
 
-    expect(calls).toStrictEqual([]);
-    clock.advance(SYNC_TIMEOUT_MS);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.size).toBe(0);
+    expect(
+      vi
+        .mocked(console.info)
+        .mock.calls.map((call) => String(call[0]))
+        .filter((line) => line.startsWith('[detection] start-up sync')),
+    ).toStrictEqual([
+      '[detection] start-up sync over: no adapter started; failed to start: codex; 0 sessions reported',
+    ]);
   });
 
   it('with no source adapter, sync is over at creation: a subscriber hears an empty set at once', () => {
@@ -424,6 +440,36 @@ describe('onSynced', () => {
 
       expect(syncLines()).toStrictEqual([]);
     });
+
+    it('names the adapters that failed to start, by source code', () => {
+      const claude = fakeAdapter('claude-code');
+      start(claude.adapter, brokenAdapter('cursor').adapter);
+
+      claude
+        .ctx()
+        .emit([
+          event('claude-code', 'secret-id', 'session.start', true),
+          syncReady('claude-code'),
+        ]);
+
+      expect(syncLines()).toStrictEqual([
+        '[detection] start-up sync over: every adapter that started sent sync.ready; failed to start: cursor; 1 sessions reported',
+      ]);
+      expect(syncLines().join('\n')).not.toContain('secret-id');
+    });
+
+    it('names both when the deadline passed and an adapter failed to start', () => {
+      const claude = fakeAdapter('claude-code');
+      const gemini = fakeAdapter('gemini');
+      start(claude.adapter, gemini.adapter, brokenAdapter('cursor').adapter);
+      claude.ctx().emit([syncReady('claude-code')]);
+
+      clock.advance(SYNC_TIMEOUT_MS);
+
+      expect(syncLines()).toStrictEqual([
+        '[detection] start-up sync over: syncTimeoutMs passed, still waiting for gemini; failed to start: cursor; 0 sessions reported',
+      ]);
+    });
   });
 
   it('stop() clears the deadline: nothing is heard afterwards', () => {
@@ -437,5 +483,132 @@ describe('onSynced', () => {
     expect(clock.pendingCount()).toBe(0);
     clock.advance(SYNC_TIMEOUT_MS);
     expect(calls).toStrictEqual([]);
+  });
+});
+
+describe('I/O matrix', () => {
+  /** Subscribes to onSynced, recording both sets of each call, sorted. */
+  function listenBoth(detection: Detection) {
+    const calls: { reported: string[]; unconfirmed: string[] }[] = [];
+    detection.onSynced((reported, unconfirmed) => {
+      calls.push({
+        reported: [...reported].sort(),
+        unconfirmed: [...unconfirmed].sort(),
+      });
+    });
+    return calls;
+  }
+
+  it('全部同步: every adapter sent sync.ready: no source is unconfirmed', () => {
+    const claude = fakeAdapter('claude-code');
+    const cursor = fakeAdapter('cursor');
+    const detection = start(claude.adapter, cursor.adapter);
+    const calls = listenBoth(detection);
+
+    claude
+      .ctx()
+      .emit([
+        event('claude-code', 'a', 'session.start', true),
+        syncReady('claude-code'),
+      ]);
+    cursor.ctx().emit([syncReady('cursor')]);
+
+    expect(calls).toStrictEqual([
+      { reported: ['claude-code:a'], unconfirmed: [] },
+    ]);
+  });
+
+  it(`同步逾時: cursor has not sent sync.ready at syncTimeoutMs (${SYNC_TIMEOUT_MS} ms): cursor is unconfirmed, and the log names it`, () => {
+    const claude = fakeAdapter('claude-code');
+    const cursor = fakeAdapter('cursor');
+    const detection = start(claude.adapter, cursor.adapter);
+    const calls = listenBoth(detection);
+    claude
+      .ctx()
+      .emit([
+        event('claude-code', 'a', 'session.start', true),
+        syncReady('claude-code'),
+      ]);
+    cursor.ctx().emit([event('cursor', 'c', 'session.start', true)], 'ok');
+
+    clock.advance(SYNC_TIMEOUT_MS);
+
+    expect(calls).toStrictEqual([
+      { reported: ['claude-code:a', 'cursor:c'], unconfirmed: ['cursor'] },
+    ]);
+    expect(
+      vi
+        .mocked(console.info)
+        .mock.calls.map((call) => String(call[0]))
+        .filter((line) => line.startsWith('[detection] start-up sync')),
+    ).toStrictEqual([
+      '[detection] start-up sync over: syncTimeoutMs passed, still waiting for cursor; 2 sessions reported',
+    ]);
+  });
+
+  it('啟動失敗: cursor’s start() throws: sync ends once the others are ready, not at the deadline; cursor is unconfirmed, its health degraded, and stop() still stops it', () => {
+    const claude = fakeAdapter('claude-code');
+    const cursor = brokenAdapter('cursor');
+    const detection = start(claude.adapter, cursor.adapter);
+    const calls = listenBoth(detection);
+    expect(calls).toStrictEqual([]);
+
+    claude
+      .ctx()
+      .emit(
+        [
+          event('claude-code', 'a', 'session.start', true),
+          syncReady('claude-code'),
+        ],
+        'ok',
+      );
+
+    // Heard at once, with no time passed: the deadline was not waited for.
+    expect(calls).toStrictEqual([
+      { reported: ['claude-code:a'], unconfirmed: ['cursor'] },
+    ]);
+    clock.advance(SYNC_TIMEOUT_MS);
+    expect(calls).toHaveLength(1);
+    expect(detection.get().adapters).toStrictEqual([
+      { source: 'cursor', health: 'degraded' },
+      { source: 'claude-code', health: 'ok' },
+    ]);
+    expect(
+      vi.mocked(console.error).mock.calls.map((call) => String(call[0])),
+    ).toStrictEqual([
+      '[detection] the cursor adapter failed to start (EBROKEN)',
+    ]);
+
+    detection.stop();
+    expect(cursor.stop).toHaveBeenCalledOnce();
+  });
+
+  it('啟動失敗: a subscriber before sync and one after it get the same sets', () => {
+    const claude = fakeAdapter('claude-code');
+    const detection = start(claude.adapter, brokenAdapter('cursor').adapter);
+    type Heard = [ReadonlySet<SessionKey>, ReadonlySet<SourceCode>];
+    const before: Heard[] = [];
+    const after: Heard[] = [];
+    detection.onSynced((reported, unconfirmed) => {
+      before.push([reported, unconfirmed]);
+    });
+
+    claude
+      .ctx()
+      .emit([
+        event('claude-code', 'a', 'session.start', true),
+        syncReady('claude-code'),
+      ]);
+    detection.onSynced((reported, unconfirmed) => {
+      after.push([reported, unconfirmed]);
+    });
+
+    expect(before).toHaveLength(1);
+    expect(after).toHaveLength(1);
+    const [reported, unconfirmed] = before[0] ?? [];
+    expect([...(reported ?? [])]).toStrictEqual(['claude-code:a']);
+    expect([...(unconfirmed ?? [])]).toStrictEqual(['cursor']);
+    expect(after[0]?.[0]).toBe(reported);
+    expect(after[0]?.[1]).toBe(unconfirmed);
   });
 });

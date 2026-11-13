@@ -20,9 +20,12 @@
  * Changes:
  * - setReleased releases a key or shows it again. One that changes nothing
  *   is no change: no notification, nothing written.
- * - sweep(reported), once, after detection's start-up sync: keeps the
- *   released keys detection reported since start and drops the rest
- *   (sessions saved from an earlier run that did not come back). A key
+ * - sweep(reported, unconfirmed), once, after detection's start-up sync:
+ *   keeps the released keys detection reported since start and drops the
+ *   rest (sessions saved from an earlier run that did not come back),
+ *   except that a key whose source is in `unconfirmed` (its adapter was
+ *   still syncing at the deadline, or failed to start: it may not have
+ *   reported every session) is kept unswept (Epic 2 close-out B1). A key
  *   released and ended within one run stays released until the next
  *   start's sweep.
  * - A change shows up in get() and onChange at once; the file is written
@@ -42,12 +45,14 @@ import { POOL_FLUSH_DEBOUNCE_MS } from '../../shared/constants';
 import {
   type SessionKey,
   sessionKeySchema,
+  splitSessionKey,
 } from '../../shared/detection-events';
 import {
   POOL_SCHEMA_VERSION,
   poolFileSchema,
   sortedSessionKeys,
 } from '../../shared/pool';
+import type { SourceCode } from '../../shared/sources';
 import type { StageViewPoolSections } from '../../shared/stage-view';
 import type { z } from '../../shared/zod-setup';
 import { errorCode, logEvent, type ConsoleLevel } from '../log/run-log';
@@ -96,9 +101,13 @@ export interface PoolStore {
   setReleased(sessionKey: SessionKey, released: boolean): boolean;
   /**
    * After detection's start-up sync: drops every released key not in
-   * `reported`. Only the first call does anything.
+   * `reported`, except those whose source is in `unconfirmed`. Only the
+   * first call does anything.
    */
-  sweep(reported: ReadonlySet<SessionKey>): void;
+  sweep(
+    reported: ReadonlySet<SessionKey>,
+    unconfirmed: ReadonlySet<SourceCode>,
+  ): void;
   /** Writes pending changes now. Never throws. */
   flushSync(): void;
   /** False once the original file could not be kept safe this run. */
@@ -316,15 +325,32 @@ export function loadPool({
       return true;
     },
 
-    sweep(reported) {
+    sweep(reported, unconfirmed) {
       if (swept) {
         return;
       }
       swept = true;
-      const kept = keys.filter((key) => reported.has(key));
+      /** Kept only because their source is unconfirmed. */
+      let unswept = 0;
+      const kept = keys.filter((key) => {
+        if (reported.has(key)) {
+          return true;
+        }
+        if (unconfirmed.has(splitSessionKey(key).source)) {
+          unswept += 1;
+          return true;
+        }
+        return false;
+      });
       const dropped = keys.length - kept.length;
+      // Counts and source codes only. With every source confirmed, the
+      // line reads as it did before Epic 2's close-out.
+      const unconfirmedNote =
+        unconfirmed.size === 0
+          ? ''
+          : `; ${unswept} kept unreported from unconfirmed sources: ${[...unconfirmed].join(', ')}`;
       log(
-        `start-up sweep: kept ${kept.length}, dropped ${dropped} (${reported.size} sessions reported)`,
+        `start-up sweep: kept ${kept.length}, dropped ${dropped} (${reported.size} sessions reported${unconfirmedNote})`,
       );
       if (dropped > 0) {
         change(kept);

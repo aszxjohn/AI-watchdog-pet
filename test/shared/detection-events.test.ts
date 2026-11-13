@@ -11,11 +11,12 @@ import {
   makeSessionKey,
   nativeIdSchema,
   sessionKeySchema,
+  splitSessionKey,
   syncReadySchema,
   VIA_CODES,
   viaSchema,
 } from '../../src/shared/detection-events';
-import { SOURCE_CODES } from '../../src/shared/sources';
+import { SOURCE_CODES, type SourceCode } from '../../src/shared/sources';
 import { expectRejected, expectRoundTrip } from './schema-helpers';
 
 const UUID = '0b6a7a8e-1c2d-4e5f-8a9b-0c1d2e3f4a5b';
@@ -189,6 +190,43 @@ describe('makeSessionKey', () => {
     ['a control character', 'a\rb'],
   ])('returns null for a native id that is %s', (_label, nativeId) => {
     expect(makeSessionKey('codex', nativeId)).toBeNull();
+  });
+});
+
+describe('splitSessionKey', () => {
+  const NATIVE_IDS = [
+    ['a UUID', UUID],
+    ['colons', 'a:b:c'],
+    ['a lone colon', ':'],
+    ['the longest id', LONGEST],
+  ] as const;
+
+  it.each<[SourceCode, string, string]>(
+    SOURCE_CODES.flatMap((source) =>
+      NATIVE_IDS.map(([label, nativeId]): [SourceCode, string, string] => [
+        source,
+        label,
+        nativeId,
+      ]),
+    ),
+  )(
+    '%s, %s: the key splits back into its source and native id',
+    (source, _label, nativeId) => {
+      const key = makeSessionKey(source, nativeId);
+      if (key === null) {
+        throw new Error('not a valid native id');
+      }
+      const parts = splitSessionKey(key);
+      expect(parts).toStrictEqual({ source, nativeId });
+      expect(makeSessionKey(parts.source, parts.nativeId)).toBe(key);
+    },
+  );
+
+  it('splits at the first colon only', () => {
+    expect(splitSessionKey('claude-code:5f0c-a:b')).toStrictEqual({
+      source: 'claude-code',
+      nativeId: '5f0c-a:b',
+    });
   });
 });
 

@@ -11,7 +11,8 @@
  *   renameBroken moves the file there.
  *
  * Nothing here logs: the owner knows what the file is and words the log
- * line (file names and error codes only, never contents).
+ * line (file names and error codes only, never contents). Writing what an
+ * owner still holds back when the app quits is in main/persist/quit.
  */
 import path from 'node:path';
 import { localSecondStamp } from '../log/local-time';

@@ -492,6 +492,64 @@ describe('I/O matrix', () => {
     ]);
     expect(detectionLines().join('\n')).not.toContain('secret');
   });
+
+  // Epic 2 close-out B2: Claude Code replays every main transcript before
+  // any subagent's, so a subagent's record can arrive after a later turn
+  // end of its session.
+  const CLAUDE = { source: 'claude-code', id: 'c1' } as const;
+
+  it('補讀順序: the main transcript’s turn.end replayed (3 minutes ago), then a subagent’s tool.start (4 minutes ago), then sync.ready: waiting, then idle, never approval (inferred)', () => {
+    const sessions = start();
+    sessions.receive(replay(ev('turn.start', {}, CLAUDE), 10 * MINUTE));
+    sessions.receive(replay(ev('turn.end', {}, CLAUDE), 3 * MINUTE));
+    sessions.receive(replay(toolStart('s1', 'Bash', CLAUDE), 4 * MINUTE));
+
+    sessions.receive(syncReady('claude-code'));
+
+    expect(heard()).toStrictEqual([['claude-code:c1 waiting']]);
+    clock.advanceTo(2 * MINUTE);
+    expect(heard()).toStrictEqual([
+      ['claude-code:c1 waiting'],
+      ['claude-code:c1 idle'],
+    ]);
+  });
+
+  it('下一輪的工具: a replayed tool.start dated after the last turn.end opens as usual: approval (inferred) once synced', () => {
+    const sessions = start();
+    sessions.receive(replay(ev('turn.end', {}, CLAUDE), 3 * MINUTE));
+    sessions.receive(replay(ev('turn.start', {}, CLAUDE), 2 * MINUTE));
+    sessions.receive(replay(toolStart('s2', 'Bash', CLAUDE), MINUTE));
+
+    sessions.receive(syncReady('claude-code'));
+
+    expect(heard()).toStrictEqual([['claude-code:c1 approval (inferred)']]);
+  });
+
+  it('補讀的請求: a replayed approval.request dated before the last turn.end does not open', () => {
+    const sessions = start();
+    sessions.receive(replay(ev('turn.end'), 3 * MINUTE));
+    sessions.receive(
+      replay(ev('approval.request', { requestId: 'r' }), 4 * MINUTE),
+    );
+
+    sessions.receive(syncReady());
+
+    expect(heard()).toStrictEqual([['codex:s1 waiting']]);
+  });
+
+  it('即時事件: a live tool.start right after a live turn.end opens as before', () => {
+    const sessions = start();
+    sessions.receive(syncReady('claude-code'));
+    sessions.receive(ev('turn.start', {}, CLAUDE));
+    sessions.receive(ev('turn.end', {}, CLAUDE));
+    sessions.receive(toolStart('a', 'Bash', CLAUDE));
+
+    expect(states(sessions.list())).toStrictEqual(['claude-code:c1 working']);
+    clock.advanceTo(timings.approvalInferMs);
+    expect(states(sessions.list())).toStrictEqual([
+      'claude-code:c1 approval (inferred)',
+    ]);
+  });
 });
 
 describe('an inferred event from an adapter (Story 2.3)', () => {
@@ -993,6 +1051,29 @@ describe('the list', () => {
     ]);
     expect(Object.isFrozen(list)).toBe(true);
     expect(list.every((session) => Object.isFrozen(session))).toBe(true);
+  });
+
+  it('a new display name moves no session: the order stays first-seen', () => {
+    const sessions = start();
+    sessions.receive(syncReady());
+    for (const id of ['a', 'b', 'c']) {
+      sessions.receive(
+        ev('session.meta', { displayName: 'gundam-pet' }, { id }),
+      );
+    }
+
+    // a's name goes from its folder's name to its title.
+    sessions.receive(
+      ev('session.meta', { displayName: 'aaa 修正排序' }, { id: 'a' }),
+    );
+
+    const list = sessions.list();
+    expect(list.map((session) => session.sessionKey)).toStrictEqual([
+      'codex:a',
+      'codex:b',
+      'codex:c',
+    ]);
+    expect(list[0]?.displayName).toBe('aaa 修正排序');
   });
 
   it('a session.end for a key never seen changes nothing', () => {
