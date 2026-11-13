@@ -173,6 +173,8 @@ context:
 
 - 2026-11-13 審查修補後：B2 改比紀錄日期 `ts`（欄位 `lastTurnEndTs`，同日期照常開啟）；`session.meta` 後 `list()` 順序不變的 sessions 層測試，`stageSessionsSchema` 註解寫明順序保證；全部轉接器啟動失敗時 log 寫 `no adapter started`；同步前後訂閱拿到同一組 Set 的測試改寫；`flushOnQuit` 測試搬到 `test/main/persist-quit.test.ts`，persist 模組說明統一。我重跑四項檢查全過（65 檔、2855 個測試；depcruise 190 個模組、0 違規）。相對 baseline 刪掉的 4 行 `expect(`：2 行是規格要改的行為（前一筆已說明），2 行是 `settings-store` 裡搬走的結束寫檔測試，改由 `persist-quit.test.ts`（will-quit 呼叫 `flushSync`）、`settings-store.test.ts:780`（`flushSync` 寫檔）與 `pool-store` 的 I/O matrix「結束」涵蓋。
 
+- CI：使用者 commit `0556cfd`（2026-11-13）後，GitHub Actions 的 macOS、Windows 都通過（run 43380465169）。
+
 ## Spec Change Log
 
 ## Review Triage Log

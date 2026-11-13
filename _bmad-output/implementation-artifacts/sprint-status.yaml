@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-03-2026 15:49
-last_updated: 11-13-2026 13:45
+last_updated: 11-13-2026 15:34
 project: gundam-pet
 project_key: NOKEY
 tracking_system: file-system
@@ -165,32 +165,32 @@ action_items:
     epic: 2
     action: "B1 啟動同步修正：轉接器啟動失敗時移出等待清單；同步逾時時還沒送 sync.ready 的來源一併交給 pool，清理時保留其釋放紀錄，補測試（F1）"
     owner: "開發：Epic 2 收尾 story"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-13.md"
   - id: "epic-2-retro-b2-replay-order"
     epic: 2
     action: "B2 Claude Code 補讀順序修正：主檔與 subagent 依時間穿插，或 reducer 忽略比補讀 turn.end 更早的
       tool.start，補回歸測試（F3）"
     owner: "開發：Epic 2 收尾 story"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-13.md"
   - id: "epic-2-retro-b3-row-order"
     epic: 2
     action: "B3 管理 session 改成不受名稱變動影響的排序（F6）"
     owner: "開發：Epic 2 收尾 story"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-13.md"
   - id: "epic-2-retro-b4-comments"
     epic: 2
     action: "B4 修正 detection.ts、sessions.ts 註解；flushSettingsOnQuit 改通用名稱或移到 persist（F7、AV1）"
     owner: "開發：Epic 2 收尾 story"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-13.md"
   - id: "epic-2-retro-b5-spec-align"
     epic: 2
     action: "B5 架構文件（AD-4、AD-5、AD-21、AD-22）與 epics.md 2.1、2.3、2.4、2.8 文字對齊實際（AV5）"
     owner: "Claude 起草、使用者核准"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-13.md"
   - id: "epic-2-retro-b6-status-file"
     epic: 2

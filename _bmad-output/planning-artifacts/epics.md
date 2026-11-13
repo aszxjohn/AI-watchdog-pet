@@ -39,7 +39,7 @@ FR17: 同一包的角色之間可以有包內自訂的特殊互動。〔CAP-13�
 FR18: 包可以請自己的角色停下／恢復遊走、轉向，不能指定位置；使用者設成不遊走或角色被捏起來時請求無效。〔CAP-14〕
 FR19: 包當掉時自動重啟，同一包最多 3 次；第 4 次失敗標為失敗（視同停用），在包管理頁顯示原因。〔CAP-15〕
 FR20: 包被停用、移除、標為失敗，角色取消加入池子，或更新後角色消失時，畫面上受影響的角色立刻換成池子裡的其他角色；池子空了就收回角色。〔CAP-15〕
-FR21: 示範模式用假 session 輪播 8 狀態並照池子分配；展示模式可以指定任何角色與狀態，不存檔、不佔池子；編輯頁的「在畫面上預覽」用展示模式。〔CAP-16〕
+FR21: 示範模式用假 session 顯示使用者指定的狀態，並照池子分配；展示模式可以指定任何角色與狀態，不存檔、不佔池子；編輯頁的「在畫面上預覽」用展示模式。〔CAP-16〕
 FR22: 舞台留運行紀錄：每小時一個檔、只留 24 小時。〔CAP-17〕
 FR23: 設定檔壞掉時保留 `.broken-<時間>` 備份、改用預設值，不被默默蓋掉；單一欄位型別錯只有那欄用預設。〔CAP-17〕
 FR24: 沒有安裝任何角色包時，偵測、面板、管理 session 都照常運作，畫布為空。〔CAP-18〕
@@ -120,7 +120,7 @@ FR25: Epic 2 - 轉接器健康顯示
 **FRs covered:** FR5（畫布）、FR7（入口）、FR22、FR23
 
 ### Epic 2: 看見所有 AI session 的狀態
-沒有任何角色包時，使用者就能在面板看到 Claude Code、Codex、Gemini、Cursor 的 session 與 8 狀態，能顯示／釋放 session、看轉接器健康、調整計時值，並用示範模式的假 session 看狀態輪播。
+沒有任何角色包時，使用者就能在面板看到 Claude Code、Codex、Gemini、Cursor 的 session 與 8 狀態，能顯示／釋放 session、看轉接器健康、調整計時值，並用示範模式的假 session 看指定的狀態。
 **FRs covered:** FR1（Copilot 除外）、FR2、FR4、FR14、FR21（示範模式）、FR24、FR25
 
 ### Epic 3: 角色包上台
@@ -296,7 +296,7 @@ So that 之後的角色有地方演出，而我照常使用底下的視窗。
 
 ## Epic 2: 看見所有 AI session 的狀態
 
-沒有任何角色包時，使用者就能在面板看到 Claude Code、Codex、Gemini、Cursor 的 session 與 8 狀態，能顯示／釋放 session、看轉接器健康、調整計時值，並用示範模式的假 session 看狀態輪播。
+沒有任何角色包時，使用者就能在面板看到 Claude Code、Codex、Gemini、Cursor 的 session 與 8 狀態，能顯示／釋放 session、看轉接器健康、調整計時值，並用示範模式的假 session 看指定的狀態。
 
 ### Story 2.1: 偵測事件契約與 8 狀態判斷器
 
@@ -308,7 +308,7 @@ So that 畫面上的狀態可信，而且以後加新工具不會改到判斷規
 
 **Given** `src/shared` 定義共用事件 schema
 **When** 轉接器發出事件
-**Then** 只能是 `session.start|end|meta`、`turn.start|end`、`tool.start|end`、`approval.request|resolved`、`question.request|resolved`、`error`、`activity`，每個事件帶 `source`、`sessionKey`（`<source>:<原生 id>`）、`ts`、`via`（log／registry／inferred）、`confidence`（由 `via` 推導）
+**Then** 只能是 `session.start|end|meta`、`turn.start|end`、`turn.reply`（只給不會寫「一輪結束」的來源，Story 2.6）、`tool.start|end`、`approval.request|resolved`、`question.request|resolved`、`error`、`activity`，每個事件帶 `source`、`sessionKey`（`<source>:<原生 id>`）、`ts`、`via`（log／registry／inferred）、`confidence`（由 `via` 推導）
 **And** `tool.*` 帶 `toolCallId`，`approval.*`、`question.*` 帶 `requestId`；schema 擋掉 `via` 與 `confidence` 矛盾的組合
 
 **Given** `main/detection/reducer` 為每個 session 維護「進行中 tool 集合」與「未決 approval／question 集合」
@@ -358,13 +358,13 @@ So that 我能先確認偵測在運作，也能用示範模式看 8 種狀態。
 
 **Given** 從選單列／系統匣打開示範模式
 **When** `demo` 轉接器啟動
-**Then** 產生 8 個假 session，經同一個判斷器輪播 8 種狀態，面板即時顯示〔FR21 示範模式〕
+**Then** 使用者指定一種狀態，就產生一個顯示該狀態的假 session，經同一個判斷器運作，維持到改選或關閉，面板即時顯示〔FR21 示範模式〕
 **And** 關閉示範模式後假 session 結束
 
 **Given** 沒有安裝任何角色包
 **When** app 執行
 **Then** 偵測、面板、管理 session 都照常運作，畫布為空〔FR24〕
-**And** 端到端測試以 `demo` 轉接器為事件來源（Playwright `_electron`），並斷言測試期間所有 renderer 沒有發出 `app://`、`pack://`（與開發時的 Vite dev server）以外的請求〔NFR5〕
+**And** 端到端測試以 `demo` 轉接器為事件來源（Playwright `_electron`），並斷言測試期間所有 renderer 沒有發出 `app://`、`pack://`（與開發時的 Vite dev server）以外的請求〔NFR5〕（延後；由哪個 story 承接，依 Epic 2 回顧 B8 決定）
 
 ### Story 2.4: Claude Code 轉接器
 
@@ -380,8 +380,8 @@ So that 我不用切視窗就知道哪個在等我。
 **And** 確定的狀態改變後 2 秒內反映在面板〔NFR1〕；等批准時顯示 `approval`（exact）
 
 **Given** 轉接器執行一段時間
-**When** 比對執行前後 `~/.claude/` 的檔案雜湊
-**Then** 完全不變；轉接器不讀 `*.key`、不連任何 socket、不執行任何 `claude` 指令〔NFR2〕
+**When** 對 fixture 資料夾跑完整個轉接器，並比對真實的 `~/.claude/projects/` 執行前後的檔案清單、大小與修改時間（不讀內容）
+**Then** fixture 前後雜湊完全相同，真實資料夾也完全不變；轉接器不讀 `*.key`、不連任何 socket、不執行任何 `claude` 指令〔NFR2〕
 
 **Given** 狀態檔格式改變或必要欄位缺少
 **When** 解析失敗
@@ -469,13 +469,13 @@ So that 我不關心的 session 不會佔畫面。
 
 **Given** 「管理 session」面板
 **When** 對某 session 按「釋放」
-**Then** 該 session 標為已釋放、不再追蹤顯示，但仍留在清單裡〔FR4〕
-**And** 按「改回顯示」後恢復追蹤
+**Then** 該 session 標為已釋放：照常偵測狀態，面板整列淡化並標「已釋放」，Story 3.4 起不分配角色〔FR4〕
+**And** 按「改回顯示」後恢復
 
 **Given** `main/pool` 擁有 `userData/assignments.json`（帶 `schemaVersion`）
 **When** 寫入顯示／釋放狀態
 **Then** 一律 temp＋rename，寫入只走 `pool:*` invoke 通道，結果經 StageView 回到面板
-**And** 所有來源 `sync.ready`（或 `syncTimeoutMs` 到期）後，丟棄沒有被重新回報的持久化紀錄
+**And** 所有來源 `sync.ready`（或 `syncTimeoutMs` 到期）後，丟棄沒有被重新回報的持久化紀錄；沒有確認的來源（逾時時仍未送 `sync.ready`，或啟動失敗）的紀錄保留
 
 ### Story 2.9: 調整計時值
 

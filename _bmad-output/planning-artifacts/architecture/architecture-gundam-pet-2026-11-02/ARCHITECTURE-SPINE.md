@@ -7,7 +7,7 @@ paradigm: '微核心（外掛）架構：舞台＝核心，角色包＝沙盒外
 scope: '舞台主程式（偵測、世界、繪圖、角色包載入與沙盒、設定與面板）與角色包契約；不含任何角色包的製作'
 status: final
 created: '2026-11-02'
-updated: '2026-11-03'
+updated: '2026-11-13'
 binds: []
 sources:
   - 'Demo 分支（macOS Swift 舊版，README 與 Sources 結構）'
@@ -99,17 +99,17 @@ graph LR
 
 | 來源代碼 | 唯讀來源 | 已知抓不到（交給推測，AD-22） |
 | --- | --- | --- |
-| `claude-code` | 狀態檔 `~/.claude/sessions/<pid>.json`＋transcript `~/.claude/projects/<cwd>/<id>.jsonl` | 無；狀態檔格式變動時，批准改用推測 |
+| `claude-code` | 狀態檔 `~/.claude/sessions/<pid>.json`＋transcript `~/.claude/projects/<cwd>/<id>.jsonl` | 狀態檔那一半（Story 2.4 後半）完成前：批准、提問都用推測，`/clear` 後舊 session 照逾時結束，沒有行程結束的訊號。完成後：無；狀態檔格式變動時，批准改用推測（2026-11-13 Epic 2 回顧對齊） |
 | `codex` | rollout `~/.codex/sessions/YYYY/MM/DD/*.jsonl`＋顯示名稱 `~/.codex/session_index.jsonl` | 批准、提問、錯誤 |
-| `gemini` | `~/.gemini/tmp/<專案>/chats/session-*.jsonl` | 批准 |
-| `cursor` | `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl`（IDE 與 cursor-agent CLI 同格式）；顯示名稱由 slug 推出候選專案路徑，只檢查路徑是否存在（stat），不讀其內容 | 批准（沒有 tool_result 與權限紀錄，只能推測）；以 step 為單位寫入，延遲數秒到數十秒，2 秒目標不適用 [ADOPTED]；`turn_ended` 的 error 多數是使用者中止，要看錯誤字串；檔案可能整檔重寫 |
+| `gemini` | `~/.gemini/tmp/<專案>/chats/session-*.jsonl` | 批准、提問（`ask_user` 要等使用者回答後才寫入）、一輪結束（不寫，改推測，見 AD-22）；工具呼叫要整批完成後才寫入（Story 2.6） |
+| `cursor` | `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl`（IDE 與 cursor-agent CLI 同格式）；顯示名稱由 slug 推出候選專案路徑，只檢查路徑是否存在（stat），不讀其內容 | 批准（沒有 tool_result 與權限紀錄，只能推測）、提問（`AskQuestion` 的回答不寫入，Story 2.7）；以 step 為單位寫入，延遲數秒到數十秒，2 秒目標不適用 [ADOPTED]；`turn_ended` 的 error 多數是使用者中止，要看錯誤字串；檔案可能整檔重寫 |
 | `copilot` | Copilot CLI `~/.copilot/session-state/<id>/events.jsonl`＋顯示名稱 `workspace.yaml`；根目錄可由 `COPILOT_HOME` 改變（第一版只做 CLI；VS Code 版延後） | 等你回覆、提問（`session.idle`、`user_input.requested` 不寫檔，要推測）；本機沒有樣本，排在最後做，用真實 session 驗證過才算完成 [ADOPTED] |
 
 ### AD-5 — 轉接器只翻譯，判斷器決定狀態 [ADOPTED]
 
 - **Binds:** `main/detection/adapters/*`、`main/detection/reducer`
 - **Prevents:** 狀態判斷散在各轉接器；新增 AI 工具要改判斷邏輯
-- **Rule:** 每個 AI 工具一個轉接器，只輸出 `shared` 定義的共用事件：`session.start|end|meta`、`turn.start|end`、`tool.start|end`、`approval.request|resolved`、`question.request|resolved`、`error`、`activity`。每個事件帶 `source`、`sessionKey`、`ts`、`via`（log／registry／inferred）、`confidence`（exact／inferred）。8 狀態只由判斷器決定，優先序：`approval` > `decision` > `error` > `working` > `thinking` > `done` > `waiting` > `idle`。紀錄檔抓不到的批准、提問用推測產生（工具開始後超過門檻秒數沒結束），標 `inferred`。事件欄位、條件表與推測位置的細則見 AD-21、AD-22。
+- **Rule:** 每個 AI 工具一個轉接器，只輸出 `shared` 定義的共用事件：`session.start|end|meta`、`turn.start|end`、`turn.reply`、`tool.start|end`、`approval.request|resolved`、`question.request|resolved`、`error`、`activity`。`turn.reply` 只給不會寫「一輪結束」的來源，表示一個可能結束這一輪的回覆（Story 2.6）。每個事件帶 `source`、`sessionKey`、`ts`、`via`（log／registry／inferred）、`confidence`（exact／inferred）。8 狀態只由判斷器決定，優先序：`approval` > `decision` > `error` > `working` > `thinking` > `done` > `waiting` > `idle`。紀錄檔抓不到的批准、提問用推測產生（工具開始後超過門檻秒數沒結束），標 `inferred`。事件欄位、條件表與推測位置的細則見 AD-21、AD-22。
 
 ### AD-6 — 舞台定義固定 8 狀態 [ADOPTED]
 
@@ -163,7 +163,7 @@ graph LR
 
 - **Binds:** `main/pool`、`main/detection`
 - **Prevents:** 池子還沒用完時同一角色重複出現；分配在畫布與面板間不一致
-- **Rule:** 池子＝使用者勾選上場的包 ∩ 固定參數「加入池子」為開的角色。「加入池子」每個角色只有一個，是舞台設定（不寫進角色包）；編輯頁與包管理頁的勾選框是同一個值。一個 session 一隻；池子用完前畫面上不重複，用完才重複；session 結束角色放回。使用者可指定哪些 session 顯示、哪些釋放不追蹤（釋放＝收回角色、不再分配；session 仍留在管理清單，可改回顯示）。分配結果與顯示／釋放由 `main/pool` 持久化，回收依 AD-22。
+- **Rule:** 池子＝使用者勾選上場的包 ∩ 固定參數「加入池子」為開的角色。「加入池子」每個角色只有一個，是舞台設定（不寫進角色包）；編輯頁與包管理頁的勾選框是同一個值。一個 session 一隻；池子用完前畫面上不重複，用完才重複；session 結束角色放回。使用者可指定哪些 session 顯示、哪些釋放不追蹤（釋放＝收回角色、不再分配；已釋放的 session 照常偵測狀態、仍留在管理清單，可改回顯示）。分配結果與顯示／釋放由 `main/pool` 持久化，回收依 AD-22。
 
 ### AD-13 — 角色包檔案 `.awpet`
 
@@ -263,7 +263,7 @@ graph LR
   - 每個 source 的原生 id 在 `src/shared` 列明且只有一種：`claude-code`＝session UUID（transcript 檔名），狀態檔的 `sessionId` 對不到 transcript UUID 就不發事件；其他工具＝其紀錄檔的 session id。轉接器內部合併多個 probe 並去重，對外每個 session 只有一個 `sessionKey`；原生 id 改變（`/clear`、新對話）＝舊 session `end`、新 session `start`。
   - 關聯欄位：`tool.*` 帶 `toolCallId`；`approval.*`、`question.*` 帶 `requestId`（由工具呼叫觸發時等於 `toolCallId`）。工具本身沒有 id 時由轉接器產生，並保證 start／end 一致。
   - `confidence` 由 `via` 推導（只有 `via: inferred` 是 `inferred`），schema 擋掉矛盾組合。同一條件的來源互相矛盾時，採信 registry（Claude Code 狀態檔）> log > inferred。
-  - 轉接器只照事實發事件，不得為了取得某狀態合成事件。判斷器對每個 session 維護「進行中 tool 集合」與「未決 approval／question 集合」（不得用計數），條件只依下表成立或解除，再依 AD-5 優先序取最高者。`activity` 只更新最後事件時間，不開任何條件；`session.meta` 只更新顯示名稱等中繼資料。`turn.end` 時清空該 turn 內未關的 tool、approval、question（視為紀錄漏寫）。
+  - 轉接器只照事實發事件，不得為了取得某狀態合成事件。判斷器對每個 session 維護「進行中 tool 集合」與「未決 approval／question 集合」（不得用計數），條件只依下表成立或解除，再依 AD-5 優先序取最高者。`activity` 只更新最後事件時間，不開任何條件；`session.meta` 只更新顯示名稱等中繼資料。`turn.end` 時清空該 turn 內未關的 tool、approval、question（視為紀錄漏寫）。補讀的紀錄不一定照日期到達（例如 Claude Code 先補讀主 transcript、再補讀 subagent 的），所以 `tool.start`、`approval.request`、`question.request` 的紀錄日期（`ts`）如果早於該 session 最後一次 `turn.end` 的紀錄日期（補讀的也算，推測的不算），就不開啟，其餘當成 `activity`（Epic 2 收尾 B2）。
 
   | 狀態 | 成立條件（不再成立即解除） |
   | --- | --- |
@@ -281,13 +281,13 @@ graph LR
 - **Binds:** `main/detection/sessions`、`main/detection/inference`、`main/detection/adapters/*`、`main/pool`
 - **Prevents:** 沒有結束訊號的工具留下殭屍 session 吃光池子；啟動補讀觸發一堆推測與 `done`；推測規則與門檻散在各轉接器
 - **Rule:**
-  - session 結束只由 `main/detection/sessions` 決定：收到 `session.end`、轉接器回報行程已不存在（有 pid 的來源），或最後事件起超過 `sessionExpireMs`。轉接器不得自行用逾時合成 `session.end`。session 結束即角色放回池子（AD-12）。
-  - 啟動補讀：轉接器只回報最後修改時間在 `discoveryWindowMs` 內的 session；補讀事件標 `replay: true`，補讀完成發 `sync.ready`（帶 source）。判斷器對 `replay` 事件只重建條件集合，不啟動推測計時、不產生 `done` 過場；`sync.ready` 之後才開始計時。
+  - session 結束只由 `main/detection/sessions` 決定：收到 `session.end`、轉接器回報行程已不存在（有 pid 的來源），或最後事件起超過 `sessionExpireMs`。轉接器不得自行用逾時合成 `session.end`。session 結束即角色放回池子（AD-12）。已知限制：目前沒有來源會回報行程已不存在（Claude Code 要等 Story 2.4 後半；Gemini、Cursor 沒有 pid）。在一輪中途被關掉的 session，會停在思考中、工作中，或推測的「要你批准」，直到 `sessionExpireMs`（2026-11-13 Epic 2 回顧 F2）。
+  - 啟動補讀：轉接器只回報最後修改時間在 `discoveryWindowMs` 內的 session；補讀事件標 `replay: true`，補讀完成發 `sync.ready`（帶 source）。判斷器對 `replay` 事件只重建條件集合，不產生 `done` 過場、不維持 `error`；推測要等該來源 `sync.ready` 之後才做。同步時，補讀時還開著的工具從回推的開始時間起算，已經超過門檻的立刻推測（Story 2.2）。
   - 所有計時以收到事件時的單調時鐘為準；事件 `ts` 只用於排序與顯示。例外：補讀事件（`replay: true`）的時間以 `ts` 回推為單調時間（收到時的單調時間減去牆鐘與 `ts` 的差，`ts` 在未來時差值以 0 計），讓啟動時的 `idle`／逾時依實際時間判斷（2026-11-09 使用者決定，Story 2.2）。
-  - `main/pool` 在所有來源 `sync.ready`（或 `syncTimeoutMs` 到期）前不建立新分配；之後丟棄沒有被重新回報的持久化分配與顯示／釋放紀錄。
-  - 推測只在 `main/detection/inference` 一處做。每個轉接器在 `src/shared` 宣告能力表（approval、question 各為 `exact` 或 `none`，並列出該工具的「提問類」工具名稱）；只對 `none` 的項目推測：工具開始後超過 `approvalInferMs` 沒結束，提問類工具產生 `question.request`，其他產生 `approval.request`；一律 `via: inferred`、以 `toolCallId` 關聯，收到同 id 的 exact 事件或 `tool.end` 就取代或關閉。
-  - 已知限制：跑很久的工具（build、測試）會被推測成 `approval`；推測狀態在畫面上用另一種標記樣式（AD-9）。
-  - `discoveryWindowMs`、`sessionExpireMs`、`syncTimeoutMs`、`approvalInferMs`、`doneMs`、`idleMs`、`errorHoldMs` 的預設值只在 shared 的設定 schema 定義一次。
+  - `main/pool` 在所有來源 `sync.ready`（或 `syncTimeoutMs` 到期）前不建立新分配；之後丟棄沒有被重新回報的持久化分配與顯示／釋放紀錄；沒有確認的來源（逾時時仍未送 `sync.ready`，或啟動失敗）的紀錄保留（Epic 2 收尾 B1）。
+  - 推測只在 `main/detection/inference` 一處做。每個轉接器在 `src/shared` 宣告能力表（approval、question、一輪結束 `turnEnd` 各為 `exact` 或 `none`，並列出該工具的「提問類」工具與「不推測」工具名稱）；只對 `none` 的項目推測：工具開始後超過 `approvalInferMs` 沒結束，提問類工具產生 `question.request`，其他產生 `approval.request`；一律 `via: inferred`、以 `toolCallId` 關聯，收到同 id 的 exact 事件或 `tool.end` 就取代或關閉。「不推測」的工具跑再久也不推測（本來就會跑很久的工具，例如 subagent、網頁搜尋；以及要等下一筆紀錄才知道結束的工具，例如 Cursor 的 `Read`）。`turnEnd` 為 `none` 的來源，在 `turn.reply` 之後、沒有開著的工具與請求，且 `TURN_END_INFER_MS`（10 秒，常數，不開放調整）內沒有更新的事件時，推測這一輪結束，產生 `via: inferred` 的 `turn.end`（Story 2.6）。
+  - 已知限制：跑很久的工具（build、測試）會被推測成 `approval`；推測狀態在畫面上用另一種標記樣式（AD-9）。對要等工具完成才寫入的來源，回覆之後的工具（或等批准）超過 `TURN_END_INFER_MS` 時，會被推測成一輪結束。
+  - `discoveryWindowMs`、`sessionExpireMs`、`syncTimeoutMs`、`approvalInferMs`、`doneMs`、`idleMs`、`errorHoldMs` 的預設值只在 shared 的設定 schema 定義一次。推測一輪結束的 `TURN_END_INFER_MS` 是 `src/shared/constants` 的常數，不是設定。
 
 ### AD-23 — 參數有效值與設定寫入
 
