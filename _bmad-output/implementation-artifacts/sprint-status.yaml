@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-03-2026 15:49
-last_updated: 13-11-2026 09:58
+last_updated: 11-13-2026 13:45
 project: gundam-pet
 project_key: NOKEY
 tracking_system: file-system
@@ -53,8 +53,8 @@ development_status:
   2-6-gemini-cli-轉接器: done
   2-7-cursor-轉接器: done
   2-8-顯示與釋放-session: done
-  2-9-調整計時值: review
-  epic-2-retrospective: optional
+  2-9-調整計時值: done
+  epic-2-retrospective: done
 
   epic-3: backlog
   3-1-角色包-api-v1-契約與契約測試包: backlog
@@ -159,5 +159,60 @@ action_items:
     action: "A13 修正 ~/.npm 擁有者（sudo chown -R 501:20 ~/.npm），不再需要 npm_config_cache
       繞道（P2）"
     owner: "使用者"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md"
+  - id: "epic-2-retro-b1-sync-sweep"
+    epic: 2
+    action: "B1 啟動同步修正：轉接器啟動失敗時移出等待清單；同步逾時時還沒送 sync.ready 的來源一併交給 pool，清理時保留其釋放紀錄，補測試（F1）"
+    owner: "開發：Epic 2 收尾 story"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-13.md"
+  - id: "epic-2-retro-b2-replay-order"
+    epic: 2
+    action: "B2 Claude Code 補讀順序修正：主檔與 subagent 依時間穿插，或 reducer 忽略比補讀 turn.end 更早的
+      tool.start，補回歸測試（F3）"
+    owner: "開發：Epic 2 收尾 story"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-13.md"
+  - id: "epic-2-retro-b3-row-order"
+    epic: 2
+    action: "B3 管理 session 改成不受名稱變動影響的排序（F6）"
+    owner: "開發：Epic 2 收尾 story"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-13.md"
+  - id: "epic-2-retro-b4-comments"
+    epic: 2
+    action: "B4 修正 detection.ts、sessions.ts 註解；flushSettingsOnQuit 改通用名稱或移到 persist（F7、AV1）"
+    owner: "開發：Epic 2 收尾 story"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-13.md"
+  - id: "epic-2-retro-b5-spec-align"
+    epic: 2
+    action: "B5 架構文件（AD-4、AD-5、AD-21、AD-22）與 epics.md 2.1、2.3、2.4、2.8 文字對齊實際（AV5）"
+    owner: "Claude 起草、使用者核准"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-13.md"
+  - id: "epic-2-retro-b6-status-file"
+    epic: 2
+    action: "B6 補完 2.4 狀態檔那一半：pid 結束時送 session.end、精確的要你批准（F2，Q1 選 C）；先由使用者提供停在批准畫面的樣本"
+    owner: "使用者（樣本）＋開發（2.4 後半）"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-13.md"
+  - id: "epic-2-retro-b7-adapter-cleanup"
+    epic: 2
+    action: "B7 2.5 之前整理轉接器與 store 的重複、拆分 log-adapter.ts，F4、F5 一起修（AV2、AV3）"
+    owner: "開發：2.5 前置 story"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-13.md"
+  - id: "epic-2-retro-b8-e2e-owner"
+    epic: 2
+    action: "B8 為端到端測試（Playwright、不連網斷言、CI 建置與 preload 檢查）與面板渲染測試指定承接 story（AV5、VG）"
+    owner: "使用者／PM"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-13.md"
+  - id: "epic-2-retro-b10-nfr1"
+    epic: 2
+    action: "B10 下次驗收量測 NFR1「2 秒內反映」（AV5）"
+    owner: "Claude（驗收清單）"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-13.md"

@@ -122,6 +122,7 @@ context:
 - 2026-11-13 驗證：我重跑 `npm run typecheck`、`npm run lint`、`npm run depcruise`、`CI=true npm test`（64 檔、2786 個測試）全過。刪掉的 `expect(` 都改寫成多驗 `saved` 或 `notice` 的版本；`src/main/detection/**`、`src/preload/stage-view.ts`、IPC 註冊沒有改動。I/O 矩陣 11 列都有測試且都有跑。開發代理另在 scratchpad 用 `react-dom/server` 把 `StageSettings` 渲染成 HTML，確認三欄、單位、範圍與停用狀態（專案檔案沒動）；打字與送出的互動只有純邏輯測試，沒有實際操作過面板。
 - 這次一併處理的延後項目：Epic 1 retro R15（存不到也顯示成功）、Story 2.3 審查 B1／E1 與方塊空殼審查 E5／E6（`idleMs` 不小於 `sessionExpireMs`）。
 - 2026-11-13 審查修補後：改欄位時清掉上一次的儲存結果（送出中不動）；草稿先 `normalize('NFKC')` 再解析與比較，全形數字等同半形，並補測試。我重跑四項檢查全過（64 檔、2795 個測試）；刪掉的 9 行 `expect(` 都是改寫成多驗 `saved`／`notice` 的版本。
+- CI：使用者 commit `4907871`（2026-11-13）後，GitHub Actions 的 macOS、Windows 都通過（run 43355111935）；`2-9-調整計時值` 設為 `done`。
 
 ## Spec Change Log
 
