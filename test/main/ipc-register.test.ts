@@ -403,7 +403,7 @@ describe('registerIpcHandler', () => {
       beforeEach(() => {
         store = {
           get: vi.fn(() => SETTINGS_STATE),
-          patch: vi.fn(() => ({ rev: 1, merged: false })),
+          patch: vi.fn(() => ({ rev: 1, merged: false, saved: true })),
         };
         hub = { subscribe: vi.fn(() => SNAPSHOT) };
         registerSettingsHandlers(store as never);

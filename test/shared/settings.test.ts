@@ -97,7 +97,7 @@ const TIMINGS = [
   ['idleMs', 60_000, 3_600_000, 300_000],
   ['errorHoldMs', 1000, 600_000, 30_000],
   ['approvalInferMs', 1000, 600_000, 10_000],
-  ['sessionExpireMs', 3_600_000, 86_400_000, 7_200_000],
+  ['sessionExpireMs', 3_660_000, 86_400_000, 7_200_000],
   ['discoveryWindowMs', 600_000, 86_400_000, 7_200_000],
   ['syncTimeoutMs', 1000, 60_000, 10_000],
 ] as const;
@@ -135,6 +135,21 @@ describe.each(TIMINGS)('%s schema', (field, min, max, fallback) => {
     expectRoundTrip(settingsOpSchema, { op: 'set', field, value: max });
     expectRejected(settingsOpSchema, { op: 'set', field, value: max + 1 });
     expectRejected(settingsOpSchema, { op: 'set', field, value: null });
+  });
+});
+
+describe('timing ranges', () => {
+  it('idleMs can never reach sessionExpireMs: a session shows idle before it expires', () => {
+    const idleMax = settingsFieldSchemas.idleMs.maxValue;
+    const expireMin = settingsFieldSchemas.sessionExpireMs.minValue;
+    expect(idleMax).toBe(3_600_000);
+    expect(expireMin).toBe(3_660_000);
+    expect(idleMax!).toBeLessThan(expireMin!);
+  });
+
+  it('rejects sessionExpireMs of 60 minutes, the most idleMs can be', () => {
+    expectRejected(settingsFieldSchemas.sessionExpireMs, 3_600_000);
+    expectRoundTrip(settingsFieldSchemas.idleMs, 3_600_000);
   });
 });
 
@@ -272,18 +287,22 @@ describe('settingsPatchSchema', () => {
 });
 
 describe('settingsPatchResultSchema', () => {
-  it.each([[{ rev: 0, merged: false }], [{ rev: 8, merged: true }]])(
-    'round-trips %j',
-    (value) => {
-      expectRoundTrip(settingsPatchResultSchema, value);
-    },
-  );
+  it.each([
+    [{ rev: 0, merged: false, saved: true }],
+    [{ rev: 8, merged: true, saved: true }],
+    [{ rev: 2, merged: false, saved: false }],
+  ])('round-trips %j', (value) => {
+    expectRoundTrip(settingsPatchResultSchema, value);
+  });
 
   it.each([
-    ['no merged', { rev: 1 }],
-    ['merged as a string', { rev: 1, merged: 'false' }],
-    ['a negative rev', { rev: -1, merged: false }],
-    ['an extra key', { rev: 1, merged: false, values: {} }],
+    ['no merged', { rev: 1, saved: true }],
+    ['merged as a string', { rev: 1, merged: 'false', saved: true }],
+    ['a negative rev', { rev: -1, merged: false, saved: true }],
+    ['an extra key', { rev: 1, merged: false, saved: true, values: {} }],
+    ['no saved', { rev: 1, merged: false }],
+    ['saved as a string', { rev: 1, merged: false, saved: 'true' }],
+    ['saved null', { rev: 1, merged: false, saved: null }],
   ])('rejects %s', (_label, value) => {
     expectRejected(settingsPatchResultSchema, value);
   });

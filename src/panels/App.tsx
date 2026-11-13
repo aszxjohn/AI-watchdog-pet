@@ -6,16 +6,18 @@
  * main opens the window on a page by loading that fragment, and the links on
  * the left change it. 管理 session lists the detected sessions (each can be
  * released or shown again) and the running adapters' health; 舞台設定
- * lists the displays for the canvas; 角色包 shows 即將推出 for now.
+ * lists the displays for the canvas and the detection timings (計時);
+ * 角色包 shows 即將推出 for now.
  *
  * Renderer state only ever comes from StageView (AD-20): a setting changes
  * through `settings.patch` and a release through `pool.setReleased`, and
  * the page shows the outcome once StageView brings it back, never earlier.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { PRELOAD_API_KEY, PRODUCT_NAME } from '../shared/constants';
 import { PANEL_PAGES, panelPageHash, type PanelPageId } from '../shared/panels';
 import type { PanelsApi } from '../shared/preload-api';
+import type { SettingsState } from '../shared/settings';
 import type { StageViewSnapshot } from '../shared/stage-view';
 import {
   createDisplayChooser,
@@ -41,6 +43,15 @@ import {
   sessionRows,
   type ReleaseToggleState,
 } from './session-rows';
+import {
+  createTimingSaver,
+  IDLE_TIMING_SAVE,
+  SAVE_LABEL,
+  TIMING_HEADING,
+  timingForm,
+  type TimingDrafts,
+  type TimingSaveState,
+} from './timing-fields';
 
 interface StatusLine {
   readonly text: string;
@@ -145,10 +156,117 @@ function Status({ id, line }: { id: string; line: StatusLine }) {
 }
 
 /**
- * 舞台設定: where the canvas goes. The choose logic (patch based on the
- * settings rev in StageView, options disabled until main answers, a failure
- * shown with the choice left as it was) is createDisplayChooser; this only
- * renders it.
+ * 舞台設定 › 計時: the three timings a user may change, each with its unit
+ * and range. The logic (what the fields show, which drafts are changes or
+ * invalid, the one patch 儲存 sends, the fields and 儲存 disabled until
+ * main answers) is in timing-fields.ts; this keeps the drafts and renders
+ * it. The drafts are dropped once main applied them, and whenever the page
+ * goes away unsaved (nothing holds the panel open).
+ */
+function TimingSettings({
+  awp,
+  settings,
+}: {
+  awp: PanelsApi | undefined;
+  settings: SettingsState;
+}) {
+  const [drafts, setDrafts] = useState<TimingDrafts>({});
+  const [state, setState] = useState<TimingSaveState>(IDLE_TIMING_SAVE);
+  const saver = useMemo(
+    () =>
+      awp === undefined
+        ? undefined
+        : createTimingSaver((patch) => awp.settings.patch(patch), setState),
+    [awp],
+  );
+  const form = timingForm(settings, drafts);
+  const disabled = state.saving || saver === undefined;
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void saver?.save(settings, drafts).then((applied) => {
+      if (applied) {
+        setDrafts({});
+      }
+    });
+  }
+
+  return (
+    <section className="setting timing">
+      <form onSubmit={submit} noValidate>
+        <fieldset disabled={disabled}>
+          <legend>{TIMING_HEADING}</legend>
+          {form.fields.map((field) => {
+            const id = `timing-${field.field}`;
+            return (
+              <div key={field.field} className="timing-field">
+                <label htmlFor={id}>{field.label}</label>
+                <input
+                  id={id}
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={field.text}
+                  aria-invalid={field.error !== null}
+                  aria-describedby={`${id}-unit ${id}-range${field.error === null ? '' : ` ${id}-error`}`}
+                  onChange={(event) => {
+                    const text = event.target.value;
+                    setDrafts((previous) => ({
+                      ...previous,
+                      [field.field]: text,
+                    }));
+                    // A new edit: the last save's outcome no longer
+                    // describes the fields. A save on its way keeps its state.
+                    setState((previous) =>
+                      previous.saving ? previous : IDLE_TIMING_SAVE,
+                    );
+                  }}
+                />
+                <span id={`${id}-unit`} className="timing-unit">
+                  {field.unit}
+                </span>
+                <span id={`${id}-range`} className="hint">
+                  {field.range}
+                </span>
+                {field.error === null ? null : (
+                  <p id={`${id}-error`} className="timing-error">
+                    {field.error}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+          <button type="submit" disabled={disabled || form.patch === null}>
+            {SAVE_LABEL}
+          </button>
+        </fieldset>
+      </form>
+      {state.outcome === null ? null : state.outcome.kind === 'error' ? (
+        <p className="setting-error" role="alert">
+          {state.outcome.text}
+        </p>
+      ) : (
+        <p
+          className={
+            state.outcome.kind === 'saved'
+              ? 'setting-status'
+              : 'setting-status is-warning'
+          }
+          role="status"
+        >
+          {state.outcome.text}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * 舞台設定: where the canvas goes, then 計時 (TimingSettings). The choose
+ * logic (patch based on the settings rev in StageView, options disabled
+ * until main answers, a failure shown with the choice left as it was, a
+ * notice when main applied it without keeping settings.json) is
+ * createDisplayChooser; this only renders it.
  */
 function StageSettings({
   awp,
@@ -173,30 +291,38 @@ function StageSettings({
   const current = { selected, settingsRev: snapshot.view.settings.rev };
 
   return (
-    <section className="setting">
-      <fieldset disabled={state.saving || chooser === undefined}>
-        <legend>畫布所在螢幕</legend>
-        {options.map((option) => (
-          <label key={option.key} className="setting-option">
-            <input
-              type="radio"
-              name="canvas-display"
-              value={option.key}
-              checked={option.key === selected}
-              onChange={() => {
-                void chooser?.choose(option, current);
-              }}
-            />
-            <span>{option.label}</span>
-          </label>
-        ))}
-      </fieldset>
-      {state.error === null ? null : (
-        <p className="setting-error" role="alert">
-          {state.error}
-        </p>
-      )}
-    </section>
+    <>
+      <section className="setting">
+        <fieldset disabled={state.saving || chooser === undefined}>
+          <legend>畫布所在螢幕</legend>
+          {options.map((option) => (
+            <label key={option.key} className="setting-option">
+              <input
+                type="radio"
+                name="canvas-display"
+                value={option.key}
+                checked={option.key === selected}
+                onChange={() => {
+                  void chooser?.choose(option, current);
+                }}
+              />
+              <span>{option.label}</span>
+            </label>
+          ))}
+        </fieldset>
+        {state.error === null ? null : (
+          <p className="setting-error" role="alert">
+            {state.error}
+          </p>
+        )}
+        {state.notice === null ? null : (
+          <p className="setting-status is-warning" role="status">
+            {state.notice}
+          </p>
+        )}
+      </section>
+      <TimingSettings awp={awp} settings={snapshot.view.settings} />
+    </>
   );
 }
 

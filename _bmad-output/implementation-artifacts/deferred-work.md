@@ -202,3 +202,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-8-session-release.md`
   summary: 面板的 React 這一層（`App.tsx` 把狀態畫成 class、標記、按鈕停用、點擊與錯誤區）沒有自動測試，repo 也沒有 DOM 測試環境
   evidence: Story 2.8 審查 VG1／B9。面板邏輯刻意放在純 `.ts` 用 node 環境測（`sessionRows`、`createReleaseToggle`；1.6 的 `StageSettings` 搭 `createDisplayChooser` 也一樣），`App.tsx` 寫反條件或漏畫錯誤區時 CI 仍全綠。目前靠使用者驗收目視確認；要補時需引入 jsdom／happy-dom 或 Playwright 端到端（epic context 已列「面板有實際內容時決定」）。
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-9-timing-settings.md`
+  summary: 舞台設定頁「計時」區與兩區提示的 React 這一層（沒存到提示、已儲存／錯誤的 `role` 與樣式、成功後清草稿、送出中停用）沒有自動測試
+  evidence: Story 2.9 審查 VG1／B12。`vitest` 是 node 環境，沒有測試 import `App.tsx`；拿掉 `StageSettings` 的 `state.notice` 區塊或不分 `outcome.kind` 渲染，CI 仍全綠，R15 會悄悄回來。邏輯已放在 `timing-fields.ts`、`display-options.ts` 用純 `.ts` 測；渲染層與 2.8 那筆同樣需要 jsdom／happy-dom 或 Playwright 端到端。

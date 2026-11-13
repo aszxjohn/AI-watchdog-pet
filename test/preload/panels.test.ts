@@ -137,7 +137,10 @@ describe('panels preload', () => {
     });
     await settle();
 
-    expect(result).toStrictEqual({ ok: true, data: { rev: 1, merged: false } });
+    expect(result).toStrictEqual({
+      ok: true,
+      data: { rev: 1, merged: false, saved: true },
+    });
     expect(listener).toHaveBeenCalledTimes(2);
     const latest = listener.mock.lastCall?.[0];
     expect(latest?.rev).toBe(1);

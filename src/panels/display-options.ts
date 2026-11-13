@@ -9,8 +9,10 @@
  * - When the setting names a display that is not connected, one more
  *   option, 螢幕 <id>（未連接，暫用主螢幕）, which is the selected one.
  *
- * Also here: what choosing an option does (createDisplayChooser) and the
- * status bar's StageView line (stageViewStatusText).
+ * Also here: what choosing an option does (createDisplayChooser), the
+ * status bar's StageView line (stageViewStatusText), and NOT_SAVED_TEXT,
+ * which every settings change on the page shows when main says
+ * settings.json is not being kept.
  */
 import type { IpcError, IpcResult } from '../shared/ipc';
 import type { SettingsPatch, SettingsPatchResult } from '../shared/settings';
@@ -95,6 +97,15 @@ export function displayPatch(
   };
 }
 
+/**
+ * What the page shows when main applied a settings change but cannot keep
+ * settings.json (the `settings:patch` reply's `saved` is false): this run
+ * cannot write it, or its last write failed. Not a failure: the change is
+ * in effect until the app restarts. Shared by 畫布所在螢幕 and 計時.
+ */
+export const NOT_SAVED_TEXT =
+  '已套用，但無法存到設定檔，重新啟動後會回到原本的值';
+
 /** What the page shows when a patch fails; the choice stays as it was. */
 export function patchErrorText(error: IpcError | undefined): string {
   return error === undefined
@@ -108,11 +119,17 @@ export interface DisplayChoiceState {
   readonly saving: boolean;
   /** Why the last choice failed, or null. */
   readonly error: string | null;
+  /**
+   * NOT_SAVED_TEXT when the last choice applied but settings.json is not
+   * kept, or null.
+   */
+  readonly notice: string | null;
 }
 
 export const IDLE_DISPLAY_CHOICE: DisplayChoiceState = Object.freeze({
   saving: false,
   error: null,
+  notice: null,
 });
 
 /** The page as it is when an option is chosen. */
@@ -126,9 +143,10 @@ export interface CurrentChoice {
 export interface DisplayChooser {
   /**
    * Chooses `option`, unless it is already selected or a patch is still on
-   * its way: reports `saving`, sends the patch, then reports the outcome.
-   * The selection itself is never changed here; it comes back through
-   * StageView (AD-20). Never rejects.
+   * its way: reports `saving`, sends the patch, then reports the outcome
+   * (an error, or NOT_SAVED_TEXT when main applied it without keeping
+   * settings.json). The selection itself is never changed here; it comes
+   * back through StageView (AD-20). Never rejects.
    */
   choose(option: DisplayOption, current: CurrentChoice): Promise<void>;
 }
@@ -149,8 +167,9 @@ export function createDisplayChooser(
         return;
       }
       saving = true;
-      onState({ saving: true, error: null });
+      onState({ saving: true, error: null, notice: null });
       let error: string | null = null;
+      let notice: string | null = null;
       try {
         const result = await patch(displayPatch(current.settingsRev, option));
         if (!result.ok) {
@@ -158,13 +177,15 @@ export function createDisplayChooser(
             `[panels] settings:patch: ${result.error.code}: ${result.error.message}`,
           );
           error = patchErrorText(result.error);
+        } else if (!result.data.saved) {
+          notice = NOT_SAVED_TEXT;
         }
       } catch (thrown) {
         logError('[panels] settings:patch failed', thrown);
         error = patchErrorText(undefined);
       }
       saving = false;
-      onState({ saving: false, error });
+      onState({ saving: false, error, notice });
     },
   };
 }

@@ -216,6 +216,24 @@ describe('loading settings.json', () => {
     ]);
   });
 
+  it('gives sessionExpireMs of 60 minutes (no longer above the longest idleMs) its default of 2 hours', () => {
+    const text = writeFile({
+      schemaVersion: 1,
+      ...CUSTOM_VALUES,
+      sessionExpireMs: 3_600_000,
+    });
+
+    const store = load();
+
+    const expected = { ...CUSTOM_VALUES, sessionExpireMs: 7_200_000 };
+    expect(store.get().values).toStrictEqual(expected);
+    expect(fs.readFileSync(path.join(dir, BACKUP), 'utf8')).toBe(text);
+    expect(readFile()).toStrictEqual({ schemaVersion: 1, ...expected });
+    expect(logged('warn')).toStrictEqual([
+      `[settings] settings.json has bad fields (invalid: sessionExpireMs); copied it to ${BACKUP}, using defaults for invalid fields, dropping unknown ones`,
+    ]);
+  });
+
   describe('a broken file', () => {
     it.each([
       [
@@ -335,7 +353,7 @@ describe('loading settings.json', () => {
       vi.runAllTimers();
       store.flushSync();
 
-      expect(result).toStrictEqual({ rev: 1, merged: false });
+      expect(result).toStrictEqual({ rev: 1, merged: false, saved: false });
       expect(store.get().values.canvasDisplayId).toBe(DISPLAY_ID);
       expect(files()).toStrictEqual(['settings.json']);
       expect(fs.readFileSync(file, 'utf8')).toBe('not json');
@@ -553,7 +571,7 @@ describe('patching', () => {
 
     const result = store.patch(setDisplay(0, DISPLAY_ID));
 
-    expect(result).toStrictEqual({ rev: 1, merged: false });
+    expect(result).toStrictEqual({ rev: 1, merged: false, saved: true });
     expect(store.get()).toStrictEqual({
       rev: 1,
       values: { ...SETTINGS_DEFAULTS, canvasDisplayId: DISPLAY_ID },
@@ -582,7 +600,7 @@ describe('patching', () => {
 
     const result = store.patch(setDisplay(0, 3));
 
-    expect(result).toStrictEqual({ rev: 3, merged: true });
+    expect(result).toStrictEqual({ rev: 3, merged: true, saved: true });
     expect(store.get()).toStrictEqual({
       rev: 3,
       values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 3 },
@@ -594,7 +612,7 @@ describe('patching', () => {
 
     const result = store.patch(setDisplay(5, 1));
 
-    expect(result).toStrictEqual({ rev: 1, merged: true });
+    expect(result).toStrictEqual({ rev: 1, merged: true, saved: true });
     expect(logged('warn')).toStrictEqual([
       '[settings] patch baseRev 5 is ahead of rev 0; applying it to the current values',
     ]);
@@ -608,11 +626,13 @@ describe('patching', () => {
     expect(store.patch(setDisplay(0, null))).toStrictEqual({
       rev: 0,
       merged: false,
+      saved: true,
     });
     store.patch(setDisplay(0, 4));
     expect(store.patch(setDisplay(0, 4))).toStrictEqual({
       rev: 1,
       merged: true,
+      saved: true,
     });
 
     expect(onChange).toHaveBeenCalledOnce();
@@ -827,6 +847,131 @@ describe('writing settings.json', () => {
   });
 });
 
+describe('the patch reply says whether settings.json is kept (saved)', () => {
+  /** An fs whose writes fail while `failing.on` is true. */
+  function flakyFs() {
+    const failing = { on: false };
+    return {
+      failing,
+      fs: fsWith({
+        writeFileSync: (target, data, options) => {
+          if (failing.on) {
+            throw Object.assign(new Error('read-only'), { code: 'EROFS' });
+          }
+          fs.writeFileSync(target, data, options);
+        },
+      }),
+    };
+  }
+
+  it('is true while settings.json can be written, also for a patch that changes nothing', () => {
+    const store = load();
+
+    expect(store.patch(setDisplay(0, 1)).saved).toBe(true);
+    vi.advanceTimersByTime(SETTINGS_FLUSH_DEBOUNCE_MS);
+    expect(store.patch(setDisplay(1, 2)).saved).toBe(true);
+    expect(store.patch(setDisplay(2, 2))).toStrictEqual({
+      rev: 2,
+      merged: false,
+      saved: true,
+    });
+  });
+
+  it.each([
+    [
+      'cannot be read',
+      () => {
+        writeFile({ schemaVersion: 1, canvasDisplayId: 7 });
+        return { fs: fsWith({ readFileSync: failWith('EACCES') }) };
+      },
+    ],
+    [
+      'is broken and cannot be renamed',
+      () => {
+        writeFile('not json');
+        return { fs: fsWith({ renameSync: failWith('EPERM') }) };
+      },
+    ],
+    [
+      'has bad fields and cannot be backed up',
+      () => {
+        writeFile({ schemaVersion: 1, canvasDisplayId: 'main' });
+        return { fs: fsWith({ copyFileSync: failWith('ENOSPC') }) };
+      },
+    ],
+  ])(
+    'is false all run when settings.json %s (canWrite false); the values still apply',
+    (_label, arrange) => {
+      const store = load(arrange());
+      expect(store.canWrite).toBe(false);
+
+      const changed = store.patch(setDisplay(0, DISPLAY_ID));
+      const unchanged = store.patch(setDisplay(1, DISPLAY_ID));
+
+      expect(changed).toStrictEqual({ rev: 1, merged: false, saved: false });
+      expect(unchanged).toStrictEqual({ rev: 1, merged: false, saved: false });
+      expect(store.get().values.canvasDisplayId).toBe(DISPLAY_ID);
+    },
+  );
+
+  it('is false after a write fails, until a later write succeeds', () => {
+    const flaky = flakyFs();
+    const store = load({ fs: flaky.fs });
+
+    flaky.failing.on = true;
+    // Answered before the debounced write: that failure is only logged.
+    expect(store.patch(setDisplay(0, 1)).saved).toBe(true);
+    vi.advanceTimersByTime(SETTINGS_FLUSH_DEBOUNCE_MS);
+    expect(logged('error')).toStrictEqual([
+      '[settings] cannot write settings.json (EROFS); keeping the values in memory and retrying on the next flush',
+    ]);
+
+    expect(store.patch(setDisplay(1, 2)).saved).toBe(false);
+    expect(store.patch(setDisplay(2, 2)).saved).toBe(false);
+    vi.advanceTimersByTime(SETTINGS_FLUSH_DEBOUNCE_MS);
+    expect(store.patch(setDisplay(2, 3)).saved).toBe(false);
+
+    flaky.failing.on = false;
+    vi.advanceTimersByTime(SETTINGS_FLUSH_DEBOUNCE_MS);
+
+    expect(readFile()).toStrictEqual({
+      schemaVersion: 1,
+      ...SETTINGS_DEFAULTS,
+      canvasDisplayId: 3,
+    });
+    expect(store.patch(setDisplay(3, 3)).saved).toBe(true);
+    expect(store.patch(setDisplay(3, 4)).saved).toBe(true);
+  });
+
+  it('is false after flushSync fails, and true again once it succeeds', () => {
+    const flaky = flakyFs();
+    const store = load({ fs: flaky.fs });
+    store.patch(setDisplay(0, 1));
+
+    flaky.failing.on = true;
+    store.flushSync();
+    expect(store.patch(setDisplay(1, 1)).saved).toBe(false);
+
+    flaky.failing.on = false;
+    store.flushSync();
+    expect(store.patch(setDisplay(1, 1)).saved).toBe(true);
+  });
+
+  it('is false when writing back a fixed file at load fails, until a write succeeds', () => {
+    writeFile({ schemaVersion: 1, canvasDisplayId: 'main' });
+    const flaky = flakyFs();
+    flaky.failing.on = true;
+    const store = load({ fs: flaky.fs });
+    expect(store.canWrite).toBe(true);
+
+    expect(store.patch(setDisplay(0, null)).saved).toBe(false);
+
+    flaky.failing.on = false;
+    store.flushSync();
+    expect(store.patch(setDisplay(0, null)).saved).toBe(true);
+  });
+});
+
 describe('flushSettingsOnQuit', () => {
   it('writes a pending patch on will-quit, without waiting for the debounce', () => {
     const app = new EventEmitter();
@@ -863,7 +1008,10 @@ describe('settings IPC', () => {
         settingsPatch.channel,
         setDisplay(0, DISPLAY_ID),
       ),
-    ).toStrictEqual({ ok: true, data: { rev: 1, merged: false } });
+    ).toStrictEqual({
+      ok: true,
+      data: { rev: 1, merged: false, saved: true },
+    });
     expect(store.get().values.canvasDisplayId).toBe(DISPLAY_ID);
   });
 
@@ -881,6 +1029,14 @@ describe('settings IPC', () => {
     ],
     ['no ops', { baseRev: 0, ops: [] }],
     ['a whole-settings object', { canvasDisplayId: 1 }],
+    [
+      'an idleMs above its maximum (bypassing the panel)',
+      { baseRev: 0, ops: [{ op: 'set', field: 'idleMs', value: 3_600_001 }] },
+    ],
+    [
+      'a fractional doneMs',
+      { baseRev: 0, ops: [{ op: 'set', field: 'doneMs', value: 1500.5 }] },
+    ],
   ])(
     'answers invalid-input to a patch with %s and changes nothing',
     async (_label, patch) => {

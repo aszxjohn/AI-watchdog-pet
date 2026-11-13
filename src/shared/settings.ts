@@ -46,8 +46,13 @@ export const settingsFieldSchemas = {
    * (a question, for its question tools; main/detection/inference).
    */
   approvalInferMs: z.int().min(1000).max(600_000),
-  /** A session with no event for this long ends (main/detection/sessions). */
-  sessionExpireMs: z.int().min(3_600_000).max(86_400_000),
+  /**
+   * A session with no event for this long ends (main/detection/sessions).
+   * The minimum, 61 minutes, is above the most `idleMs` can be (60
+   * minutes), so a session always shows `idle` before it expires; a file
+   * with less is a bad field and takes the default.
+   */
+  sessionExpireMs: z.int().min(3_660_000).max(86_400_000),
   /**
    * At start, adapters replay only records modified within this long. It
    * should be at least `sessionExpireMs` (the defaults are equal): when it
@@ -158,12 +163,18 @@ export const settingsPatchSchema = z.strictObject({
 export type SettingsPatch = z.infer<typeof settingsPatchSchema>;
 
 /**
- * Reply to `settings:patch`: the rev after the patch, and whether `baseRev`
- * was not the current rev, so the ops were merged into newer values.
+ * Reply to `settings:patch`: the rev after the patch; whether `baseRev` was
+ * not the current rev, so the ops were merged into newer values; and
+ * whether settings.json is being kept: false when this run cannot write it
+ * or its last write failed and none has succeeded since. The values apply
+ * either way; with `saved` false they are lost on restart. The file is
+ * written after a debounce, so a write that fails after the reply is only
+ * logged.
  */
 export const settingsPatchResultSchema = z.strictObject({
   rev: settingsRevSchema,
   merged: z.boolean(),
+  saved: z.boolean(),
 });
 
 export type SettingsPatchResult = z.infer<typeof settingsPatchResultSchema>;

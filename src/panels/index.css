@@ -132,6 +132,53 @@ body {
   color: var(--error);
 }
 
+/* 已儲存, or the warning that settings.json is not kept (role="status"). */
+.setting-status {
+  margin: 12px 0 0;
+  color: var(--muted);
+}
+
+.setting-status.is-warning {
+  color: var(--warning);
+}
+
+/* 計時: label, input, unit and range on one line; an error below them. */
+.setting + .setting {
+  margin-top: 24px;
+}
+
+.timing-field {
+  display: grid;
+  grid-template-columns: 9em 5em auto 1fr;
+  align-items: center;
+  column-gap: 8px;
+  padding: 6px 0;
+}
+
+.timing-field input {
+  width: 100%;
+  font: inherit;
+}
+
+.timing-field input[aria-invalid='true'] {
+  border-color: var(--error);
+  outline-color: var(--error);
+}
+
+.setting fieldset:disabled .timing-field {
+  color: var(--muted);
+}
+
+.timing-error {
+  grid-column: 2 / -1;
+  margin: 4px 0 0;
+  color: var(--error);
+}
+
+.timing button[type='submit'] {
+  margin-top: 8px;
+}
+
 .panel-status {
   display: flex;
   gap: 24px;

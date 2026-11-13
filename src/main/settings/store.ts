@@ -21,6 +21,11 @@
  * right now (app quit). A failed write is logged, its temp file removed,
  * and the values kept in memory for the next flush.
  *
+ * Each patch reply says whether settings.json is being kept (`saved`):
+ * false when this run never writes, or when the last write failed and none
+ * has succeeded since. A write that fails after the reply (the debounce)
+ * is only logged.
+ *
  * fs is synchronous on purpose: the file is tiny, the order of writes is
  * fixed, and the flush on quit is a plain call. Log lines name fields and
  * reasons only, never values or file contents.
@@ -82,7 +87,11 @@ export type SettingsListener = (state: SettingsState) => void;
 
 export interface SettingsStore {
   get(): SettingsState;
-  /** Applies a patch. Throws only if `patch` fails the shared schema. */
+  /**
+   * Applies a patch. Throws only if `patch` fails the shared schema. The
+   * reply's `saved` is `canWrite` and no failed write since the last
+   * successful one, whether or not the patch changed anything.
+   */
   patch(patch: SettingsPatch): SettingsPatchResult;
   /** Called after every patch that changed a value. Returns an unsubscribe. */
   onChange(listener: SettingsListener): () => void;
@@ -252,6 +261,8 @@ export function loadSettings({
   let values: SettingsValues = loaded.values;
   let rev = 0;
   let dirty = loaded.needsWrite;
+  /** The last write failed and none has succeeded since. */
+  let lastWriteFailed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const listeners = new Set<SettingsListener>();
 
@@ -275,12 +286,19 @@ export function loadSettings({
       // when that fails.
       writeFileAtomic(fs, file, text);
       dirty = false;
+      lastWriteFailed = false;
     } catch (error) {
+      lastWriteFailed = true;
       log(
         `cannot write ${fileName} (${errorCode(error)}); keeping the values in memory and retrying on the next flush`,
         'error',
       );
     }
+  }
+
+  /** Whether settings.json is being kept (the patch reply's `saved`). */
+  function saved(): boolean {
+    return canWrite && !lastWriteFailed;
   }
 
   function scheduleFlush(): void {
@@ -331,7 +349,7 @@ export function loadSettings({
         (field) => !sameValue(values[field], nextValues[field]),
       );
       if (changed.length === 0) {
-        return { rev, merged };
+        return { rev, merged, saved: saved() };
       }
       values = Object.freeze(nextValues);
       rev += 1;
@@ -341,7 +359,7 @@ export function loadSettings({
       );
       scheduleFlush();
       notify();
-      return { rev, merged };
+      return { rev, merged, saved: saved() };
     },
 
     onChange(listener) {

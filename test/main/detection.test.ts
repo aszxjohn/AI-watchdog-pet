@@ -382,6 +382,69 @@ describe('I/O matrix', () => {
     expect(states(detection)).toStrictEqual(['codex:s1 waiting']);
   });
 
+  it('推測改值: a tool running 8 s, approvalInferMs from 10 s to 5 s: approval (inferred) at once, with no new event', () => {
+    const detection = start();
+    feed(
+      { type: 'sync.ready', source: 'codex' },
+      codex('turn.start'),
+      codex('tool.start', { toolCallId: 't1', toolName: 'Bash' }),
+    );
+    clock.advance(8000);
+    expect(states(detection)).toStrictEqual(['codex:s1 working']);
+    captured.outputs = [];
+    heard = [];
+
+    settings.set({ approvalInferMs: 5000 });
+
+    expect(states(detection)).toStrictEqual(['codex:s1 approval (inferred)']);
+    expect(heard).toHaveLength(1);
+    expect(captured.outputs).toStrictEqual([]);
+  });
+
+  it('推測改值: without the change, the same tool is still working at 8 s', () => {
+    const detection = start();
+    feed(
+      { type: 'sync.ready', source: 'codex' },
+      codex('turn.start'),
+      codex('tool.start', { toolCallId: 't1', toolName: 'Bash' }),
+    );
+    clock.advance(8000);
+    settings.set({ canvasDisplayId: 5 });
+    expect(states(detection)).toStrictEqual(['codex:s1 working']);
+    clock.advance(2000);
+    expect(states(detection)).toStrictEqual(['codex:s1 approval (inferred)']);
+  });
+
+  it('休息中改值: last event 3 minutes ago, idleMs from 5 to 2 minutes: idle at once, with no new event', () => {
+    const detection = start();
+    feed({ type: 'sync.ready', source: 'codex' }, codex('turn.start'));
+    feed(codex('turn.end'));
+    clock.advance(3 * MINUTE);
+    expect(states(detection)).toStrictEqual(['codex:s1 waiting']);
+    captured.outputs = [];
+    heard = [];
+
+    settings.set({ idleMs: 2 * MINUTE });
+
+    expect(states(detection)).toStrictEqual(['codex:s1 idle']);
+    expect(heard).toHaveLength(1);
+    expect(captured.outputs).toStrictEqual([]);
+  });
+
+  it('休息中改值: idleMs raised past the silence brings an idle session back to waiting at once', () => {
+    const detection = start();
+    feed({ type: 'sync.ready', source: 'codex' }, codex('turn.start'));
+    feed(codex('turn.end'));
+    clock.advance(6 * MINUTE);
+    expect(states(detection)).toStrictEqual(['codex:s1 idle']);
+
+    settings.set({ idleMs: 10 * MINUTE });
+
+    expect(states(detection)).toStrictEqual(['codex:s1 waiting']);
+    clock.advance(4 * MINUTE);
+    expect(states(detection)).toStrictEqual(['codex:s1 idle']);
+  });
+
   it.each<[StateCode, Partial<SettingsValues>]>([
     ['done', { doneMs: 1000 }],
     ['done', { doneMs: 60_000 }],

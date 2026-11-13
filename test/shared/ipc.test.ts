@@ -221,13 +221,18 @@ describe('settings and StageView contracts', () => {
     expectRejected(settingsGet.output, STATE.values);
   });
 
-  it('settings:patch takes exactly one patch and answers { rev, merged }', () => {
+  it('settings:patch takes exactly one patch and answers { rev, merged, saved }', () => {
     expectRoundTrip(settingsPatch.input, [PATCH]);
     expectRejected(settingsPatch.input, []);
     expectRejected(settingsPatch.input, [PATCH, PATCH]);
     expectRejected(settingsPatch.input, [{ ...PATCH, ops: [] }]);
-    expectRoundTrip(settingsPatch.output, { rev: 3, merged: false });
+    expectRoundTrip(settingsPatch.output, {
+      rev: 3,
+      merged: false,
+      saved: true,
+    });
     expectRejected(settingsPatch.output, { rev: 3 });
+    expectRejected(settingsPatch.output, { rev: 3, merged: false });
   });
 
   it('stage-view:subscribe takes no arguments and answers a snapshot', () => {

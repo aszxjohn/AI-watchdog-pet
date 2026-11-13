@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   canvasDisplayText,
   createDisplayChooser,
+  IDLE_DISPLAY_CHOICE,
+  NOT_SAVED_TEXT,
   displayChoices,
   displayOptionLabel,
   displayPatch,
@@ -225,14 +227,14 @@ describe('createDisplayChooser', () => {
 
     const done = chooser.choose(option('display-69733632'), CURRENT);
 
-    expect(states).toStrictEqual([{ saving: true, error: null }]);
+    expect(states).toStrictEqual([{ saving: true, error: null, notice: null }]);
     expect(remote.calls).toStrictEqual([
       {
         baseRev: 3,
         ops: [{ op: 'set', field: 'canvasDisplayId', value: 69733632 }],
       },
     ]);
-    remote.answer({ ok: true, data: { rev: 4, merged: false } });
+    remote.answer({ ok: true, data: { rev: 4, merged: false, saved: true } });
     await done;
   });
 
@@ -243,7 +245,7 @@ describe('createDisplayChooser', () => {
     await chooser.choose(option('display-1'), CURRENT);
 
     expect(remote.patch).toHaveBeenCalledOnce();
-    remote.answer({ ok: true, data: { rev: 4, merged: false } });
+    remote.answer({ ok: true, data: { rev: 4, merged: false, saved: true } });
     await first;
   });
 
@@ -259,11 +261,15 @@ describe('createDisplayChooser', () => {
     await done;
 
     expect(states).toStrictEqual([
-      { saving: true, error: null },
-      { saving: false, error: patchErrorText(refused) },
+      { saving: true, error: null, notice: null },
+      { saving: false, error: patchErrorText(refused), notice: null },
     ]);
     for (const state of states) {
-      expect(Object.keys(state).sort()).toStrictEqual(['error', 'saving']);
+      expect(Object.keys(state).sort()).toStrictEqual([
+        'error',
+        'notice',
+        'saving',
+      ]);
     }
     expect(logError).toHaveBeenCalledOnce();
   });
@@ -278,6 +284,7 @@ describe('createDisplayChooser', () => {
     expect(states.at(-1)).toStrictEqual({
       saving: false,
       error: '無法變更畫布所在螢幕',
+      notice: null,
     });
   });
 
@@ -288,12 +295,99 @@ describe('createDisplayChooser', () => {
     await failed;
 
     const done = chooser.choose(option('display-1'), CURRENT);
-    expect(states.at(-1)).toStrictEqual({ saving: true, error: null });
-    remote.answer({ ok: true, data: { rev: 4, merged: false } });
+    expect(states.at(-1)).toStrictEqual({
+      saving: true,
+      error: null,
+      notice: null,
+    });
+    remote.answer({ ok: true, data: { rev: 4, merged: false, saved: true } });
     await done;
 
-    expect(states.at(-1)).toStrictEqual({ saving: false, error: null });
+    expect(states.at(-1)).toStrictEqual({
+      saving: false,
+      error: null,
+      notice: null,
+    });
     expect(remote.patch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('the not-saved notice (Story 2.9)', () => {
+  it('is the one text every settings change on the page shows', () => {
+    expect(NOT_SAVED_TEXT).toBe(
+      '已套用，但無法存到設定檔，重新啟動後會回到原本的值',
+    );
+    expect(IDLE_DISPLAY_CHOICE).toStrictEqual({
+      saving: false,
+      error: null,
+      notice: null,
+    });
+  });
+
+  function setup() {
+    const replies: IpcResult<SettingsPatchResult>[] = [];
+    const states: DisplayChoiceState[] = [];
+    const logError = vi.fn();
+    const chooser = createDisplayChooser(
+      async () => {
+        const reply = replies.shift();
+        if (reply === undefined) {
+          throw new Error('no reply queued');
+        }
+        return reply;
+      },
+      (state) => {
+        states.push(state);
+      },
+      logError,
+    );
+    const [, builtIn, external] = displayChoices(view(null)).options;
+    return { replies, states, logError, chooser, builtIn, external };
+  }
+
+  const CURRENT = { selected: 'primary', settingsRev: 3 };
+
+  it('shows NOT_SAVED_TEXT, not an error, when main applied the choice without keeping settings.json', async () => {
+    const { replies, states, logError, chooser, builtIn } = setup();
+    replies.push({ ok: true, data: { rev: 4, merged: false, saved: false } });
+
+    await chooser.choose(builtIn!, CURRENT);
+
+    expect(states).toStrictEqual([
+      { saving: true, error: null, notice: null },
+      { saving: false, error: null, notice: NOT_SAVED_TEXT },
+    ]);
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it('clears the notice on the next choice, and shows nothing once it is kept', async () => {
+    const { replies, states, chooser, builtIn, external } = setup();
+    replies.push(
+      { ok: true, data: { rev: 4, merged: false, saved: false } },
+      { ok: true, data: { rev: 5, merged: false, saved: true } },
+    );
+
+    await chooser.choose(builtIn!, CURRENT);
+    await chooser.choose(external!, { selected: 'display-1', settingsRev: 4 });
+
+    expect(states.slice(2)).toStrictEqual([
+      { saving: true, error: null, notice: null },
+      { saving: false, error: null, notice: null },
+    ]);
+  });
+
+  it('shows the error alone when the patch fails', async () => {
+    const { replies, states, chooser, builtIn } = setup();
+    const refused = { code: 'invalid-input', message: 'bad input' } as const;
+    replies.push({ ok: false, error: refused });
+
+    await chooser.choose(builtIn!, CURRENT);
+
+    expect(states.at(-1)).toStrictEqual({
+      saving: false,
+      error: patchErrorText(refused),
+      notice: null,
+    });
   });
 });
 

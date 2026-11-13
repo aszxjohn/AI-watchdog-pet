@@ -97,6 +97,7 @@ context:
   - 示範 session 的事件也算進 `reported`：同步前打開示範並釋放的話，紀錄保留到下次啟動才清掉。
 - 2026-11-12 驗證：我重跑 `npm run typecheck`、`npm run lint`、`npm run depcruise`、`CI=true npm test`（62 檔、2680 個測試）全過；刪掉的 5 行 `expect(` 都是改寫成多驗 `released`、`action` 與 pool 寫檔順序；判斷層、轉接器與 settings、detection 原有測試檔沒有改動；I/O 矩陣 12 列都有測試且都有跑。隔離 `--user-data-dir` 的 `npm start` 由開發代理執行兩次：全新 userData 時 run log 有載入、清理（kept 0、dropped 0）與結束，沒有錯誤；預先放 `demo:1` 時清理 dropped 1，結束後檔案為 `{"schemaVersion":1,"released":[]}`。面板點擊與淡化沒有實際操作過。
 - 2026-11-12 審查修補後：同步改為依轉接器追蹤、結束時記一行原因與計數（沒有轉接器時不記，避免改 detection 既有的 log 斷言；`main.ts` 一律帶三個轉接器）；新增 depcruise 規則 `detection-not-to-pool`、`persist-not-to-owners`；補 `persist-files` 測試；按鈕加 `aria-label`；`createReleaseToggle` 不再 reject；已釋放的列整列（含按鈕）淡化；修正 rev 的註解與 log 文字。我重跑四項檢查全過（63 檔、2700 個測試），判斷層、轉接器與 detection、settings 既有測試檔沒有改動。
+- CI：使用者 commit `8db00fe`（2026-11-12）後，GitHub Actions 的 macOS、Windows 都通過（run 43191610869）；`2-8-顯示與釋放-session` 設為 `done`。
 
 ## Spec Change Log
 
