@@ -13,6 +13,20 @@ module.exports = {
       to: { path: '^src/', pathNot: '^src/shared/' },
     },
     {
+      name: 'pack-api-only-zod-setup-and-states',
+      comment:
+        'The character pack API contract depends on nothing but zod (through zod-setup) and the state codes (Story 3.1): no other src/shared module, no other package, no Node built-in.',
+      severity: 'error',
+      from: { path: '^src/shared/pack-api/' },
+      to: {
+        pathNot: [
+          '^src/shared/pack-api/',
+          '^src/shared/zod-setup\\.ts$',
+          '^src/shared/states\\.ts$',
+        ],
+      },
+    },
+    {
       name: 'layers-depend-only-on-shared',
       comment:
         'main, preload, overlay, panels and sandbox may depend on their own folder and src/shared only (AD-2).',

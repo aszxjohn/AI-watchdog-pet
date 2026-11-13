@@ -205,3 +205,12 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-9-timing-settings.md`
   summary: 舞台設定頁「計時」區與兩區提示的 React 這一層（沒存到提示、已儲存／錯誤的 `role` 與樣式、成功後清草稿、送出中停用）沒有自動測試
   evidence: Story 2.9 審查 VG1／B12。`vitest` 是 node 環境，沒有測試 import `App.tsx`；拿掉 `StageSettings` 的 `state.notice` 區塊或不分 `outcome.kind` 渲染，CI 仍全綠，R15 會悄悄回來。邏輯已放在 `timing-fields.ts`、`display-options.ts` 用純 `.ts` 測；渲染層與 2.8 那筆同樣需要 jsdom／happy-dom 或 Playwright 端到端。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-pack-api-contract.md`
+  summary: Story 3.1 下半段：`test/packs/contract-pack/` 契約測試包（不含角色名稱、至少 2 個角色、只實作部分狀態並宣告 `fallback`、每種參數型別各一個，入口在沒有 `Date`、`Math.random`、計時器的 `node:vm` 求值後回傳的 `draw` 通過契約）、`src/` 字面值掃描測試，以及繁中角色包作者文件 `docs/pack-api-v1.md`（含禁用全域與移除的 intrinsics 清單）
+  evidence: 使用者 2026-11-13 在 3.1 規格約 4000 tokens（字數粗估）時選擇拆兩段；上半段先做 `src/shared/pack-api/` 的 schema，下半段依賴它，接著做。原規格的 Code Map 已寫好契約包的結構與禁用清單的來源（`sandbox-prototype-report.md`、`prototypes/sandbox/web/sandbox/worker-bootstrap.js:10-21`）。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-pack-api-contract.md`
+  summary: `draw` 的 `particles.preset` 在 API v1.0 先接受任何 id 格式字串；3.6 定好粒子 preset 正式清單後，收緊成只接受清單裡的名稱
+  evidence: Story 3.1（上）規格 Code Map 的決定。schema 在 `src/shared/pack-api/draw.ts` 的 `particlesCommandSchema`（測試 `test/shared/pack-api/draw.test.ts` 的「any id-style preset (v1.0)」案例到時要改）。依 epic context，清單由 renderer 一處定義、放在 `src/shared/pack-api` 的常數。收緊時要一併決定：照 1.0 寫、送出清單外名稱的包，是整則 `draw` 丟棄還是只略過該指令。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-pack-api-contract.md`
+  summary: 3.6 執行 `draw` 時要做的檢查：parse 前先擋位元組數與指令數（決定上限常數放在 `src/shared/constants` 還是 pack-api，以及 depcruise 規則怎麼開例外）、只接受己方 `actorId`、sprite 的 `asset` 必須在該包 manifest 裡且 `frame` 與素材種類相符、`bitmap` 只限 `advancedBitmap` 角色
+  evidence: Story 3.1 審查 B12（medium）、E11（medium）、E12（low）。契約層的 schema 不知道是哪一包、哪些 actor 是己方，也不引用上限常數；`draw` 來自不受信任的包程式，overlay 先完整 parse 才計數會被超大訊息卡住。

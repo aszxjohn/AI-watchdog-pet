@@ -239,6 +239,7 @@ describe('oxlint guard rules', () => {
 describe('dependency-cruiser rules', () => {
   const RULES = [
     'shared-depends-on-no-layer',
+    'pack-api-only-zod-setup-and-states',
     'layers-depend-only-on-shared',
     'renderers-not-to-main',
     'src-not-to-prototypes-or-test',
@@ -284,6 +285,14 @@ describe('dependency-cruiser rules', () => {
       'test/target.ts': target,
       'prototypes/target.ts': target,
       'src/shared/to-main.ts': imports('../main/target'),
+      'src/shared/zod-setup.ts': target,
+      'src/shared/states.ts': target,
+      'src/shared/pack-api/to-others.ts': imports('../target', 'fake-pkg'),
+      'src/shared/pack-api/allowed.ts': imports(
+        '../zod-setup',
+        '../states',
+        './to-others',
+      ),
       'src/panels/to-overlay.ts': imports('../overlay/target'),
       'src/panels/to-main.ts': imports('../main/target'),
       'src/main/to-test.ts': imports(
@@ -396,6 +405,16 @@ describe('dependency-cruiser rules', () => {
       'shared-depends-on-no-layer',
       'src/shared/to-main.ts',
       'src/main/target.ts',
+    ],
+    [
+      'pack-api-only-zod-setup-and-states',
+      'src/shared/pack-api/to-others.ts',
+      'src/shared/target.ts',
+    ],
+    [
+      'pack-api-only-zod-setup-and-states',
+      'src/shared/pack-api/to-others.ts',
+      'node_modules/fake-pkg/index.js',
     ],
     [
       'layers-depend-only-on-shared',
@@ -553,6 +572,12 @@ describe('dependency-cruiser rules', () => {
   it('lets main/ipc import main/windows/environment.ts', () => {
     expect(
       violations.filter((v) => v.from === 'src/main/ipc/to-environment.ts'),
+    ).toStrictEqual([]);
+  });
+
+  it('lets src/shared/pack-api import zod-setup, states and its own files', () => {
+    expect(
+      violations.filter((v) => v.from === 'src/shared/pack-api/allowed.ts'),
     ).toStrictEqual([]);
   });
 
