@@ -214,3 +214,18 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-1-pack-api-contract.md`
   summary: 3.6 執行 `draw` 時要做的檢查：parse 前先擋位元組數與指令數（決定上限常數放在 `src/shared/constants` 還是 pack-api，以及 depcruise 規則怎麼開例外）、只接受己方 `actorId`、sprite 的 `asset` 必須在該包 manifest 裡且 `frame` 與素材種類相符、`bitmap` 只限 `advancedBitmap` 角色
   evidence: Story 3.1 審查 B12（medium）、E11（medium）、E12（low）。契約層的 schema 不知道是哪一包、哪些 actor 是己方，也不引用上限常數；`draw` 來自不受信任的包程式，overlay 先完整 parse 才計數會被超大訊息卡住。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-contract-pack.md`
+  summary: 3.5 在 `src/sandbox` 建立 API 移除清單與「SES 尚未認得的 intrinsics」清單時，加一個測試確認兩份清單與作者文件 `docs/pack-api-v1.md` 第 10 節「包程式裡不能用的東西」一致
+  evidence: Story 3.1（下）規格 Code Map 的決定。作者文件的禁用清單目前照原型 `prototypes/sandbox/web/sandbox/ses-unknown-intrinsics.js` 與 `worker-bootstrap.js:10-21` 手寫；`test/packs/contract-pack.test.ts` 的 `MISSING_GLOBALS` 也是同一份名單的手寫副本（vm 裡刪掉的全域）。正式清單搬進 `src/sandbox` 後，任一方增減而另一方沒跟上，CI 不會發現。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-contract-pack.md`
+  summary: 3.2 的 `pack://` 處理器要把已宣告 spritesheet 的 `meta.image` 算成已宣告的素材；3.6 定 spritesheet JSON 支援的欄位（`rotated`、`trimmed`、`animations`、`meta.scale` 的意思、多張圖）並放進 `src/shared/pack-api`
+  evidence: Story 3.1 下半段審查 B4、B5、E3（medium）。作者文件 §2.1 說 spritesheet 的圖不用列進 `assets`，但 AD-24 規定 `pack://` 只回應宣告過的素材與入口；spritesheet 的格式目前只在契約包測試裡定義。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-contract-pack.md`
+  summary: 3.2 路徑安全檢查一併處理：路徑段不得是 Windows 裝置名（`con.png`、`nul.js` 這類第一個 `.` 之前是裝置名的段）、manifest 與 zip 裡只差大小寫的路徑視為衝突、包 id 也擋 `com0`／`lpt0`
+  evidence: Story 3.1 下半段審查 E14、E15、E16、B12（medium）。macOS 與 Windows 預設檔案系統不分大小寫；Microsoft 的保留名稱清單含 COM0、LPT0；要改 `src/shared/pack-api`，超出下半段範圍。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-contract-pack.md`
+  summary: 3.4 產生 `actorId` 時，`actorIdSchema` 一併拒絕 `__proto__`
+  evidence: Story 3.1 下半段審查 E6（low）。包常用 `draw[actorId] = …` 組回傳值，`__proto__` 會改到原型；`main/pool` 產生的 id 不會是它，但契約應該擋掉。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-contract-pack.md`
+  summary: `src/main/detection/adapters/cursor/project-name.ts` 第 6、15 行註解的範例路徑含系列名稱，可能違反 NFR7；換成中性的範例路徑，並考慮讓字面值掃描加入從 `characters/` 產生的禁用名單
+  evidence: Story 3.1 下半段審查 B17（medium）。2.7 寫入的既有註解，不是下半段造成；下半段的字面值掃描只比對契約包的 id。

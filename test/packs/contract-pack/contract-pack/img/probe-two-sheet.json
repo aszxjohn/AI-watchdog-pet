@@ -1,0 +1,11 @@
+{
+  "frames": {
+    "eyes-open": { "frame": { "x": 0, "y": 0, "w": 2, "h": 2 } },
+    "eyes-shut": { "frame": { "x": 2, "y": 0, "w": 2, "h": 2 } }
+  },
+  "meta": {
+    "image": "probe-two-sheet.png",
+    "size": { "w": 4, "h": 2 },
+    "scale": 1
+  }
+}

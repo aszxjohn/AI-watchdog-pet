@@ -1,0 +1,80 @@
+{
+  "id": "contract-pack",
+  "name": "契約測試包",
+  "version": "1.0.0",
+  "apiVersion": "1.0",
+  "entry": "entry.js",
+  "assets": {
+    "probe-one-plain": { "kind": "image", "path": "img/probe-one-plain.png" },
+    "probe-one-dots": { "kind": "image", "path": "img/probe-one-dots.png" },
+    "probe-two-sheet": {
+      "kind": "spritesheet",
+      "path": "img/probe-two-sheet.json"
+    },
+    "spark": { "kind": "image", "path": "img/spark.png" }
+  },
+  "characters": [
+    {
+      "id": "probe-one",
+      "name": "探針一",
+      "height": 110,
+      "params": [
+        { "key": "glow", "label": "發光", "type": "bool", "default": true },
+        {
+          "key": "bob",
+          "label": "上下擺動",
+          "type": "number",
+          "min": 0,
+          "max": 8,
+          "step": 0.5,
+          "default": 2
+        },
+        {
+          "key": "skin",
+          "label": "外觀",
+          "type": "asset",
+          "options": ["probe-one-plain", "probe-one-dots"],
+          "default": "probe-one-plain"
+        }
+      ],
+      "states": ["waiting", "thinking", "working"],
+      "fallback": { "done": "waiting", "idle": "waiting" },
+      "hitbox": { "x": -30, "y": -110, "width": 60, "height": 110 },
+      "bounds": { "x": -40, "y": -130, "width": 80, "height": 130 },
+      "anchor": { "x": 0, "y": -124 }
+    },
+    {
+      "id": "probe-two",
+      "name": "探針二",
+      "height": 96,
+      "params": [
+        {
+          "key": "blink-every",
+          "label": "眨眼間隔（秒）",
+          "type": "int",
+          "min": 1,
+          "max": 9,
+          "step": 2,
+          "default": 3
+        },
+        {
+          "key": "mood",
+          "label": "心情",
+          "type": "choice",
+          "options": [
+            { "value": "calm", "label": "平靜" },
+            { "value": "busy", "label": "忙碌" }
+          ],
+          "default": "calm"
+        }
+      ],
+      "states": ["working", "done", "error"],
+      "fallback": { "thinking": "working", "waiting": "done" },
+      "hitbox": { "x": -25, "y": -96, "width": 50, "height": 96 },
+      "bounds": { "x": -40, "y": -110, "width": 80, "height": 110 },
+      "anchor": { "x": 0, "y": -104 },
+      "defaults": { "scale": 0.9, "wander": { "speed": "slow" } }
+    }
+  ],
+  "projectiles": { "spark": "spark" }
+}

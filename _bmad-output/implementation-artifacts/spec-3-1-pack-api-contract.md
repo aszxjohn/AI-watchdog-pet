@@ -159,6 +159,8 @@ context:
 - 2026-11-13 審查修補後：包 id 拒絕全數字、`0x` 開頭與 Windows 保留名（`packIdSchema`）；路徑改成標準寫法（以 `/` 分隔、每段只含 `[A-Za-z0-9._-]`、不得以 `.` 結尾）；`version` 長度上限 32；不相容時附 `reason`（`pack-newer`／`major-mismatch`）；每個自訂 issue 帶 `params.rule` 代碼（`PACK_API_ISSUE_RULES`）；pack-api 所有 record 拒絕 `__proto__` 鍵（`reserved-key`，主 session 追加：開發代理指出 assets、projectiles、fallback、參數值也有同樣問題）；`actorId`、同一 actor 的 `emitterId` 不重複；`min <= max` 與 int 的 `max` 在格點上；容許誤差依數值大小縮放；`hitbox` 在 `bounds` 內；標籤不得只有空白；depcruise 規則補反向測試。我重跑四項檢查全過（72 檔、3456 個測試；depcruise 207 個模組、0 違規）；既有測試只有 `guard-rules.test.ts` 新增 25 行，沒有刪改任何既有斷言。
 - 2026-11-13：sprint 的 `3-1-…` 維持 in-progress，因為下半段（契約測試包、字面值掃描、作者文件）還沒做；下半段完成並經 CI 確認後才改 review／done。
 
+- CI：使用者 commit `d8c999f`（2026-11-13）後，GitHub Actions 的 macOS、Windows 都通過（run 43395062801）。
+
 ## Spec Change Log
 
 ## Review Triage Log
