@@ -92,6 +92,21 @@ export const PACK_REJECTED_NAME_MAX_LENGTH = 200;
  */
 export const PACK_IMPORT_REPORTED_ISSUES_MAX = 5;
 
+/**
+ * Most entries settings.json keeps in `packEnabled` (one per pack whose
+ * 上場 differs from the default, Story 3.3). A patch that would add one
+ * more fails and changes nothing; a file with more is a bad field.
+ */
+export const PACK_ENABLED_MAX_ENTRIES = 1024;
+
+/**
+ * Most entries settings.json keeps in `fixedOverrides` (one per character
+ * with a fixed parameter that differs from its default, Story 3.3). A
+ * patch that would add one more fails and changes nothing; a file with
+ * more is a bad field.
+ */
+export const FIXED_OVERRIDES_MAX_ENTRIES = 4096;
+
 /** Run log files whose hour started longer ago than this are deleted. */
 export const RUN_LOG_RETENTION_MS = 24 * 60 * 60 * 1000;
 

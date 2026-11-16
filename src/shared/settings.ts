@@ -1,9 +1,22 @@
+import {
+  FIXED_OVERRIDES_MAX_ENTRIES,
+  PACK_ENABLED_MAX_ENTRIES,
+} from './constants';
+import { FIXED_PARAM_DEFAULTS, packIdSchema } from './pack-api';
+import { characterKey, characterKeySchema } from './packs';
 import { z } from './zod-setup';
 
 /**
  * The settings contract (AD-23): settings.json on disk, `settings:get`,
  * `settings:patch` and the settings section of StageView all use the schemas
  * here and nowhere else. User-adjustable defaults live only here (AD-26).
+ *
+ * Two settings are kept by key (Story 3.3): `packEnabled` (上場, per pack)
+ * and `fixedOverrides` (the fixed parameters the user changed, per
+ * character). Each holds only the values that differ from the stage
+ * default, is changed one key at a time (`setPackEnabled`, `setFixed`),
+ * never by a whole-value `set`, and is read only through isPackEnabled and
+ * isInPool below.
  */
 
 /**
@@ -20,6 +33,51 @@ export const SETTINGS_PATCH_MAX_OPS = 64;
  * that changes something; it is never saved.
  */
 export const settingsRevSchema = z.int().nonnegative();
+
+/** The value a pack's 上場 takes when settings.json has none: on. */
+export const PACK_ENABLED_DEFAULT = true;
+
+/**
+ * A record keyed by `key`, at most `max` entries. An own `__proto__` key is
+ * refused too: zod drops it from a record's output without an issue, so a
+ * file with one would pass and lose that entry on the way.
+ */
+function keyedRecord<K extends z.ZodType<string>, V extends z.ZodType>(
+  key: K,
+  value: V,
+  max: number,
+) {
+  return z
+    .unknown()
+    .refine(
+      (record) =>
+        typeof record !== 'object' ||
+        record === null ||
+        !Object.hasOwn(record, '__proto__'),
+      { message: '__proto__ is not a key' },
+    )
+    .pipe(z.record(key, value))
+    .refine((record) => Object.keys(record).length <= max, {
+      message: `at most ${max} entries`,
+    });
+}
+
+/**
+ * The fixed parameters one character's entry in `fixedOverrides` may hold,
+ * each only when it differs from FIXED_PARAM_DEFAULTS. Only `inPool` so far
+ * (Story 3.3); Story 3.6 adds `scale` and the rest.
+ *
+ * "Differs from FIXED_PARAM_DEFAULTS" holds only for a parameter the
+ * manifest cannot give a default (`inPool`, `badges`). For `scale` and
+ * `wander`, which a manifest's `defaults` can set, Story 3.6 must compare
+ * against the effective default (manifest `defaults` ?? stage default),
+ * and compare objects (`wander`) by value, not with `===`.
+ */
+export const fixedOverrideSchema = z.strictObject({
+  inPool: z.boolean().exactOptional(),
+});
+
+export type FixedOverride = z.infer<typeof fixedOverrideSchema>;
 
 /**
  * One schema per setting. Adding a setting means one entry here and one in
@@ -65,6 +123,25 @@ export const settingsFieldSchemas = {
    * or not it has sent `sync.ready`.
    */
   syncTimeoutMs: z.int().min(1000).max(60_000),
+  /**
+   * 上場 per pack id, only where it differs from PACK_ENABLED_DEFAULT
+   * (Story 3.3), at most PACK_ENABLED_MAX_ENTRIES. A pack that is not
+   * installed (or no longer is) keeps its entry. Read it with
+   * isPackEnabled.
+   */
+  packEnabled: keyedRecord(packIdSchema, z.boolean(), PACK_ENABLED_MAX_ENTRIES),
+  /**
+   * The fixed parameters the user changed, per character key
+   * (`<packId>/<characterId>`), each only where it differs from
+   * FIXED_PARAM_DEFAULTS (Story 3.3), at most FIXED_OVERRIDES_MAX_ENTRIES
+   * characters. A character that is not installed (or is gone from the
+   * pack's new version) keeps its entry. Read it with isInPool.
+   */
+  fixedOverrides: keyedRecord(
+    characterKeySchema,
+    fixedOverrideSchema,
+    FIXED_OVERRIDES_MAX_ENTRIES,
+  ),
 } as const;
 
 export type SettingsField = keyof typeof settingsFieldSchemas;
@@ -72,6 +149,28 @@ export type SettingsField = keyof typeof settingsFieldSchemas;
 /** Every setting's field name, in declaration order. */
 export const SETTINGS_FIELDS: readonly SettingsField[] = Object.freeze(
   Object.keys(settingsFieldSchemas) as SettingsField[],
+);
+
+/**
+ * The settings changed one key at a time (`setPackEnabled`, `setFixed`):
+ * a `set` op cannot overwrite them whole.
+ */
+export const SETTINGS_KEYED_FIELDS = Object.freeze([
+  'packEnabled',
+  'fixedOverrides',
+] as const);
+
+export type SettingsKeyedField = (typeof SETTINGS_KEYED_FIELDS)[number];
+
+/** The settings a `set` op changes: every field but the keyed ones. */
+export type SettingsSetField = Exclude<SettingsField, SettingsKeyedField>;
+
+/** SettingsSetField's fields, in declaration order. */
+export const SETTINGS_SET_FIELDS: readonly SettingsSetField[] = Object.freeze(
+  SETTINGS_FIELDS.filter(
+    (field): field is SettingsSetField =>
+      !(SETTINGS_KEYED_FIELDS as readonly string[]).includes(field),
+  ),
 );
 
 /** A complete set of settings values: every field, nothing else. */
@@ -89,6 +188,8 @@ export const SETTINGS_DEFAULTS: Readonly<SettingsValues> = Object.freeze({
   sessionExpireMs: 7_200_000,
   discoveryWindowMs: 7_200_000,
   syncTimeoutMs: 10_000,
+  packEnabled: Object.freeze({}),
+  fixedOverrides: Object.freeze({}),
 });
 
 /**
@@ -123,7 +224,40 @@ export const settingsStateSchema = z.strictObject({
 
 export type SettingsState = z.infer<typeof settingsStateSchema>;
 
-function setOpSchema<F extends SettingsField>(field: F) {
+/**
+ * Whether pack `packId` is 上場: settings.json's value ?? PACK_ENABLED_DEFAULT.
+ * The manifest has no say. The one place this is worked out (the 角色包
+ * page and Story 3.4's main/pool both call it).
+ */
+export function isPackEnabled(
+  values: Pick<SettingsValues, 'packEnabled'>,
+  packId: string,
+): boolean {
+  return Object.hasOwn(values.packEnabled, packId)
+    ? (values.packEnabled[packId] ?? PACK_ENABLED_DEFAULT)
+    : PACK_ENABLED_DEFAULT;
+}
+
+/**
+ * Whether character `characterId` of pack `packId` joins the pool (加入池子,
+ * the fixed parameter `inPool`): settings.json's value ??
+ * FIXED_PARAM_DEFAULTS.inPool. The manifest has no say (its `defaults`
+ * give only `scale` and `wander`). The one place this is worked out (the
+ * 角色包 page and Story 3.4's main/pool both call it).
+ */
+export function isInPool(
+  values: Pick<SettingsValues, 'fixedOverrides'>,
+  packId: string,
+  characterId: string,
+): boolean {
+  const key = characterKey(packId, characterId);
+  const override = Object.hasOwn(values.fixedOverrides, key)
+    ? values.fixedOverrides[key]
+    : undefined;
+  return override?.inPool ?? FIXED_PARAM_DEFAULTS.inPool;
+}
+
+function setOpSchema<F extends SettingsSetField>(field: F) {
   return z.strictObject({
     op: z.literal('set'),
     field: z.literal(field),
@@ -132,28 +266,61 @@ function setOpSchema<F extends SettingsField>(field: F) {
 }
 
 type SetOpSchema = {
-  [F in SettingsField]: ReturnType<typeof setOpSchema<F>>;
-}[SettingsField];
+  [F in SettingsSetField]: ReturnType<typeof setOpSchema<F>>;
+}[SettingsSetField];
 
 /**
- * `{ op: 'set', field, value }`, one variant per field, so `value` is checked
- * against that field's own schema.
+ * `{ op: 'set', field, value }`, one variant per SettingsSetField, so
+ * `value` is checked against that field's own schema. The keyed settings
+ * have no variant: they are never overwritten whole.
  */
-export const settingsOpSchema = z.discriminatedUnion(
+export const settingsSetOpSchema = z.discriminatedUnion(
   'field',
-  SETTINGS_FIELDS.map((field) => setOpSchema(field)) as unknown as [
+  SETTINGS_SET_FIELDS.map((field) => setOpSchema(field)) as unknown as [
     SetOpSchema,
     ...SetOpSchema[],
   ],
 );
 
+/**
+ * `{ op: 'setPackEnabled', packId, value }`: 上場 of that one pack. A value
+ * equal to PACK_ENABLED_DEFAULT removes the pack's entry from
+ * `packEnabled`.
+ */
+export const setPackEnabledOpSchema = z.strictObject({
+  op: z.literal('setPackEnabled'),
+  packId: packIdSchema,
+  value: z.boolean(),
+});
+
+/**
+ * `{ op: 'setFixed', characterKey, param, value }`: one fixed parameter of
+ * that one character. Only `inPool` so far. A value equal to
+ * FIXED_PARAM_DEFAULTS removes the parameter from the character's entry in
+ * `fixedOverrides`, and an entry left empty is removed.
+ */
+export const setFixedOpSchema = z.strictObject({
+  op: z.literal('setFixed'),
+  characterKey: characterKeySchema,
+  param: z.literal('inPool'),
+  value: z.boolean(),
+});
+
+/** One operation of a patch, told apart by `op`. */
+export const settingsOpSchema = z.discriminatedUnion('op', [
+  settingsSetOpSchema,
+  setPackEnabledOpSchema,
+  setFixedOpSchema,
+]);
+
 export type SettingsOp = z.infer<typeof settingsOpSchema>;
 
 /**
  * The only way a renderer changes settings. Main applies `ops` in order to
- * the current values (a later op on the same field wins); `baseRev` is the
- * rev the renderer last saw and only decides whether the reply says
- * `merged`. There is no whole-file overwrite.
+ * the current values (a later op on the same field, or on the same key of a
+ * keyed setting, wins); `baseRev` is the rev the renderer last saw and only
+ * decides whether the reply says `merged`, so an op on one key never undoes
+ * a newer change of another. There is no whole-file overwrite.
  */
 export const settingsPatchSchema = z.strictObject({
   baseRev: settingsRevSchema,

@@ -158,6 +158,8 @@ context:
 
 - 2026-11-16 審查修補後驗證（主流程重跑）：`npm run typecheck`、`npm run lint`、`npm run depcruise`（239 個模組、0 違規）、`CI=true npm test`（84 檔通過、1 檔跳過；4048 個測試通過、2 個跳過）全過；I/O 矩陣 17 列都有測試且都跑過；diff 裡沒有刪掉的 `expect(`。
 
+- CI：commit `34db856`（2026-11-16）後，GitHub Actions 的 macOS、Windows 都通過（run 43824635973）。
+
 ## Spec Change Log
 
 ## Review Triage Log

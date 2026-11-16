@@ -241,3 +241,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-2-pack-import-entry.md`
   summary: 選檔對話框的 promise 若永遠不 settle（例如面板在 sheet 開著時被銷毀），`packImport` 會卡在「讀取中」，之後的匯入都被忽略，直到重啟
   evidence: Story 3.2 下半段審查 E1（maybe-false，若成立為 medium）。macOS 視窗掛著 sheet 時關閉鈕停用，面板只在使用者關閉或結束 app 時銷毀，日常大概碰不到；要確認的是 Electron 45 在父視窗銷毀時 `dialog.showOpenDialog(parent, …)` 會不會回 `canceled`。若不會，importer 需要在面板關閉時把 `reading`（選檔中）退回原狀態。
+- source_spec: none
+  summary: Story 3.3 下半段：「角色包」頁每一列的「匯出」（main 開存檔對話框，用 yazl 3.3.1 把已安裝的包壓成只含角色包本身、不含使用者調整的 `.awpet`；yazl 從 devDependencies 移到 dependencies）與「移除」（確認後從 `packs/index.json` 與資料夾刪除，並決定該包留在 `settings.json` 的上場、加入池子值怎麼處理）
+  evidence: 使用者 2026-11-16 選擇把 3.3 拆兩段，先做已安裝清單、上場、加入池子與身高提示（3.4 只依賴這些設定）；匯出與移除都是清單每一列上的按鈕，彼此獨立，可以分開交付。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-3-pack-list.md`
+  summary: 「角色包」頁的勾選框受控（`checked` 只依 StageView）、送出中 `disabled`、patch 的 `baseRev` 用 settings rev，都只寫在 `src/panels/App.tsx`，沒有任何測試渲染它；改成 `defaultChecked`、漏接 `disabled` 或誤用 `snapshot.rev` 都不會被 CI 發現
+  evidence: Story 3.3 上半段審查 VG1、B10（medium）。AD-25 與 `vitest.config.mts`（`environment: 'node'`、只收 `.test.ts`）只測純邏輯，整個 repo 沒有 React 渲染測試，2.8、2.9、3.2 的面板也一樣；和 Epic 2 回顧 B8（端到端測試承接）一起決定要不要引進 DOM 或 Playwright 測試。目前由使用者實機驗收把關。

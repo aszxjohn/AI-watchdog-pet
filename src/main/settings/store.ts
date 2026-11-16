@@ -14,8 +14,13 @@
  *   back it up again); if the copy fails, this run never writes;
  * - missing fields simply take their defaults.
  *
- * Changes arrive only as patches. A patch shows up in get() and onChange
- * immediately; the file is written once SETTINGS_FLUSH_DEBOUNCE_MS after the
+ * Changes arrive only as patches. `set` replaces a field; `setPackEnabled`
+ * and `setFixed` change one key of a keyed setting (`packEnabled`,
+ * `fixedOverrides`), removing it when the value is the stage default, so
+ * the file holds only what differs. A patch whose result fails the schema
+ * (a keyed setting over its most entries) throws and changes nothing. A
+ * patch shows up in get() and onChange immediately; the file is written
+ * once SETTINGS_FLUSH_DEBOUNCE_MS after the
  * first change not yet on disk, always to a temp file renamed over
  * settings.json (main/persist). flushSync() writes whatever is pending
  * right now (app quit). A failed write is logged, its temp file removed,
@@ -33,13 +38,17 @@
 import nodeFs from 'node:fs';
 import path from 'node:path';
 import { SETTINGS_FLUSH_DEBOUNCE_MS } from '../../shared/constants';
+import { FIXED_PARAM_DEFAULTS } from '../../shared/pack-api';
 import {
+  PACK_ENABLED_DEFAULT,
   SETTINGS_DEFAULTS,
   SETTINGS_FIELDS,
   SETTINGS_SCHEMA_VERSION,
   settingsFieldSchemas,
   settingsPatchSchema,
   settingsValuesSchema,
+  type FixedOverride,
+  type SettingsOp,
   type SettingsPatch,
   type SettingsPatchResult,
   type SettingsState,
@@ -88,9 +97,11 @@ export type SettingsListener = (state: SettingsState) => void;
 export interface SettingsStore {
   get(): SettingsState;
   /**
-   * Applies a patch. Throws only if `patch` fails the shared schema. The
-   * reply's `saved` is `canWrite` and no failed write since the last
-   * successful one, whether or not the patch changed anything.
+   * Applies a patch. Throws, changing nothing, when `patch` fails the
+   * shared schema or the values it would leave do (a keyed setting over
+   * its most entries). The reply's `saved` is `canWrite` and no failed
+   * write since the last successful one, whether or not the patch changed
+   * anything.
    */
   patch(patch: SettingsPatch): SettingsPatchResult;
   /** Called after every patch that changed a value. Returns an unsubscribe. */
@@ -112,9 +123,101 @@ function log(message: string, level: ConsoleLevel = 'info'): void {
   logEvent('settings', message, level);
 }
 
-/** Same value, as settings.json would store it. */
+/** JSON.stringify with every object's keys sorted. */
+function sortedJson(value: unknown): string {
+  return JSON.stringify(value, (_key, inner: unknown) =>
+    typeof inner === 'object' && inner !== null && !Array.isArray(inner)
+      ? Object.fromEntries(
+          Object.entries(inner).sort(([a], [b]) => compareKeys(a, b)),
+        )
+      : inner,
+  );
+}
+
+/** Code-unit order, so settings.json lists a keyed setting the same way everywhere. */
+function compareKeys(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Same value, as settings.json would store it. A keyed setting is the same
+ * whatever order its keys are in.
+ */
 function sameValue(a: unknown, b: unknown): boolean {
-  return a === b || JSON.stringify(a) === JSON.stringify(b);
+  return a === b || sortedJson(a) === sortedJson(b);
+}
+
+/**
+ * `values` frozen, the keyed settings and each of their entries too, so a
+ * reader in main cannot change settings without a patch (no rev, no event,
+ * no write).
+ */
+function freezeValues(values: SettingsValues): SettingsValues {
+  for (const entry of Object.values(values.fixedOverrides)) {
+    Object.freeze(entry);
+  }
+  Object.freeze(values.fixedOverrides);
+  Object.freeze(values.packEnabled);
+  return Object.freeze(values);
+}
+
+/**
+ * `record` with `key` set to `value`, or without `key` when `value` is
+ * undefined; a new object, its keys sorted.
+ */
+function withEntry<T>(
+  record: Readonly<Record<string, T>>,
+  key: string,
+  value: T | undefined,
+): Record<string, T> {
+  const entries = Object.entries(record).filter(([other]) => other !== key);
+  if (value !== undefined) {
+    entries.push([key, value]);
+  }
+  entries.sort(([a], [b]) => compareKeys(a, b));
+  return Object.fromEntries(entries);
+}
+
+/**
+ * Applies one op to `next`, a copy of the values being built: `set`
+ * replaces its field; `setPackEnabled` and `setFixed` change one key,
+ * keeping only a value that differs from the stage default.
+ */
+function applyOp(next: Record<string, unknown>, op: SettingsOp): void {
+  switch (op.op) {
+    case 'set':
+      next[op.field] = op.value;
+      return;
+    case 'setPackEnabled':
+      next.packEnabled = withEntry<boolean>(
+        next.packEnabled as SettingsValues['packEnabled'],
+        op.packId,
+        op.value === PACK_ENABLED_DEFAULT ? undefined : op.value,
+      );
+      return;
+    case 'setFixed': {
+      // Dropping the parameter when it equals FIXED_PARAM_DEFAULTS is right
+      // only for one the manifest cannot give a default (`inPool`). Story
+      // 3.6's `scale` and `wander` can be defaulted by the manifest: compare
+      // them against the effective default (manifest `defaults` ?? stage
+      // default), and `wander`, an object, by value rather than `===`.
+      const overrides = next.fixedOverrides as SettingsValues['fixedOverrides'];
+      const entry: FixedOverride = Object.hasOwn(overrides, op.characterKey)
+        ? { ...overrides[op.characterKey] }
+        : {};
+      if (op.value === FIXED_PARAM_DEFAULTS[op.param]) {
+        delete entry[op.param];
+      } else {
+        entry[op.param] = op.value;
+      }
+      next.fixedOverrides = withEntry<FixedOverride>(
+        overrides,
+        op.characterKey,
+        Object.keys(entry).length === 0 ? undefined : entry,
+      );
+      return;
+    }
+  }
 }
 
 export function loadSettings({
@@ -224,7 +327,7 @@ export function loadSettings({
     }
     const known = new Set<string>(['schemaVersion', ...SETTINGS_FIELDS]);
     const unknown = Object.keys(data).filter((key) => !known.has(key));
-    const values = Object.freeze(settingsValuesSchema.parse(read));
+    const values = freezeValues(settingsValuesSchema.parse(read));
 
     if (invalid.length === 0 && unknown.length === 0) {
       return { values, canWrite: true, needsWrite: false };
@@ -342,16 +445,32 @@ export function loadSettings({
       }
       const next: Record<string, unknown> = { ...values };
       for (const op of ops) {
-        next[op.field] = op.value;
+        applyOp(next, op);
       }
-      const nextValues = settingsValuesSchema.parse(next);
+      const parsed = settingsValuesSchema.safeParse(next);
+      if (!parsed.success) {
+        const fields = [
+          ...new Set(
+            parsed.error.issues.flatMap((issue) =>
+              issue.path.length === 0 ? [] : [String(issue.path[0])],
+            ),
+          ),
+        ];
+        const what = fields.length === 0 ? 'the values' : fields.join(', ');
+        log(
+          `patch refused: it would leave ${what} failing the schema; nothing changed`,
+          'warn',
+        );
+        throw new Error('the patched settings fail the schema');
+      }
+      const nextValues = parsed.data;
       const changed = SETTINGS_FIELDS.filter(
         (field) => !sameValue(values[field], nextValues[field]),
       );
       if (changed.length === 0) {
         return { rev, merged, saved: saved() };
       }
-      values = Object.freeze(nextValues);
+      values = freezeValues(nextValues);
       rev += 1;
       dirty = true;
       log(

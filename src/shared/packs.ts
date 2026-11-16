@@ -44,6 +44,40 @@ function isUnique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
 }
 
+/**
+ * A character's key across packs: `<packId>/<characterId>`. settings.json
+ * keeps a character's fixed parameters under it (Story 3.3); Story 3.4's
+ * StageView actors name their character by it.
+ */
+export type CharacterKey = `${string}/${string}`;
+
+/** The key of character `characterId` of pack `packId`. */
+export function characterKey(
+  packId: string,
+  characterId: string,
+): CharacterKey {
+  return `${packId}/${characterId}`;
+}
+
+/** Whether `key` is `<packId>/<characterId>`, each part valid on its own. */
+function isCharacterKey(key: string): boolean {
+  const parts = key.split('/');
+  return (
+    parts.length === 2 &&
+    packIdSchema.safeParse(parts[0]).success &&
+    idSchema.safeParse(parts[1]).success
+  );
+}
+
+/**
+ * A CharacterKey: exactly one `/`, a pack id (packIdSchema) before it and a
+ * character id (idSchema) after it.
+ */
+export const characterKeySchema = z.custom<CharacterKey>(
+  (key) => typeof key === 'string' && isCharacterKey(key),
+  { message: 'a character key is <packId>/<characterId>' },
+);
+
 /** What the stage keeps of one character of an installed pack. */
 export const packCharacterSummarySchema = z.strictObject({
   id: idSchema,

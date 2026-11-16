@@ -7,12 +7,13 @@
  * the left change it. 管理 session lists the detected sessions (each can be
  * released or shown again) and the running adapters' health; 舞台設定
  * lists the displays for the canvas and the detection timings (計時);
- * 角色包 has the import (匯入角色包…, how it went, the replace
- * confirmation); the installed list comes with Story 3.3.
+ * 角色包 lists the installed packs (上場, and 加入池子 per character) above
+ * the import (匯入角色包…, how it went, the replace confirmation).
  *
  * Renderer state only ever comes from StageView (AD-20): a setting changes
- * through `settings.patch`, a release through `pool.setReleased` and an
- * import through `packs.choose` / `packs.confirm`, and the page shows the
+ * through `settings.patch` (上場 and 加入池子 too), a release through
+ * `pool.setReleased` and an import through `packs.choose` /
+ * `packs.confirm`, and the page shows the
  * outcome once StageView brings it back, never earlier.
  */
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
@@ -38,6 +39,18 @@ import {
   packImportView,
   type PackImportActionState,
 } from './pack-import';
+import {
+  createPackListActions,
+  ENABLED_LABEL,
+  IDLE_PACK_LIST_ACTIONS,
+  IN_POOL_LABEL,
+  NO_PACKS_TEXT,
+  PACK_LIST_HEADING,
+  packListDisabled,
+  packListView,
+  type PackListActionState,
+  type PackListCheckbox,
+} from './pack-list';
 import {
   ADAPTERS_HEADING,
   adapterRows,
@@ -468,6 +481,143 @@ function Sessions({
 }
 
 /**
+ * One checkbox of the installed list, labelled `label`; `describedBy` is
+ * the id of the element that describes it (the height hint), if any.
+ */
+function PackListCheckboxField({
+  checkbox,
+  label,
+  disabled,
+  onToggle,
+  describedBy = null,
+}: {
+  checkbox: PackListCheckbox;
+  label: string;
+  disabled: boolean;
+  onToggle: (checkbox: PackListCheckbox) => void;
+  describedBy?: string | null;
+}) {
+  return (
+    <label className="pack-checkbox">
+      <input
+        id={checkbox.id}
+        type="checkbox"
+        checked={checkbox.checked}
+        disabled={disabled}
+        aria-label={checkbox.ariaLabel}
+        aria-describedby={describedBy ?? undefined}
+        onChange={() => {
+          onToggle(checkbox);
+        }}
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+/**
+ * 角色包 › 已安裝: every installed pack with its name, version and 上場,
+ * and under it its characters, each with 加入池子 and the height hint.
+ * What each shows and the one op each checkbox sends is packListView,
+ * from StageView's `packs` and `settings` sections; when the checkboxes
+ * are disabled is packListDisabled; the send logic (a failure or the
+ * not-saved notice shown, the checkboxes left as StageView has them) is
+ * createPackListActions. This only renders them. A checkbox is
+ * controlled by StageView, so a click shows only once main applied it.
+ */
+function PackList({
+  awp,
+  snapshot,
+}: {
+  awp: PanelsApi | undefined;
+  snapshot: StageViewSnapshot;
+}) {
+  const [state, setState] = useState<PackListActionState>(
+    IDLE_PACK_LIST_ACTIONS,
+  );
+  const actions = useMemo(
+    () =>
+      awp === undefined
+        ? undefined
+        : createPackListActions(
+            { patch: (patch) => awp.settings.patch(patch) },
+            setState,
+          ),
+    [awp],
+  );
+
+  const { settings, packs } = snapshot.view;
+  const list = packListView(packs, settings.values);
+  const disabled = packListDisabled(state.saving, actions !== undefined);
+  const toggle = (checkbox: PackListCheckbox) => {
+    void actions?.toggle(checkbox.toggle, settings.rev);
+  };
+
+  return (
+    <section className="pack-list" aria-labelledby="pack-list-heading">
+      <h2 id="pack-list-heading">{PACK_LIST_HEADING}</h2>
+      {list.length === 0 ? (
+        <p className="coming-soon">{NO_PACKS_TEXT}</p>
+      ) : (
+        <ul className="pack-list-items">
+          {list.map((pack) => (
+            <li
+              key={pack.id}
+              className={
+                pack.enabled.checked ? 'pack-item' : 'pack-item is-benched'
+              }
+            >
+              <div className="pack-item-header">
+                <bdi className="pack-name">{pack.name}</bdi>
+                <span className="pack-version">{pack.version}</span>
+                <PackListCheckboxField
+                  checkbox={pack.enabled}
+                  label={ENABLED_LABEL}
+                  disabled={disabled}
+                  onToggle={toggle}
+                />
+              </div>
+              <ul className="pack-characters">
+                {pack.characters.map((character) => (
+                  <li key={character.key} className="pack-character">
+                    <bdi className="pack-character-name">{character.name}</bdi>
+                    <PackListCheckboxField
+                      checkbox={character.inPool}
+                      label={IN_POOL_LABEL}
+                      disabled={disabled}
+                      onToggle={toggle}
+                      describedBy={character.heightHintId}
+                    />
+                    {character.heightHint === null ? null : (
+                      <span
+                        id={character.heightHintId ?? undefined}
+                        className="pack-height-hint"
+                      >
+                        {character.heightHint}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      )}
+      {state.error === null ? null : (
+        <p className="setting-error" role="alert">
+          {state.error}
+        </p>
+      )}
+      {state.notice === null ? null : (
+        <p className="setting-status is-warning" role="status">
+          {state.notice}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
  * 角色包 › 匯入: the 匯入角色包… button, the status line (with the manifest
  * problems of a refusal under it) and, while a pack of an installed id
  * waits, the replace confirmation (取代 / 取消, with the downgrade
@@ -481,7 +631,7 @@ function PackImport({
   snapshot,
 }: {
   awp: PanelsApi | undefined;
-  snapshot: StageViewSnapshot | null;
+  snapshot: StageViewSnapshot;
 }) {
   const [state, setState] = useState<PackImportActionState>(
     IDLE_PACK_IMPORT_ACTIONS,
@@ -500,9 +650,6 @@ function PackImport({
     [awp],
   );
 
-  if (snapshot === null) {
-    return <p className="coming-soon">讀取中…</p>;
-  }
   const view = packImportView(snapshot.view.packImport);
   const controls = packImportControls(
     view,
@@ -574,6 +721,25 @@ function PackImport({
   );
 }
 
+/** 角色包: the installed list (PackList), then the import (PackImport). */
+function Packs({
+  awp,
+  snapshot,
+}: {
+  awp: PanelsApi | undefined;
+  snapshot: StageViewSnapshot | null;
+}) {
+  if (snapshot === null) {
+    return <p className="coming-soon">讀取中…</p>;
+  }
+  return (
+    <>
+      <PackList awp={awp} snapshot={snapshot} />
+      <PackImport awp={awp} snapshot={snapshot} />
+    </>
+  );
+}
+
 export function App({ awp }: { awp: PanelsApi | undefined }) {
   const page = useHashPage();
   const version = useVersionLine(awp);
@@ -604,7 +770,7 @@ export function App({ awp }: { awp: PanelsApi | undefined }) {
         ) : page === 'sessions' ? (
           <Sessions awp={awp} snapshot={stageView.snapshot} />
         ) : (
-          <PackImport awp={awp} snapshot={stageView.snapshot} />
+          <Packs awp={awp} snapshot={stageView.snapshot} />
         )}
       </main>
       <footer className="panel-status">

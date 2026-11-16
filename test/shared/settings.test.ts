@@ -1,9 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FIXED_OVERRIDES_MAX_ENTRIES,
+  PACK_ENABLED_MAX_ENTRIES,
+} from '../../src/shared/constants';
+import { FIXED_PARAM_DEFAULTS } from '../../src/shared/pack-api';
+import {
+  isInPool,
+  isPackEnabled,
+  PACK_ENABLED_DEFAULT,
   SETTINGS_DEFAULTS,
   SETTINGS_FIELDS,
+  SETTINGS_KEYED_FIELDS,
   SETTINGS_PATCH_MAX_OPS,
   SETTINGS_SCHEMA_VERSION,
+  SETTINGS_SET_FIELDS,
   settingsFieldSchemas,
   settingsFileSchema,
   settingsOpSchema,
@@ -33,6 +43,8 @@ describe('settings fields', () => {
       'sessionExpireMs',
       'discoveryWindowMs',
       'syncTimeoutMs',
+      'packEnabled',
+      'fixedOverrides',
     ]);
     expect(Object.keys(settingsFieldSchemas)).toStrictEqual([
       ...SETTINGS_FIELDS,
@@ -52,6 +64,8 @@ describe('settings fields', () => {
       sessionExpireMs: 7_200_000,
       discoveryWindowMs: 7_200_000,
       syncTimeoutMs: 10_000,
+      packEnabled: {},
+      fixedOverrides: {},
     });
     expect(Object.isFrozen(SETTINGS_DEFAULTS)).toBe(true);
   });
@@ -305,5 +319,260 @@ describe('settingsPatchResultSchema', () => {
     ['saved null', { rev: 1, merged: false, saved: null }],
   ])('rejects %s', (_label, value) => {
     expectRejected(settingsPatchResultSchema, value);
+  });
+});
+
+/** `count` distinct pack ids: `pack-0`, `pack-1`, … */
+function packIds(count: number): string[] {
+  return Array.from({ length: count }, (_, i) => `pack-${i}`);
+}
+
+/** An object whose own key `__proto__` is set, as JSON.parse makes it. */
+function withProtoKey(value: unknown): unknown {
+  return JSON.parse(`{"__proto__": ${JSON.stringify(value)}}`);
+}
+
+describe('the keyed settings (Story 3.3)', () => {
+  it('are packEnabled and fixedOverrides, defaulting to empty, and no set op covers them', () => {
+    expect([...SETTINGS_KEYED_FIELDS]).toStrictEqual([
+      'packEnabled',
+      'fixedOverrides',
+    ]);
+    expect([...SETTINGS_SET_FIELDS]).toStrictEqual(
+      SETTINGS_FIELDS.filter(
+        (field) => field !== 'packEnabled' && field !== 'fixedOverrides',
+      ),
+    );
+    expect(Object.isFrozen(SETTINGS_SET_FIELDS)).toBe(true);
+    expect(SETTINGS_DEFAULTS.packEnabled).toStrictEqual({});
+    expect(SETTINGS_DEFAULTS.fixedOverrides).toStrictEqual({});
+    expect(Object.isFrozen(SETTINGS_DEFAULTS.packEnabled)).toBe(true);
+    expect(Object.isFrozen(SETTINGS_DEFAULTS.fixedOverrides)).toBe(true);
+  });
+
+  it('keep at most 1024 上場 values and 4096 characters of fixed parameters', () => {
+    expect(PACK_ENABLED_MAX_ENTRIES).toBe(1024);
+    expect(FIXED_OVERRIDES_MAX_ENTRIES).toBe(4096);
+  });
+
+  it('default to 上場 and 加入池子 on', () => {
+    expect(PACK_ENABLED_DEFAULT).toBe(true);
+    expect(FIXED_PARAM_DEFAULTS.inPool).toBe(true);
+  });
+});
+
+describe('packEnabled schema', () => {
+  const schema = settingsFieldSchemas.packEnabled;
+
+  it.each([
+    ['empty', {}],
+    ['one pack off', { 'pack-a': false }],
+    ['a value equal to the default', { 'pack-a': true }],
+    ['a pack id named like an Object key', { constructor: false }],
+  ])('round-trips %s', (_label, value) => {
+    expectRoundTrip(schema, value);
+  });
+
+  it(`accepts exactly ${PACK_ENABLED_MAX_ENTRIES} entries and rejects one more`, () => {
+    const full = Object.fromEntries(
+      packIds(PACK_ENABLED_MAX_ENTRIES).map((id) => [id, false]),
+    );
+    expectRoundTrip(schema, full);
+    expectRejected(schema, { ...full, 'one-more': false });
+  });
+
+  it.each([
+    ['an upper-case key', { 'Pack-A': false }],
+    ['an all-digit pack id', { '123': false }],
+    ['a pack id starting with 0x', { '0xab': false }],
+    ['a Windows device name', { con: false }],
+    ['a character key', { 'pack-a/char-a': false }],
+    ['an empty key', { '': false }],
+    ['a string value', { 'pack-a': 'false' }],
+    ['a null value', { 'pack-a': null }],
+    ['a number value', { 'pack-a': 0 }],
+    ['an own __proto__ key', withProtoKey(false)],
+    ['an array', [false]],
+    ['null', null],
+    ['a boolean', false],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(schema, value);
+  });
+});
+
+describe('fixedOverrides schema', () => {
+  const schema = settingsFieldSchemas.fixedOverrides;
+
+  it.each([
+    ['empty', {}],
+    ['one character out of the pool', { 'pack-a/char-a': { inPool: false } }],
+    ['an entry with nothing in it', { 'pack-a/char-a': {} }],
+    [
+      'the same character id in two packs',
+      {
+        'pack-a/char-a': { inPool: false },
+        'pack-b/char-a': { inPool: true },
+      },
+    ],
+  ])('round-trips %s', (_label, value) => {
+    expectRoundTrip(schema, value);
+  });
+
+  it(`accepts exactly ${FIXED_OVERRIDES_MAX_ENTRIES} characters and rejects one more`, () => {
+    const full = Object.fromEntries(
+      Array.from({ length: FIXED_OVERRIDES_MAX_ENTRIES }, (_, i) => [
+        `pack-${i % 64}/char-${i}`,
+        { inPool: false },
+      ]),
+    );
+    expectRoundTrip(schema, full);
+    expectRejected(schema, { ...full, 'pack-a/one-more': { inPool: false } });
+  });
+
+  it.each([
+    ['a pack id alone', { 'pack-a': { inPool: false } }],
+    ['no character id', { 'pack-a/': { inPool: false } }],
+    ['no pack id', { '/char-a': { inPool: false } }],
+    ['three parts', { 'pack-a/char-a/x': { inPool: false } }],
+    ['an all-digit pack id', { '123/char-a': { inPool: false } }],
+    ['an upper-case character id', { 'pack-a/Char-a': { inPool: false } }],
+    ['a parameter not kept yet', { 'pack-a/char-a': { scale: 1.5 } }],
+    ['an unknown parameter', { 'pack-a/char-a': { colour: 'red' } }],
+    ['a string inPool', { 'pack-a/char-a': { inPool: 'no' } }],
+    ['a boolean entry', { 'pack-a/char-a': false }],
+    ['an own __proto__ key', withProtoKey({ inPool: false })],
+    ['an array', [{ inPool: false }]],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(schema, value);
+  });
+});
+
+describe('the keyed ops', () => {
+  const PACK_OFF = { op: 'setPackEnabled', packId: 'pack-a', value: false };
+  const OUT_OF_POOL = {
+    op: 'setFixed',
+    characterKey: 'pack-a/char-a',
+    param: 'inPool',
+    value: false,
+  };
+
+  it.each([
+    ['setPackEnabled false', PACK_OFF],
+    ['setPackEnabled true', { ...PACK_OFF, value: true }],
+    ['setFixed inPool false', OUT_OF_POOL],
+    ['setFixed inPool true', { ...OUT_OF_POOL, value: true }],
+  ])('round-trips %s', (_label, value) => {
+    expectRoundTrip(settingsOpSchema, value);
+  });
+
+  it('round-trips a patch with a set and both keyed ops', () => {
+    expectRoundTrip(settingsPatchSchema, {
+      baseRev: 2,
+      ops: [setDisplay(DISPLAY_ID), PACK_OFF, OUT_OF_POOL],
+    });
+  });
+
+  it.each([
+    ['setPackEnabled with an upper-case pack id', { ...PACK_OFF, packId: 'A' }],
+    [
+      'setPackEnabled with an all-digit pack id',
+      { ...PACK_OFF, packId: '123' },
+    ],
+    [
+      'setPackEnabled with a character key',
+      { ...PACK_OFF, packId: 'pack-a/char-a' },
+    ],
+    ['setPackEnabled with a string value', { ...PACK_OFF, value: 'false' }],
+    ['setPackEnabled with a null value', { ...PACK_OFF, value: null }],
+    [
+      'setPackEnabled with no value',
+      { op: 'setPackEnabled', packId: 'pack-a' },
+    ],
+    ['setPackEnabled with an extra key', { ...PACK_OFF, field: 'packEnabled' }],
+    [
+      'setFixed with a pack id for a key',
+      { ...OUT_OF_POOL, characterKey: 'pack-a' },
+    ],
+    [
+      'setFixed with three parts',
+      { ...OUT_OF_POOL, characterKey: 'pack-a/char-a/x' },
+    ],
+    [
+      'setFixed with a bad character id',
+      { ...OUT_OF_POOL, characterKey: 'pack-a/_x' },
+    ],
+    [
+      'setFixed of a parameter not kept yet',
+      { ...OUT_OF_POOL, param: 'scale', value: 1.5 },
+    ],
+    ['setFixed with a number value', { ...OUT_OF_POOL, value: 0 }],
+    ['setFixed with no param', { ...OUT_OF_POOL, param: undefined }],
+    ['setFixed with an extra key', { ...OUT_OF_POOL, packId: 'pack-a' }],
+    [
+      'a set that overwrites packEnabled whole',
+      { op: 'set', field: 'packEnabled', value: { 'pack-a': false } },
+    ],
+    [
+      'a set that overwrites fixedOverrides whole',
+      { op: 'set', field: 'fixedOverrides', value: {} },
+    ],
+    ['an op unknown to this build', { op: 'removePack', packId: 'pack-a' }],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(settingsOpSchema, value);
+  });
+});
+
+describe('isPackEnabled and isInPool: settings.json ?? the stage default', () => {
+  const values = {
+    ...SETTINGS_DEFAULTS,
+    packEnabled: { 'pack-a': false, 'pack-b': true },
+    fixedOverrides: {
+      'pack-a/char-a': { inPool: false },
+      'pack-b/char-b': { inPool: true },
+      'pack-b/char-c': {},
+    },
+  };
+
+  it('are on when settings.json has no value', () => {
+    expect(isPackEnabled(SETTINGS_DEFAULTS, 'pack-a')).toBe(true);
+    expect(isInPool(SETTINGS_DEFAULTS, 'pack-a', 'char-a')).toBe(true);
+    expect(isPackEnabled(values, 'pack-c')).toBe(true);
+    expect(isInPool(values, 'pack-c', 'char-a')).toBe(true);
+    expect(isInPool(values, 'pack-b', 'char-c')).toBe(true);
+  });
+
+  it("take settings.json's value when it has one", () => {
+    expect(isPackEnabled(values, 'pack-a')).toBe(false);
+    expect(isPackEnabled(values, 'pack-b')).toBe(true);
+    expect(isInPool(values, 'pack-a', 'char-a')).toBe(false);
+    expect(isInPool(values, 'pack-b', 'char-b')).toBe(true);
+  });
+
+  it('read one character only: the same id in another pack, or another character, is not affected', () => {
+    expect(isInPool(values, 'pack-b', 'char-a')).toBe(true);
+    expect(isInPool(values, 'pack-a', 'char-b')).toBe(true);
+  });
+
+  it('read 加入池子 the same whether or not the pack is 上場', () => {
+    expect(isPackEnabled(values, 'pack-a')).toBe(false);
+    expect(isInPool(values, 'pack-a', 'char-a')).toBe(false);
+    expect(isInPool(values, 'pack-a', 'char-b')).toBe(true);
+  });
+
+  it('never read an inherited Object property as a value', () => {
+    expect(isPackEnabled(SETTINGS_DEFAULTS, 'constructor')).toBe(true);
+    expect(isInPool(SETTINGS_DEFAULTS, 'constructor', 'constructor')).toBe(
+      true,
+    );
+    expect(
+      isPackEnabled(
+        {
+          packEnabled: settingsFieldSchemas.packEnabled.parse({
+            constructor: false,
+          }),
+        },
+        'constructor',
+      ),
+    ).toBe(false);
   });
 });

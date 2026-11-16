@@ -12,11 +12,18 @@ import {
   type SettingsFs,
   type SettingsStoreOptions,
 } from '../../src/main/settings/store';
-import { SETTINGS_FLUSH_DEBOUNCE_MS } from '../../src/shared/constants';
+import {
+  FIXED_OVERRIDES_MAX_ENTRIES,
+  PACK_ENABLED_MAX_ENTRIES,
+  SETTINGS_FLUSH_DEBOUNCE_MS,
+} from '../../src/shared/constants';
 import { settingsGet, settingsPatch } from '../../src/shared/ipc';
 import {
+  isInPool,
+  isPackEnabled,
   SETTINGS_DEFAULTS,
   settingsFileSchema,
+  type SettingsOp,
   type SettingsPatch,
 } from '../../src/shared/settings';
 import * as fake from '../helpers/fake-electron';
@@ -38,6 +45,8 @@ const CUSTOM_VALUES = {
   sessionExpireMs: 10_800_000,
   discoveryWindowMs: 3_600_000,
   syncTimeoutMs: 20_000,
+  packEnabled: { 'pack-a': false },
+  fixedOverrides: { 'pack-a/char-a': { inPool: false } },
 } as const;
 
 let dir: string;
@@ -1040,4 +1049,669 @@ describe('settings IPC', () => {
       expect(files()).toStrictEqual([]);
     },
   );
+});
+
+/** 上場 of `packId` set to `value`, alone in a patch at `baseRev`. */
+function setPack(
+  baseRev: number,
+  packId: string,
+  value: boolean,
+): SettingsPatch {
+  return { baseRev, ops: [{ op: 'setPackEnabled', packId, value }] };
+}
+
+/** 加入池子 of `key` set to `value`, as an op. */
+function poolOp(key: string, value: boolean): SettingsOp {
+  return {
+    op: 'setFixed',
+    characterKey: key as `${string}/${string}`,
+    param: 'inPool',
+    value,
+  };
+}
+
+/** 加入池子 of `key` set to `value`, alone in a patch at `baseRev`. */
+function setPool(baseRev: number, key: string, value: boolean): SettingsPatch {
+  return { baseRev, ops: [poolOp(key, value)] };
+}
+
+/** settings.json after the pending write. */
+function flushedFile(): Record<string, unknown> {
+  vi.advanceTimersByTime(SETTINGS_FLUSH_DEBOUNCE_MS);
+  return readFile() as Record<string, unknown>;
+}
+
+describe('the keyed settings (Story 3.3)', () => {
+  it('logs only the field changed, never the pack id, character key or value', () => {
+    const store = load();
+
+    store.patch(setPack(0, 'secret-pack', false));
+    store.patch(setPool(1, 'secret-pack/hidden-char', false));
+
+    expect(logged('info')).toStrictEqual([
+      '[settings] changed packEnabled (rev 1)',
+      '[settings] changed fixedOverrides (rev 2)',
+    ]);
+    expect(settingsLines().join('\n')).not.toContain('secret');
+    expect(settingsLines().join('\n')).not.toContain('hidden');
+  });
+
+  it('changes nothing when the value is already the effective one: no rev, no event, no write', () => {
+    const store = load();
+    const onChange = vi.fn();
+    store.onChange(onChange);
+
+    expect(store.patch(setPack(0, 'pack-a', true))).toStrictEqual({
+      rev: 0,
+      merged: false,
+      saved: true,
+    });
+    expect(store.patch(setPool(0, 'pack-a/char-a', true)).rev).toBe(0);
+
+    expect(onChange).not.toHaveBeenCalled();
+    vi.runAllTimers();
+    expect(files()).toStrictEqual([]);
+  });
+
+  it('lets the later op on the same key win within one patch', () => {
+    const store = load();
+
+    store.patch({
+      baseRev: 0,
+      ops: [
+        { op: 'setPackEnabled', packId: 'pack-a', value: false },
+        poolOp('pack-a/char-a', false),
+        { op: 'setPackEnabled', packId: 'pack-a', value: true },
+      ],
+    });
+
+    expect(store.get().values.packEnabled).toStrictEqual({});
+    expect(store.get().values.fixedOverrides).toStrictEqual({
+      'pack-a/char-a': { inPool: false },
+    });
+  });
+
+  it('a patch that ends where it started changes nothing, whatever order the file lists the keys in', () => {
+    writeFile({
+      schemaVersion: 1,
+      packEnabled: { 'pack-b': false, 'pack-a': false },
+    });
+    const store = load();
+    const onChange = vi.fn();
+    store.onChange(onChange);
+
+    const result = store.patch({
+      baseRev: 0,
+      ops: [
+        { op: 'setPackEnabled', packId: 'pack-b', value: true },
+        { op: 'setPackEnabled', packId: 'pack-b', value: false },
+      ],
+    });
+
+    expect(result.rev).toBe(0);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('writes each keyed setting with its keys sorted', () => {
+    const store = load();
+
+    store.patch({
+      baseRev: 0,
+      ops: [
+        { op: 'setPackEnabled', packId: 'pack-c', value: false },
+        { op: 'setPackEnabled', packId: 'pack-a', value: false },
+        poolOp('pack-b/char-z', false),
+        poolOp('pack-b/char-a', false),
+      ],
+    });
+
+    const written = flushedFile();
+    expect(Object.keys(written.packEnabled as object)).toStrictEqual([
+      'pack-a',
+      'pack-c',
+    ]);
+    expect(Object.keys(written.fixedOverrides as object)).toStrictEqual([
+      'pack-b/char-a',
+      'pack-b/char-z',
+    ]);
+    expect(settingsFileSchema.safeParse(written).success).toBe(true);
+  });
+
+  it('freezes the keyed settings and each of their entries, at load and after a patch', () => {
+    writeFile({
+      schemaVersion: 1,
+      packEnabled: { 'pack-a': false },
+      fixedOverrides: { 'pack-a/char-a': { inPool: false } },
+    });
+    const store = load();
+    function expectFrozen() {
+      const { values } = store.get();
+      expect(Object.isFrozen(values)).toBe(true);
+      expect(Object.isFrozen(values.packEnabled)).toBe(true);
+      expect(Object.isFrozen(values.fixedOverrides)).toBe(true);
+      const entries = Object.values(values.fixedOverrides);
+      expect(entries.length).toBeGreaterThan(0);
+      for (const entry of entries) {
+        expect(Object.isFrozen(entry)).toBe(true);
+      }
+    }
+
+    expectFrozen();
+    store.patch({
+      baseRev: 0,
+      ops: [
+        { op: 'setPackEnabled', packId: 'pack-b', value: false },
+        poolOp('pack-b/char-b', false),
+      ],
+    });
+    expectFrozen();
+
+    const { values } = store.get();
+    expect(() => {
+      (values.packEnabled as Record<string, boolean>)['pack-c'] = false;
+    }).toThrow(TypeError);
+    expect(() => {
+      (values.fixedOverrides['pack-b/char-b'] as { inPool?: boolean }).inPool =
+        true;
+    }).toThrow(TypeError);
+    expect(isPackEnabled(store.get().values, 'pack-c')).toBe(true);
+    expect(isInPool(store.get().values, 'pack-b', 'char-b')).toBe(false);
+  });
+
+  it('keeps a pack id named like an Object key as an ordinary key', () => {
+    const store = load();
+
+    store.patch(setPack(0, 'constructor', false));
+
+    expect(isPackEnabled(store.get().values, 'constructor')).toBe(false);
+    expect(flushedFile().packEnabled).toStrictEqual({ constructor: false });
+
+    store.patch(setPack(1, 'constructor', true));
+    expect(store.get().values.packEnabled).toStrictEqual({});
+  });
+});
+
+/** settings.json with packEnabled and fixedOverrides at their most entries. */
+function fullFile() {
+  return {
+    schemaVersion: 1,
+    packEnabled: Object.fromEntries(
+      Array.from({ length: PACK_ENABLED_MAX_ENTRIES }, (_, i) => [
+        `pack-${i}`,
+        false,
+      ]),
+    ),
+    fixedOverrides: Object.fromEntries(
+      Array.from({ length: FIXED_OVERRIDES_MAX_ENTRIES }, (_, i) => [
+        `pack-${i % 64}/char-${i}`,
+        { inPool: false },
+      ]),
+    ),
+  };
+}
+
+describe('I/O matrix', () => {
+  it('切換上場: turning a pack off adds one false entry to settings.json, nothing else', () => {
+    const store = load();
+    const onChange = vi.fn();
+    store.onChange(onChange);
+
+    const result = store.patch(setPack(0, 'pack-a', false));
+
+    expect(result).toStrictEqual({ rev: 1, merged: false, saved: true });
+    expect(store.get().values).toStrictEqual({
+      ...SETTINGS_DEFAULTS,
+      packEnabled: { 'pack-a': false },
+    });
+    expect(isPackEnabled(store.get().values, 'pack-a')).toBe(false);
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(store.get());
+    expect(flushedFile()).toStrictEqual({
+      schemaVersion: 1,
+      ...SETTINGS_DEFAULTS,
+      packEnabled: { 'pack-a': false },
+    });
+  });
+
+  it('改回預設: turning 上場 back on removes the entry from settings.json', () => {
+    const store = load();
+    store.patch(setPack(0, 'pack-a', false));
+    store.patch(setPack(1, 'pack-b', false));
+    vi.advanceTimersByTime(SETTINGS_FLUSH_DEBOUNCE_MS);
+
+    store.patch(setPack(2, 'pack-a', true));
+
+    expect(store.get().values.packEnabled).toStrictEqual({ 'pack-b': false });
+    const written = flushedFile();
+    expect(written.packEnabled).toStrictEqual({ 'pack-b': false });
+    expect(JSON.stringify(written)).not.toContain('pack-a');
+  });
+
+  it('改回預設: putting a character back in the pool removes its entry, which held nothing else', () => {
+    const store = load();
+    store.patch(setPool(0, 'pack-a/char-a', false));
+
+    store.patch(setPool(1, 'pack-a/char-a', true));
+
+    expect(store.get().values.fixedOverrides).toStrictEqual({});
+    expect(flushedFile().fixedOverrides).toStrictEqual({});
+  });
+
+  it('改回預設: putting one character back removes only its entry; a neighbour is kept as it was', () => {
+    writeFile({
+      schemaVersion: 1,
+      fixedOverrides: {
+        'pack-a/char-a': { inPool: false },
+        'pack-a/char-b': {},
+      },
+    });
+    const store = load();
+
+    store.patch(setPool(0, 'pack-a/char-a', true));
+
+    expect(store.get().values.fixedOverrides).toStrictEqual({
+      'pack-a/char-b': {},
+    });
+  });
+
+  it('加入池子: taking one character out of the pool changes only <packId>/<characterId>', () => {
+    writeFile({
+      schemaVersion: 1,
+      fixedOverrides: {
+        'pack-b/char-a': { inPool: false },
+      },
+    });
+    const store = load();
+
+    store.patch(setPool(0, 'pack-a/char-a', false));
+
+    const { values } = store.get();
+    expect(values.fixedOverrides).toStrictEqual({
+      'pack-a/char-a': { inPool: false },
+      'pack-b/char-a': { inPool: false },
+    });
+    expect(isInPool(values, 'pack-a', 'char-a')).toBe(false);
+    expect(isInPool(values, 'pack-a', 'char-b')).toBe(true);
+    expect(isInPool(values, 'pack-b', 'char-a')).toBe(false);
+    expect(values.packEnabled).toStrictEqual({});
+    expect(flushedFile().fixedOverrides).toStrictEqual({
+      'pack-a/char-a': { inPool: false },
+      'pack-b/char-a': { inPool: false },
+    });
+  });
+
+  it('加入池子: works the same while the pack is not 上場', () => {
+    const store = load();
+    store.patch(setPack(0, 'pack-a', false));
+
+    store.patch(setPool(1, 'pack-a/char-a', false));
+
+    expect(store.get().values.fixedOverrides).toStrictEqual({
+      'pack-a/char-a': { inPool: false },
+    });
+    expect(store.get().values.packEnabled).toStrictEqual({ 'pack-a': false });
+  });
+
+  it('舊值合併: a patch at an old baseRev changes only its own key and keeps the newer change of another', () => {
+    const store = load();
+    store.patch(setPack(0, 'pack-a', false));
+    store.patch(setPool(1, 'pack-a/char-a', false));
+
+    const result = store.patch(setPack(0, 'pack-b', false));
+    const pool = store.patch(setPool(1, 'pack-a/char-b', false));
+
+    expect(result).toStrictEqual({ rev: 3, merged: true, saved: true });
+    expect(pool).toStrictEqual({ rev: 4, merged: true, saved: true });
+    expect(store.get().values.packEnabled).toStrictEqual({
+      'pack-a': false,
+      'pack-b': false,
+    });
+    expect(store.get().values.fixedOverrides).toStrictEqual({
+      'pack-a/char-a': { inPool: false },
+      'pack-a/char-b': { inPool: false },
+    });
+  });
+
+  it('舊值合併: on the same key, the later patch wins even at an older baseRev', () => {
+    const store = load();
+    store.patch(setPack(0, 'pack-a', false));
+
+    store.patch(setPack(0, 'pack-a', true));
+
+    expect(store.get()).toStrictEqual({ rev: 2, values: SETTINGS_DEFAULTS });
+  });
+
+  it('換版本: settings of a character gone from the new version are kept while other keys change', () => {
+    // main/settings does not know what is installed: a pack replaced by
+    // a version without char-old keeps that character's entry.
+    writeFile({
+      schemaVersion: 1,
+      packEnabled: { 'pack-a': false },
+      fixedOverrides: { 'pack-a/char-old': { inPool: false } },
+    });
+    const store = load();
+
+    store.patch(setPool(0, 'pack-a/char-new', false));
+
+    expect(flushedFile()).toStrictEqual({
+      schemaVersion: 1,
+      ...SETTINGS_DEFAULTS,
+      packEnabled: { 'pack-a': false },
+      fixedOverrides: {
+        'pack-a/char-new': { inPool: false },
+        'pack-a/char-old': { inPool: false },
+      },
+    });
+  });
+
+  it('沒安裝的設定: entries of packs that are not installed load, stay and are written back as they are', () => {
+    const text = writeFile({
+      schemaVersion: 1,
+      packEnabled: { 'gone-pack': false },
+      fixedOverrides: { 'gone-pack/char-a': { inPool: false } },
+    });
+    const store = load();
+
+    expect(store.get().values.packEnabled).toStrictEqual({
+      'gone-pack': false,
+    });
+    expect(files()).toStrictEqual(['settings.json']);
+    expect(fs.readFileSync(file, 'utf8')).toBe(text);
+
+    store.patch(setPack(0, 'pack-a', false));
+
+    const written = flushedFile();
+    expect(written.packEnabled).toStrictEqual({
+      'gone-pack': false,
+      'pack-a': false,
+    });
+    expect(written.fixedOverrides).toStrictEqual({
+      'gone-pack/char-a': { inPool: false },
+    });
+  });
+
+  it('舊設定檔: a schemaVersion 1 file without the two fields loads with them empty, nothing backed up or rewritten', () => {
+    const { packEnabled: _p, fixedOverrides: _f, ...before } = CUSTOM_VALUES;
+    const text = writeFile({ schemaVersion: 1, ...before });
+
+    const store = load();
+
+    expect(store.get()).toStrictEqual({
+      rev: 0,
+      values: { ...before, packEnabled: {}, fixedOverrides: {} },
+    });
+    expect(isPackEnabled(store.get().values, 'pack-a')).toBe(true);
+    expect(isInPool(store.get().values, 'pack-a', 'char-a')).toBe(true);
+    expect(store.canWrite).toBe(true);
+    vi.runAllTimers();
+    expect(files()).toStrictEqual(['settings.json']);
+    expect(fs.readFileSync(file, 'utf8')).toBe(text);
+    expect(settingsLines()).toStrictEqual([]);
+  });
+
+  it.each([
+    ['packEnabled', 'a bad pack id', { 'pack-a': false, Bad_Key: false }],
+    ['packEnabled', 'a value that is not a boolean', { 'pack-a': 'off' }],
+    ['packEnabled', 'an own __proto__ key', '{"__proto__": false}'],
+    [
+      'packEnabled',
+      `more than ${PACK_ENABLED_MAX_ENTRIES} entries`,
+      Object.fromEntries(
+        Array.from({ length: PACK_ENABLED_MAX_ENTRIES + 1 }, (_, i) => [
+          `pack-${i}`,
+          false,
+        ]),
+      ),
+    ],
+    [
+      'fixedOverrides',
+      'a key that is not <packId>/<characterId>',
+      { 'pack-a/char-a': { inPool: false }, 'pack-a': { inPool: false } },
+    ],
+    [
+      'fixedOverrides',
+      'an unknown parameter',
+      { 'pack-a/char-a': { inPool: false, speed: 'fast' } },
+    ],
+    [
+      'fixedOverrides',
+      'a non-boolean inPool',
+      { 'pack-a/char-a': { inPool: 0 } },
+    ],
+  ])(
+    '壞設定: %s with %s takes its default whole and is backed up; the other fields are kept',
+    (field, _label, bad) => {
+      const good = {
+        packEnabled: { 'pack-z': false },
+        fixedOverrides: { 'pack-z/char-z': { inPool: false } },
+      };
+      const text =
+        typeof bad === 'string'
+          ? `{"schemaVersion": 1, "doneMs": 8000, ${JSON.stringify(field === 'packEnabled' ? 'fixedOverrides' : 'packEnabled')}: ${JSON.stringify(field === 'packEnabled' ? good.fixedOverrides : good.packEnabled)}, ${JSON.stringify(field)}: ${bad}}`
+          : JSON.stringify({
+              schemaVersion: 1,
+              doneMs: 8000,
+              ...good,
+              [field]: bad,
+            });
+      writeFile(text);
+
+      const store = load();
+
+      const expected = {
+        ...SETTINGS_DEFAULTS,
+        doneMs: 8000,
+        ...good,
+        [field]: {},
+      };
+      expect(store.get().values).toStrictEqual(expected);
+      expect(files()).toStrictEqual(['settings.json', BACKUP]);
+      expect(fs.readFileSync(path.join(dir, BACKUP), 'utf8')).toBe(text);
+      expect(readFile()).toStrictEqual({ schemaVersion: 1, ...expected });
+      expect(logged('warn')).toStrictEqual([
+        `[settings] settings.json has bad fields (invalid: ${field}); copied it to ${BACKUP}, using defaults for invalid fields, dropping unknown ones`,
+      ]);
+      expect(settingsLines().join('\n')).not.toContain('Bad_Key');
+    },
+  );
+
+  it.each([
+    ['an upper-case pack id', setPack(0, 'Pack-A', false)],
+    ['an all-digit pack id', setPack(0, '123', false)],
+    ['a character key as a pack id', setPack(0, 'pack-a/char-a', false)],
+    ['a pack id as a character key', setPool(0, 'pack-a', false)],
+    ['a character key with three parts', setPool(0, 'pack-a/b/c', false)],
+    ['a bad character id', setPool(0, 'pack-a/Char', false)],
+    [
+      'a setPackEnabled value that is not a boolean',
+      {
+        baseRev: 0,
+        ops: [{ op: 'setPackEnabled', packId: 'pack-a', value: 'false' }],
+      },
+    ],
+    [
+      'a setFixed value that is not a boolean',
+      {
+        baseRev: 0,
+        ops: [
+          {
+            op: 'setFixed',
+            characterKey: 'pack-a/char-a',
+            param: 'inPool',
+            value: 0,
+          },
+        ],
+      },
+    ],
+    [
+      'a setFixed of a parameter not kept yet',
+      {
+        baseRev: 0,
+        ops: [
+          {
+            op: 'setFixed',
+            characterKey: 'pack-a/char-a',
+            param: 'scale',
+            value: 1.5,
+          },
+        ],
+      },
+    ],
+    [
+      'a set overwriting packEnabled whole',
+      {
+        baseRev: 0,
+        ops: [{ op: 'set', field: 'packEnabled', value: { 'pack-a': false } }],
+      },
+    ],
+    [
+      'a set overwriting fixedOverrides whole',
+      {
+        baseRev: 0,
+        ops: [{ op: 'set', field: 'fixedOverrides', value: {} }],
+      },
+    ],
+    [
+      'a good op next to a bad one',
+      {
+        baseRev: 0,
+        ops: [
+          { op: 'setPackEnabled', packId: 'pack-a', value: false },
+          { op: 'setPackEnabled', packId: 'Pack-B', value: false },
+        ],
+      },
+    ],
+  ])(
+    '壞輸入: answers invalid-input to a patch with %s and changes nothing',
+    async (_label, patch) => {
+      fake.resetFakeElectron();
+      const store = load();
+      const onChange = vi.fn();
+      store.onChange(onChange);
+      registerSettingsHandlers(store);
+
+      const reply = await fake.ipcRenderer.invoke(settingsPatch.channel, patch);
+
+      expect(reply).toMatchObject({
+        ok: false,
+        error: { code: 'invalid-input' },
+      });
+      expect(store.get()).toStrictEqual({
+        rev: 0,
+        values: SETTINGS_DEFAULTS,
+      });
+      expect(onChange).not.toHaveBeenCalled();
+      vi.runAllTimers();
+      expect(files()).toStrictEqual([]);
+    },
+  );
+
+  it.each([
+    ['a pack over the most 上場 entries', setPack(0, 'pack-new', false)],
+    [
+      'a character over the most fixed-parameter entries',
+      setPool(0, 'pack-new/char-new', false),
+    ],
+    [
+      'a patch whose first op fits and whose second does not',
+      {
+        baseRev: 0,
+        ops: [
+          { op: 'setPackEnabled', packId: 'pack-0', value: true },
+          { op: 'setPackEnabled', packId: 'pack-new', value: false },
+          { op: 'setPackEnabled', packId: 'pack-newer', value: false },
+        ],
+      } satisfies SettingsPatch,
+    ],
+  ])(
+    '超過上限: the store throws on %s and changes nothing',
+    (_label, patch) => {
+      writeFile(fullFile());
+      const store = load();
+      const before = store.get();
+      const onChange = vi.fn();
+      store.onChange(onChange);
+
+      expect(() => store.patch(patch)).toThrow();
+
+      expect(store.get().rev).toBe(0);
+      expect(store.get().values).toBe(before.values);
+      expect(onChange).not.toHaveBeenCalled();
+      vi.runAllTimers();
+      expect(readFile()).toStrictEqual(fullFile());
+      expect(logged('warn')).toHaveLength(1);
+      expect(logged('warn')[0]).toMatch(
+        /^\[settings\] patch refused: it would leave (packEnabled|fixedOverrides) failing the schema/,
+      );
+      expect(logged('warn')[0]).not.toContain('pack-new');
+    },
+  );
+
+  it('超過上限: answers handler-failed over IPC, the values unchanged', async () => {
+    fake.resetFakeElectron();
+    writeFile(fullFile());
+    const store = load();
+    registerSettingsHandlers(store);
+
+    const reply = await fake.ipcRenderer.invoke(
+      settingsPatch.channel,
+      setPack(0, 'pack-new', false),
+    );
+
+    expect(reply).toStrictEqual({
+      ok: false,
+      error: { code: 'handler-failed', message: 'handler failed' },
+    });
+    expect(store.get().rev).toBe(0);
+    expect(isPackEnabled(store.get().values, 'pack-new')).toBe(true);
+  });
+
+  it('超過上限: a patch with a set and a keyed op over the limit throws whole; neither field changes (values, rev, file)', () => {
+    writeFile(fullFile());
+    const store = load();
+    const before = store.get();
+    const onChange = vi.fn();
+    store.onChange(onChange);
+
+    expect(() =>
+      store.patch({
+        baseRev: 0,
+        ops: [
+          { op: 'set', field: 'doneMs', value: 8000 },
+          { op: 'setPackEnabled', packId: 'pack-new', value: false },
+        ],
+      }),
+    ).toThrow();
+
+    expect(store.get().rev).toBe(0);
+    expect(store.get().values).toBe(before.values);
+    expect(store.get().values.doneMs).toBe(SETTINGS_DEFAULTS.doneMs);
+    expect(isPackEnabled(store.get().values, 'pack-new')).toBe(true);
+    expect(onChange).not.toHaveBeenCalled();
+    vi.runAllTimers();
+    expect(readFile()).toStrictEqual(fullFile());
+    expect(logged('warn')).toStrictEqual([
+      '[settings] patch refused: it would leave packEnabled failing the schema; nothing changed',
+    ]);
+  });
+
+  it('超過上限: still changes a key already there, or removes one, at the most entries', () => {
+    writeFile(fullFile());
+    const store = load();
+
+    store.patch(setPack(0, 'pack-0', true));
+    store.patch(setPack(1, 'pack-new', false));
+    store.patch(setPool(2, 'pack-0/char-0', true));
+    store.patch(setPool(3, 'pack-new/char-new', false));
+
+    const { values } = store.get();
+    expect(Object.keys(values.packEnabled)).toHaveLength(
+      PACK_ENABLED_MAX_ENTRIES,
+    );
+    expect(isPackEnabled(values, 'pack-0')).toBe(true);
+    expect(isPackEnabled(values, 'pack-new')).toBe(false);
+    expect(Object.keys(values.fixedOverrides)).toHaveLength(
+      FIXED_OVERRIDES_MAX_ENTRIES,
+    );
+    expect(isInPool(values, 'pack-new', 'char-new')).toBe(false);
+  });
 });

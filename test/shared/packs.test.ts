@@ -1,5 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
+  characterKey,
+  characterKeySchema,
   PACK_ENTRY_PROBLEMS,
   PACK_IMAGE_LIMITS,
   PACK_INSTALL_FAILURE_CODES,
@@ -434,5 +436,36 @@ describe('packsConfirmInputSchema', () => {
     ['two flags', [true, true]],
   ])('rejects %s', (_label, args) => {
     expectRejected(packsConfirmInputSchema, args);
+  });
+});
+
+describe('characterKey (Story 3.3)', () => {
+  it('is <packId>/<characterId>', () => {
+    expect(characterKey('pack-a', 'char-a')).toBe('pack-a/char-a');
+  });
+
+  it.each([['pack-a/char-a'], ['ab/cd'], ['pack-a/123'], ['a0/0x']])(
+    'round-trips %j',
+    (key) => {
+      expectRoundTrip(characterKeySchema, key);
+    },
+  );
+
+  it.each([
+    ['a pack id alone', 'pack-a'],
+    ['an empty character id', 'pack-a/'],
+    ['an empty pack id', '/char-a'],
+    ['three parts', 'pack-a/char-a/x'],
+    ['an all-digit pack id', '123/char-a'],
+    ['a pack id starting with 0x', '0x1/char-a'],
+    ['a Windows device name for the pack id', 'nul/char-a'],
+    ['an upper-case character id', 'pack-a/Char'],
+    ['a one-character character id', 'pack-a/c'],
+    ['a backslash', 'pack-a\\char-a'],
+    ['the empty string', ''],
+    ['a number', 1],
+    ['null', null],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(characterKeySchema, value);
   });
 });

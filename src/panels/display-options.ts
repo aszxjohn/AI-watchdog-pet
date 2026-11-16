@@ -106,11 +106,18 @@ export function displayPatch(
 export const NOT_SAVED_TEXT =
   '已套用，但無法存到設定檔，重新啟動後會回到原本的值';
 
-/** What the page shows when a patch fails; the choice stays as it was. */
-export function patchErrorText(error: IpcError | undefined): string {
+/**
+ * What the page shows when a patch fails; the choice stays as it was.
+ * `what` says what could not be changed (畫布所在螢幕 unless given; the
+ * 角色包 page passes its own).
+ */
+export function patchErrorText(
+  error: IpcError | undefined,
+  what = '無法變更畫布所在螢幕',
+): string {
   return error === undefined
-    ? '無法變更畫布所在螢幕'
-    : `無法變更畫布所在螢幕（${error.code}：${error.message}）`;
+    ? what
+    : `${what}（${error.code}：${error.message}）`;
 }
 
 /** What the page shows around the options while a choice is sent. */

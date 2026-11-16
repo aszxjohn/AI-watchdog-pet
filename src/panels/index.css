@@ -330,3 +330,71 @@ body {
   display: flex;
   gap: 8px;
 }
+
+/*
+ * 角色包 › 已安裝: each pack (name, version, 上場), its characters under it
+ * (name, 加入池子, the height hint). A pack that is not 上場 is faded; its
+ * 加入池子 checkboxes still work.
+ */
+.pack-list-items,
+.pack-characters {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pack-item {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.pack-item-header,
+.pack-character {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 2px;
+}
+
+.pack-name {
+  font-weight: 600;
+}
+
+.pack-version {
+  color: var(--muted);
+}
+
+.pack-characters {
+  margin-top: 4px;
+  padding-left: 20px;
+}
+
+.pack-character {
+  padding: 2px 0;
+}
+
+.pack-item.is-benched .pack-name,
+.pack-item.is-benched .pack-character-name {
+  color: var(--muted);
+}
+
+.pack-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pack-checkbox input:disabled + span {
+  color: var(--muted);
+}
+
+.pack-height-hint {
+  color: var(--warning);
+  font-size: 12px;
+}
+
+.pack-list + .pack-import {
+  margin-top: 24px;
+}
