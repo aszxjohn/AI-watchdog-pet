@@ -205,6 +205,10 @@ describe('I/O matrix', () => {
         get: () => ({ packImport: { phase: 'idle' } }),
         onChange: () => () => {},
       },
+      packExport: {
+        get: () => ({ packExport: { phase: 'idle' } }),
+        onChange: () => () => {},
+      },
     });
     const subscriber = fake.createFakeWebContents(
       1,

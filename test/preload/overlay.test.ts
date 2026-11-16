@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDetection } from '../../src/main/detection/detection';
+import { exportPack } from '../../src/main/packs/export';
+import { createPackExporter } from '../../src/main/packs/exporter';
 import { createPackImporter } from '../../src/main/packs/importer';
 import { inspectPack } from '../../src/main/packs/inspect';
 import { installPack } from '../../src/main/packs/install';
@@ -92,8 +94,21 @@ function startMain() {
     install: installPack,
     chooseFile: async () => null,
   });
+  const packExport = createPackExporter({
+    store: packs,
+    exportPack,
+    chooseTarget: async () => null,
+  });
   registerStageViewHandlers(
-    createStageView({ settings, windows, detection, pool, packs, packImport }),
+    createStageView({
+      settings,
+      windows,
+      detection,
+      pool,
+      packs,
+      packImport,
+      packExport,
+    }),
   );
   registerCanvasReadyHandler();
   return { settings, windows };
@@ -139,6 +154,7 @@ describe('overlay preload', () => {
         pool: { released: [] },
         packs: { installed: [] },
         packImport: { phase: 'idle' },
+        packExport: { phase: 'idle' },
       },
     });
 

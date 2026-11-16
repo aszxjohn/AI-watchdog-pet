@@ -2,8 +2,9 @@
  * main/stage-view (AD-20): composes StageView from the modules that own the
  * data (main/settings: `settings`; main/windows: `displays`, `canvas`,
  * `power`; main/detection: `sessions`, `adapters`; main/pool: `pool`;
- * main/packs: `packs` from its store, `packImport` from its importer) and
- * owns nothing but its own rev and the subscriber list.
+ * main/packs: `packs` from its store, `packImport` from its importer,
+ * `packExport` from its exporter) and owns nothing but its own rev and the
+ * subscriber list.
  *
  * - Every change of a source becomes one delta, `rev` + 1, pushed to every
  *   subscriber through pushToRenderer. A delta replaces whole sections and
@@ -25,6 +26,7 @@ import {
   stageViewSectionsSchema,
   type StageView,
   type StageViewDetectionSections,
+  type StageViewPackExportSections,
   type StageViewPackImportSections,
   type StageViewPacksSections,
   type StageViewPoolSections,
@@ -87,6 +89,16 @@ export interface StageViewSources {
       listener: (sections: StageViewPackImportSections) => void,
     ): () => void;
   };
+  /**
+   * main/packs' exporter. `onChange` hears its one section after each
+   * change.
+   */
+  readonly packExport: {
+    get(): StageViewPackExportSections;
+    onChange(
+      listener: (sections: StageViewPackExportSections) => void,
+    ): () => void;
+  };
 }
 
 /** The parts of a WebContents a subscriber needs. */
@@ -132,6 +144,7 @@ export function createStageView(sources: StageViewSources): StageViewHub {
     ...sources.pool.get(),
     ...sources.packs.get(),
     ...sources.packImport.get(),
+    ...sources.packExport.get(),
   };
   const subscribers = new Map<number, StageViewSubscriber>();
 
@@ -185,6 +198,9 @@ export function createStageView(sources: StageViewSources): StageViewHub {
     publish(sections);
   });
   sources.packImport.onChange((sections) => {
+    publish(sections);
+  });
+  sources.packExport.onChange((sections) => {
     publish(sections);
   });
 

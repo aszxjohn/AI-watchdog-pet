@@ -247,3 +247,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-3-pack-list.md`
   summary: 「角色包」頁的勾選框受控（`checked` 只依 StageView）、送出中 `disabled`、patch 的 `baseRev` 用 settings rev，都只寫在 `src/panels/App.tsx`，沒有任何測試渲染它；改成 `defaultChecked`、漏接 `disabled` 或誤用 `snapshot.rev` 都不會被 CI 發現
   evidence: Story 3.3 上半段審查 VG1、B10（medium）。AD-25 與 `vitest.config.mts`（`environment: 'node'`、只收 `.test.ts`）只測純邏輯，整個 repo 沒有 React 渲染測試，2.8、2.9、3.2 的面板也一樣；和 Epic 2 回顧 B8（端到端測試承接）一起決定要不要引進 DOM 或 Playwright 測試。目前由使用者實機驗收把關。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-3-pack-export-remove.md`
+  summary: 「角色包」頁的匯出狀態行（匯出中／已匯出／無法匯出）、匯出中停用每列「匯出…」、移除確認區都只寫在 `src/panels/App.tsx`，沒有測試渲染它；開發代理實機也沒按過「匯出…」
+  evidence: Story 3.3 下半段審查 VG1、B8(c)（medium）。純函式 `packExportStatus`、`packRowControls` 有測，但 App.tsx 的接線（狀態行的條件、傳給 `packRowControls` 的 `packExport`）改壞也不會被 CI 發現；和 3.3 上半段那筆一樣，交給 Epic 2 回顧 B8（端到端測試承接）。實機驗收時要看：按「匯出…」出現「匯出中…」且每列「匯出…」停用；存檔後出現「已匯出：名稱 版本」；取消對話框後狀態行回到原本。

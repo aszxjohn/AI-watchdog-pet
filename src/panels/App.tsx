@@ -7,14 +7,17 @@
  * the left change it. 管理 session lists the detected sessions (each can be
  * released or shown again) and the running adapters' health; 舞台設定
  * lists the displays for the canvas and the detection timings (計時);
- * 角色包 lists the installed packs (上場, and 加入池子 per character) above
- * the import (匯入角色包…, how it went, the replace confirmation).
+ * 角色包 lists the installed packs (上場, and 加入池子 per character; 匯出…
+ * and 移除… per pack, with how the export went and the removal asked on
+ * the pack's row) above the import (匯入角色包…, how it went, the replace
+ * confirmation).
  *
  * Renderer state only ever comes from StageView (AD-20): a setting changes
  * through `settings.patch` (上場 and 加入池子 too), a release through
- * `pool.setReleased` and an import through `packs.choose` /
- * `packs.confirm`, and the page shows the
- * outcome once StageView brings it back, never earlier.
+ * `pool.setReleased`, an import through `packs.choose` / `packs.confirm`,
+ * an export through `packs.export` and a removal through `packs.remove`,
+ * and the page shows the outcome once StageView brings it back, never
+ * earlier.
  */
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { PRELOAD_API_KEY, PRODUCT_NAME } from '../shared/constants';
@@ -41,15 +44,22 @@ import {
 } from './pack-import';
 import {
   createPackListActions,
+  createPackRowActions,
   ENABLED_LABEL,
   IDLE_PACK_LIST_ACTIONS,
+  IDLE_PACK_ROW_ACTIONS,
   IN_POOL_LABEL,
   NO_PACKS_TEXT,
   PACK_LIST_HEADING,
+  packExportStatus,
   packListDisabled,
   packListView,
+  packRowControls,
   type PackListActionState,
   type PackListCheckbox,
+  type PackRowActionState,
+  type PackRowButton,
+  type PackRowPress,
 } from './pack-list';
 import {
   ADAPTERS_HEADING,
@@ -515,15 +525,43 @@ function PackListCheckboxField({
   );
 }
 
+/** One of a row's buttons (匯出…, 移除…, or 移除 / 取消 on its question). */
+function PackRowButtonField({
+  button,
+  onPress,
+}: {
+  button: PackRowButton;
+  onPress: (press: PackRowPress) => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={button.disabled}
+      aria-label={button.ariaLabel}
+      onClick={() => {
+        onPress(button.press);
+      }}
+    >
+      {button.label}
+    </button>
+  );
+}
+
 /**
- * 角色包 › 已安裝: every installed pack with its name, version and 上場,
- * and under it its characters, each with 加入池子 and the height hint.
+ * 角色包 › 已安裝: every installed pack with its name, version, 上場,
+ * 匯出… and 移除…, and under it its characters, each with 加入池子 and the
+ * height hint; under the list, how the last export went.
  * What each shows and the one op each checkbox sends is packListView,
  * from StageView's `packs` and `settings` sections; when the checkboxes
  * are disabled is packListDisabled; the send logic (a failure or the
  * not-saved notice shown, the checkboxes left as StageView has them) is
- * createPackListActions. This only renders them. A checkbox is
- * controlled by StageView, so a click shows only once main applied it.
+ * createPackListActions. A row's buttons and its removal question are
+ * packRowControls (from StageView's `packExport` section and which row
+ * asks, the page's own state), what pressing one does is
+ * createPackRowActions, and the export status line is packExportStatus.
+ * This only renders them. A checkbox is controlled by StageView, so a
+ * click shows only once main applied it; a removed pack's row goes once
+ * StageView's `packs` section drops it.
  */
 function PackList({
   awp,
@@ -546,12 +584,33 @@ function PackList({
     [awp],
   );
 
-  const { settings, packs } = snapshot.view;
+  const [rowState, setRowState] = useState<PackRowActionState>(
+    IDLE_PACK_ROW_ACTIONS,
+  );
+  const rowActions = useMemo(
+    () =>
+      awp === undefined
+        ? undefined
+        : createPackRowActions(
+            {
+              export: (packId) => awp.packs.export(packId),
+              remove: (packId) => awp.packs.remove(packId),
+            },
+            setRowState,
+          ),
+    [awp],
+  );
+
+  const { settings, packs, packExport } = snapshot.view;
   const list = packListView(packs, settings.values);
   const disabled = packListDisabled(state.saving, actions !== undefined);
   const toggle = (checkbox: PackListCheckbox) => {
     void actions?.toggle(checkbox.toggle, settings.rev);
   };
+  const press = (rowPress: PackRowPress) => {
+    void rowActions?.press(rowPress);
+  };
+  const exportStatus = packExportStatus(packExport);
 
   return (
     <section className="pack-list" aria-labelledby="pack-list-heading">
@@ -560,48 +619,98 @@ function PackList({
         <p className="coming-soon">{NO_PACKS_TEXT}</p>
       ) : (
         <ul className="pack-list-items">
-          {list.map((pack) => (
-            <li
-              key={pack.id}
-              className={
-                pack.enabled.checked ? 'pack-item' : 'pack-item is-benched'
-              }
-            >
-              <div className="pack-item-header">
-                <bdi className="pack-name">{pack.name}</bdi>
-                <span className="pack-version">{pack.version}</span>
-                <PackListCheckboxField
-                  checkbox={pack.enabled}
-                  label={ENABLED_LABEL}
-                  disabled={disabled}
-                  onToggle={toggle}
-                />
-              </div>
-              <ul className="pack-characters">
-                {pack.characters.map((character) => (
-                  <li key={character.key} className="pack-character">
-                    <bdi className="pack-character-name">{character.name}</bdi>
-                    <PackListCheckboxField
-                      checkbox={character.inPool}
-                      label={IN_POOL_LABEL}
-                      disabled={disabled}
-                      onToggle={toggle}
-                      describedBy={character.heightHintId}
-                    />
-                    {character.heightHint === null ? null : (
-                      <span
-                        id={character.heightHintId ?? undefined}
-                        className="pack-height-hint"
-                      >
-                        {character.heightHint}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </li>
-          ))}
+          {list.map((pack) => {
+            const controls = packRowControls(
+              pack,
+              packExport,
+              rowState,
+              rowActions !== undefined,
+            );
+            return (
+              <li
+                key={pack.id}
+                className={
+                  pack.enabled.checked ? 'pack-item' : 'pack-item is-benched'
+                }
+              >
+                <div className="pack-item-header">
+                  <bdi className="pack-name">{pack.name}</bdi>
+                  <span className="pack-version">{pack.version}</span>
+                  <PackListCheckboxField
+                    checkbox={pack.enabled}
+                    label={ENABLED_LABEL}
+                    disabled={disabled}
+                    onToggle={toggle}
+                  />
+                  <span className="pack-item-actions">
+                    {controls.buttons.map((button) => (
+                      <PackRowButtonField
+                        key={button.key}
+                        button={button}
+                        onPress={press}
+                      />
+                    ))}
+                  </span>
+                </div>
+                {controls.confirm === null ? null : (
+                  <div
+                    className="pack-remove-confirm"
+                    role="group"
+                    aria-labelledby={controls.confirm.id}
+                  >
+                    <p id={controls.confirm.id}>{controls.confirm.text}</p>
+                    <div className="pack-remove-confirm-actions">
+                      {controls.confirm.buttons.map((button) => (
+                        <PackRowButtonField
+                          key={button.key}
+                          button={button}
+                          onPress={press}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <ul className="pack-characters">
+                  {pack.characters.map((character) => (
+                    <li key={character.key} className="pack-character">
+                      <bdi className="pack-character-name">
+                        {character.name}
+                      </bdi>
+                      <PackListCheckboxField
+                        checkbox={character.inPool}
+                        label={IN_POOL_LABEL}
+                        disabled={disabled}
+                        onToggle={toggle}
+                        describedBy={character.heightHintId}
+                      />
+                      {character.heightHint === null ? null : (
+                        <span
+                          id={character.heightHintId ?? undefined}
+                          className="pack-height-hint"
+                        >
+                          {character.heightHint}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            );
+          })}
         </ul>
+      )}
+      {exportStatus === null ? null : (
+        <p
+          className={`pack-export-status is-${exportStatus.tone}`}
+          role={exportStatus.tone === 'error' ? 'alert' : 'status'}
+        >
+          {exportStatus.text}
+        </p>
+      )}
+      {rowState.error === null ? null : (
+        <p className="setting-error" role="alert">
+          {rowState.error}
+        </p>
       )}
       {state.error === null ? null : (
         <p className="setting-error" role="alert">

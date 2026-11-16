@@ -1,5 +1,10 @@
 import { sessionKeySchema } from './detection-events';
-import { packsConfirmInputSchema } from './packs';
+import {
+  packRemoveResultSchema,
+  packsConfirmInputSchema,
+  packsExportInputSchema,
+  packsRemoveInputSchema,
+} from './packs';
 import { poolSetReleasedInputSchema } from './pool';
 import {
   settingsPatchResultSchema,
@@ -173,6 +178,33 @@ export const packsConfirm = {
   channel: 'packs:confirm',
   input: packsConfirmInputSchema,
   output: z.null(),
+} as const satisfies IpcContract;
+
+/**
+ * `packs:export`: main opens a save dialog (only `.awpet` files, named
+ * `<packId>-<version>.awpet` to start with) on the panel and writes the
+ * installed pack there (Story 3.3). Answers null at once, before the
+ * dialog closes; the export goes on in main and comes back through
+ * StageView's `packExport` section. Nothing happens while an export is
+ * saving.
+ */
+export const packsExport = {
+  channel: 'packs:export',
+  input: packsExportInputSchema,
+  output: z.null(),
+} as const satisfies IpcContract;
+
+/**
+ * `packs:remove`: removes the installed pack (Story 3.3), after the panel
+ * has had the user confirm it: first from index.json, then its folder.
+ * Answers once done: removed, or the code of why nothing changed. The
+ * list comes back through StageView's `packs` section; settings.json
+ * keeps the pack's 上場 and 加入池子 values.
+ */
+export const packsRemove = {
+  channel: 'packs:remove',
+  input: packsRemoveInputSchema,
+  output: packRemoveResultSchema,
 } as const satisfies IpcContract;
 
 /**

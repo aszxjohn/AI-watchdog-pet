@@ -28,6 +28,7 @@ function snapshot(rev: number, id: number | null = null): StageViewSnapshot {
       pool: { released: [] },
       packs: { installed: [] },
       packImport: { phase: 'idle' },
+      packExport: { phase: 'idle' },
     },
   };
 }

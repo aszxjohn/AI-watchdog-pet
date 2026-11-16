@@ -27,7 +27,10 @@ import { z } from './zod-setup';
  * is refused with and an install fails with: English codes only, the
  * display layer words them. And StageView's `packImport` section: where the
  * one import at a time is (Story 3.2's second half), with `packs:confirm`'s
- * arguments.
+ * arguments; StageView's `packExport` section, where the one export at a
+ * time is, the codes an export and a removal fail with, and the arguments
+ * and answer of `packs:export` and `packs:remove` (Story 3.3's second
+ * half).
  */
 
 /** The `schemaVersion` main/packs reads and writes in index.json. */
@@ -493,3 +496,96 @@ export const IDLE_PACK_IMPORT: StagePackImport = Object.freeze({
 
 /** `packs:confirm`'s arguments: true replaces the installed version. */
 export const packsConfirmInputSchema = z.tuple([z.boolean()]);
+
+// ---------------------------------------------------------------------------
+// Exporting and removing an installed pack (Story 3.3's second half).
+
+/**
+ * Every code an export fails with; nothing is written at the place picked
+ * then:
+ * - `not-installed`: the pack is not installed (any more), e.g. it was
+ *   removed while the save dialog was open;
+ * - `read-failed`: the installed folder is missing or cannot be read, or
+ *   holds something that is not a regular file or folder;
+ * - `write-failed`: the file could not be written at the place picked.
+ */
+export const PACK_EXPORT_FAILURE_CODES = [
+  'not-installed',
+  'read-failed',
+  'write-failed',
+] as const;
+
+export type PackExportFailureCode = (typeof PACK_EXPORT_FAILURE_CODES)[number];
+
+/**
+ * Every code a removal fails with; nothing changes then (index.json and the
+ * pack's folder are as they were):
+ * - `not-installed`: no pack of that id is installed;
+ * - `index-unwritable`: index.json could not be read at start, so this run
+ *   does not write it;
+ * - `index-write-failed`: index.json could not be written.
+ */
+export const PACK_REMOVE_FAILURE_CODES = [
+  'not-installed',
+  'index-unwritable',
+  'index-write-failed',
+] as const;
+
+export type PackRemoveFailureCode = (typeof PACK_REMOVE_FAILURE_CODES)[number];
+
+/**
+ * StageView's `packExport` section: where the one export at a time is
+ * (main/packs' exporter owns it), told apart by `phase`:
+ * - `idle`: none yet this run;
+ * - `saving`: the save dialog is open or the file is being written, for
+ *   pack `packId` (every 匯出… button is disabled);
+ * - `result`, told apart by `outcome`: `exported` (the pack's name and
+ *   version as written) or `failed` (the export's failure code).
+ * A cancelled save dialog goes back to the phase before. Ids, names and
+ * versions only, never a path on the user's disk.
+ */
+export const stagePackExportSchema = z.discriminatedUnion('phase', [
+  z.strictObject({ phase: z.literal('idle') }),
+  z.strictObject({ phase: z.literal('saving'), packId: packIdSchema }),
+  z.discriminatedUnion('outcome', [
+    z.strictObject({
+      phase: z.literal('result'),
+      outcome: z.literal('exported'),
+      packId: packIdSchema,
+      ...packNameAndVersionShape,
+    }),
+    z.strictObject({
+      phase: z.literal('result'),
+      outcome: z.literal('failed'),
+      packId: packIdSchema,
+      code: z.enum(PACK_EXPORT_FAILURE_CODES),
+    }),
+  ]),
+]);
+
+export type StagePackExport = z.infer<typeof stagePackExportSchema>;
+
+/** Where every run's export starts. */
+export const IDLE_PACK_EXPORT: StagePackExport = Object.freeze({
+  phase: 'idle',
+});
+
+/** `packs:export`'s arguments: the id of the installed pack to export. */
+export const packsExportInputSchema = z.tuple([packIdSchema]);
+
+/** `packs:remove`'s arguments: the id of the installed pack to remove. */
+export const packsRemoveInputSchema = z.tuple([packIdSchema]);
+
+/**
+ * `packs:remove`'s answer: removed (gone from index.json; its folder is
+ * removed too, or at the next start), or why nothing changed.
+ */
+export const packRemoveResultSchema = z.discriminatedUnion('ok', [
+  z.strictObject({ ok: z.literal(true) }),
+  z.strictObject({
+    ok: z.literal(false),
+    code: z.enum(PACK_REMOVE_FAILURE_CODES),
+  }),
+]);
+
+export type PackRemoveResult = z.infer<typeof packRemoveResultSchema>;

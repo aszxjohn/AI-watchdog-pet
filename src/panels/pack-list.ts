@@ -18,6 +18,19 @@
  * never a whole setting), when the checkboxes are disabled, and what
  * clicking one does (createPackListActions). A checkbox changes only once
  * StageView brings the new value back.
+ *
+ * Each pack also has 匯出… and 移除… (Story 3.3's second half):
+ * - 匯出… asks main to open the save dialog (`packs:export`, answered at
+ *   once); how it goes is StageView's `packExport` section, shown in one
+ *   status line under the list. Every 匯出… is disabled while an export is
+ *   saving.
+ * - 移除… asks first, on the pack's own row (its name, version, 移除 and
+ *   取消); nothing is sent until 移除. Which row asks is the page's own
+ *   state, not data. 移除 sends `packs:remove`, whose answer says whether it
+ *   went; the row goes once StageView's `packs` section drops it.
+ * - Every English code main answers (an export's, a removal's) is worded
+ *   here; what each button shows, when it is disabled and what pressing it
+ *   does are packRowControls and createPackRowActions.
  */
 import type { IpcError, IpcResult } from '../shared/ipc';
 import {
@@ -27,6 +40,10 @@ import {
 import {
   characterKey,
   type CharacterKey,
+  type PackExportFailureCode,
+  type PackRemoveFailureCode,
+  type PackRemoveResult,
+  type StagePackExport,
   type StagePacks,
 } from '../shared/packs';
 import {
@@ -38,6 +55,7 @@ import {
   type SettingsValues,
 } from '../shared/settings';
 import { NOT_SAVED_TEXT, patchErrorText } from './display-options';
+import { isolatedName } from './pack-import';
 
 export const PACK_LIST_HEADING = '已安裝';
 export const NO_PACKS_TEXT = '還沒有安裝角色包';
@@ -285,6 +303,343 @@ export function createPackListActions(
         } catch {
           // The page could not take the outcome; toggle still resolves.
         }
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 匯出… and 移除… (Story 3.3's second half).
+
+export const EXPORT_BUTTON_LABEL = '匯出…';
+export const REMOVE_BUTTON_LABEL = '移除…';
+export const REMOVE_CONFIRM_LABEL = '移除';
+export const REMOVE_CANCEL_LABEL = '取消';
+export const EXPORTING_TEXT = '匯出中…';
+
+/** What the page says for each export failure code. */
+export const EXPORT_FAILURE_TEXTS: Readonly<
+  Record<PackExportFailureCode, string>
+> = Object.freeze({
+  'not-installed': '這個角色包已不在（可能剛被移除）',
+  'read-failed':
+    '讀不到已安裝的檔案（安裝資料夾可能不見了、被改動過，或沒有讀取權限）',
+  'write-failed':
+    '無法寫入選擇的位置（可能沒有寫入權限、磁碟空間不足，或位置已不存在）',
+});
+
+/** What the page says for each removal failure code. */
+export const REMOVE_FAILURE_TEXTS: Readonly<
+  Record<PackRemoveFailureCode, string>
+> = Object.freeze({
+  'not-installed': '這個角色包已不在（可能已經移除了）',
+  'index-unwritable':
+    '這次啟動時讀不到角色包清單（index.json），所以不能移除；請查看 run log 後重新啟動 app',
+  'index-write-failed': '無法寫入角色包清單（index.json），角色包沒有移除',
+});
+
+/**
+ * The question on a row whose removal is being confirmed: the pack's name
+ * and version (versionText), and what happens to its files and settings.
+ */
+export function removeConfirmText(name: string, version: string): string {
+  return `要移除「${isolatedName(name)}」${version} 嗎？它的檔案會刪除；上場與加入池子的選擇會保留，之後重新匯入同一包時會回來。`;
+}
+
+/** The export status line's look. */
+export type PackExportTone = 'progress' | 'success' | 'error';
+
+export interface PackExportStatus {
+  readonly tone: PackExportTone;
+  readonly text: string;
+}
+
+/** The status line for StageView's `packExport` section; null before any export. */
+export function packExportStatus(
+  state: StagePackExport,
+): PackExportStatus | null {
+  switch (state.phase) {
+    case 'idle':
+      return null;
+    case 'saving':
+      return { tone: 'progress', text: EXPORTING_TEXT };
+    case 'result':
+      break;
+  }
+  switch (state.outcome) {
+    case 'exported':
+      return {
+        tone: 'success',
+        text: `已匯出：${isolatedName(state.name)} ${state.version}`,
+      };
+    case 'failed':
+      return {
+        tone: 'error',
+        text: `無法匯出：${EXPORT_FAILURE_TEXTS[state.code]}。沒有寫出任何檔案。`,
+      };
+  }
+}
+
+/** What pressing one of a row's buttons does. */
+export type PackRowPress =
+  /** 匯出…: asks main to export the pack. */
+  | { readonly kind: 'export'; readonly packId: string; readonly name: string }
+  /** 移除…: asks on this row; sends nothing. */
+  | { readonly kind: 'ask-remove'; readonly packId: string }
+  /** 移除 (on the question): sends the removal. */
+  | { readonly kind: 'remove'; readonly packId: string; readonly name: string }
+  /** 取消 (on the question): stops asking; sends nothing. */
+  | { readonly kind: 'keep' };
+
+/** One button of a row, and what pressing it does. */
+export interface PackRowButton {
+  readonly key: PackRowPress['kind'];
+  readonly label: string;
+  /** What a screen reader names it by, the pack included. */
+  readonly ariaLabel: string;
+  readonly disabled: boolean;
+  readonly press: PackRowPress;
+}
+
+/** The removal question on a row. */
+export interface PackRowConfirm {
+  /** Unique on the page: the question's id (the group is labelled by it). */
+  readonly id: string;
+  readonly text: string;
+  /** 移除, then 取消. */
+  readonly buttons: readonly PackRowButton[];
+}
+
+/** A row's 匯出… and 移除…, and its removal question while it asks. */
+export interface PackRowControls {
+  /** 匯出…, then 移除…. */
+  readonly buttons: readonly PackRowButton[];
+  /** The question, or null when this row is not asking. */
+  readonly confirm: PackRowConfirm | null;
+}
+
+/** What the page keeps around the rows' buttons. */
+export interface PackRowActionState {
+  /** The id of the pack whose row asks to confirm its removal, or null. */
+  readonly confirming: string | null;
+  /** A request is on its way: every row button is disabled. */
+  readonly sending: boolean;
+  /** Why the last request failed, or null. */
+  readonly error: string | null;
+}
+
+export const IDLE_PACK_ROW_ACTIONS: PackRowActionState = Object.freeze({
+  confirming: null,
+  sending: false,
+  error: null,
+});
+
+/**
+ * The buttons of the row of `pack` (as packListView lists it), given
+ * StageView's `packExport` section, the page's own state and whether the
+ * preload API is there. Each is disabled while a request is on its way and
+ * with no preload API; besides, 匯出… while any export is saving, and
+ * 移除… while its row already asks. Removing is never held up by an export.
+ */
+export function packRowControls(
+  pack: Pick<PackListPack, 'id' | 'name' | 'version'>,
+  packExport: StagePackExport,
+  actions: PackRowActionState,
+  hasApi: boolean,
+): PackRowControls {
+  const blocked = actions.sending || !hasApi;
+  const asking = actions.confirming === pack.id;
+  return {
+    buttons: [
+      {
+        key: 'export',
+        label: EXPORT_BUTTON_LABEL,
+        ariaLabel: `匯出：${pack.name}`,
+        disabled: blocked || packExport.phase === 'saving',
+        press: { kind: 'export', packId: pack.id, name: pack.name },
+      },
+      {
+        key: 'ask-remove',
+        label: REMOVE_BUTTON_LABEL,
+        ariaLabel: `移除：${pack.name}`,
+        disabled: blocked || asking,
+        press: { kind: 'ask-remove', packId: pack.id },
+      },
+    ],
+    confirm: asking
+      ? {
+          id: `remove-confirm:${pack.id}`,
+          text: removeConfirmText(pack.name, pack.version),
+          buttons: [
+            {
+              key: 'remove',
+              label: REMOVE_CONFIRM_LABEL,
+              ariaLabel: `確定移除：${pack.name}`,
+              disabled: blocked,
+              press: { kind: 'remove', packId: pack.id, name: pack.name },
+            },
+            {
+              key: 'keep',
+              label: REMOVE_CANCEL_LABEL,
+              ariaLabel: `取消移除：${pack.name}`,
+              disabled: blocked,
+              press: { kind: 'keep' },
+            },
+          ],
+        }
+      : null,
+  };
+}
+
+/** What the page shows when an export request fails; StageView is left as it is. */
+export function exportRequestErrorText(
+  name: string,
+  error: IpcError | undefined,
+): string {
+  const what = `無法開始匯出「${isolatedName(name)}」`;
+  return error === undefined
+    ? what
+    : `${what}（${error.code}：${error.message}）`;
+}
+
+/**
+ * What the page shows when a removal did not go: the request failed
+ * (`error`, or undefined when the call itself threw), or main answered a
+ * failure code.
+ */
+export function removeFailedText(
+  name: string,
+  failure:
+    | { readonly code: PackRemoveFailureCode }
+    | { readonly error: IpcError | undefined },
+): string {
+  const what = `無法移除「${isolatedName(name)}」`;
+  if ('code' in failure) {
+    return `${what}：${REMOVE_FAILURE_TEXTS[failure.code]}`;
+  }
+  return failure.error === undefined
+    ? what
+    : `${what}（${failure.error.code}：${failure.error.message}）`;
+}
+
+/** `window.awp.packs`, as far as the rows need it. */
+export interface PackRowApi {
+  export(packId: string): Promise<IpcResult<null>>;
+  remove(packId: string): Promise<IpcResult<PackRemoveResult>>;
+}
+
+export interface PackRowActions {
+  /**
+   * Presses one of a row's buttons (PackRowButton.press). 移除… and 取消
+   * only change which row asks, and send nothing; 匯出… and 移除 send their
+   * request unless one is still on its way, report `sending`, then the
+   * outcome (移除 also stops asking, whatever came back). Nothing of
+   * StageView is changed here; the list and the export status come back
+   * through it (AD-20). Never rejects.
+   */
+  press(press: PackRowPress): Promise<void>;
+}
+
+/**
+ * The rows' button logic. `api` is `window.awp.packs`; `onState` hears
+ * every change of which row asks, `sending` and the error.
+ */
+export function createPackRowActions(
+  api: PackRowApi,
+  onState: (state: PackRowActionState) => void,
+  logError: (message: string, ...details: unknown[]) => void = console.error,
+): PackRowActions {
+  let state = IDLE_PACK_ROW_ACTIONS;
+
+  /** Takes `next` and tells the page; the page failing changes nothing here. */
+  function report(next: PackRowActionState): void {
+    state = next;
+    try {
+      onState(next);
+    } catch {
+      // The page could not take it; the press still resolves.
+    }
+  }
+
+  async function send(
+    channel: string,
+    call: () => Promise<string | null>,
+    failedText: () => string,
+    stopAsking: boolean,
+  ): Promise<void> {
+    if (state.sending) {
+      return;
+    }
+    let error: string | null = null;
+    state = { ...state, sending: true, error: null };
+    try {
+      onState(state);
+      error = await call();
+    } catch (thrown) {
+      // The call rejected, or onState or logError threw.
+      error ??= failedText();
+      try {
+        logError(`[panels] ${channel} failed`, thrown);
+      } catch {
+        // Nowhere left to report it; the outcome still goes to onState.
+      }
+    } finally {
+      // Whatever threw above, the next press must not be ignored.
+      report({
+        confirming: stopAsking ? null : state.confirming,
+        sending: false,
+        error,
+      });
+    }
+  }
+
+  return {
+    async press(press) {
+      switch (press.kind) {
+        case 'ask-remove':
+          if (!state.sending) {
+            report({ ...state, confirming: press.packId, error: null });
+          }
+          return;
+        case 'keep':
+          if (!state.sending) {
+            report({ ...state, confirming: null });
+          }
+          return;
+        case 'export':
+          return send(
+            'packs:export',
+            async () => {
+              const result = await api.export(press.packId);
+              if (result.ok) {
+                return null;
+              }
+              logError(
+                `[panels] packs:export: ${result.error.code}: ${result.error.message}`,
+              );
+              return exportRequestErrorText(press.name, result.error);
+            },
+            () => exportRequestErrorText(press.name, undefined),
+            false,
+          );
+        case 'remove':
+          return send(
+            'packs:remove',
+            async () => {
+              const result = await api.remove(press.packId);
+              if (!result.ok) {
+                logError(
+                  `[panels] packs:remove: ${result.error.code}: ${result.error.message}`,
+                );
+                return removeFailedText(press.name, { error: result.error });
+              }
+              return result.data.ok
+                ? null
+                : removeFailedText(press.name, { code: result.data.code });
+            },
+            () => removeFailedText(press.name, { error: undefined }),
+            true,
+          );
       }
     },
   };

@@ -19,6 +19,13 @@ interface ImporterOptions {
   chooseFile(): Promise<string | null>;
 }
 
+/** What main.ts passed to createPackExporter. */
+interface ExporterOptions {
+  readonly store: { fake: string };
+  readonly exportPack: unknown;
+  chooseTarget(defaultName: string): Promise<string | null>;
+}
+
 const state = vi.hoisted(() => {
   const s = {
     squirrel: false,
@@ -55,6 +62,16 @@ const state = vi.hoisted(() => {
       | undefined,
     /** What main.ts passed to createPackImporter. */
     importerOptions: undefined as ImporterOptions | undefined,
+    /** What main.ts passed to createPackExporter. */
+    exporterOptions: undefined as ExporterOptions | undefined,
+    /** The `packs:remove` callback main.ts passed to registerPackHandlers. */
+    removeHandler: undefined as ((packId: string) => unknown) | undefined,
+    /** What dialog.showSaveDialog was called with, and what it answers. */
+    saveDialogCalls: [] as unknown[][],
+    saveDialogResult: { canceled: true, filePath: '' } as {
+      canceled: boolean;
+      filePath: string;
+    },
     /** What dialog.showOpenDialog was called with, and what it answers. */
     dialogCalls: [] as unknown[][],
     dialogResult: { canceled: true, filePaths: [] } as {
@@ -108,6 +125,10 @@ const state = vi.hoisted(() => {
       s.menuActions = undefined;
       s.panelOptions = undefined;
       s.importerOptions = undefined;
+      s.exporterOptions = undefined;
+      s.removeHandler = undefined;
+      s.saveDialogCalls = [];
+      s.saveDialogResult = { canceled: true, filePath: '' };
       s.dialogCalls = [];
       s.dialogResult = { canceled: true, filePaths: [] };
       s.displaysOptions = undefined;
@@ -187,6 +208,11 @@ vi.mock('electron', () => ({
       state.dialogCalls.push(args);
       state.maybeFail('dialog.showOpenDialog');
       return state.dialogResult;
+    },
+    showSaveDialog: async (...args: unknown[]) => {
+      state.saveDialogCalls.push(args);
+      state.maybeFail('dialog.showSaveDialog');
+      return state.saveDialogResult;
     },
   },
   Menu: {
@@ -280,9 +306,29 @@ vi.mock('../../src/main/packs/importer', () => ({
   },
 }));
 
+vi.mock('../../src/main/packs/exporter', () => ({
+  createPackExporter: (options: ExporterOptions) => {
+    state.order.push(`createPackExporter ${options.store.fake}`);
+    state.exporterOptions = options;
+    return { fake: 'exporter' };
+  },
+}));
+
+vi.mock('../../src/main/packs/remove', () => ({
+  removePack: (store: { fake: string }, packId: string) => {
+    state.order.push(`removePack ${store.fake} ${packId}`);
+    return { ok: true };
+  },
+}));
+
 vi.mock('../../src/main/packs/ipc', () => ({
-  registerPackHandlers: (importer: { fake: string }) => {
-    state.order.push(`registerPackHandlers ${importer.fake}`);
+  registerPackHandlers: (
+    importer: { fake: string },
+    exporter: { fake: string },
+    remove: (packId: string) => unknown,
+  ) => {
+    state.order.push(`registerPackHandlers ${importer.fake} ${exporter.fake}`);
+    state.removeHandler = remove;
   },
 }));
 
@@ -633,11 +679,12 @@ describe('the primary instance', () => {
       'detection.onSynced',
       'loadPacks /fake/userData/packs',
       'createPackImporter packs',
-      'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} detection={"fake":"detection"} pool={"fake":"pool"} packs={"fake":"packs"} packImport={"fake":"importer"}',
+      'createPackExporter packs',
+      'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} detection={"fake":"detection"} pool={"fake":"pool"} packs={"fake":"packs"} packImport={"fake":"importer"} packExport={"fake":"exporter"}',
       'registerIpcHandler app:get-version ["panels"]',
       'registerSettingsHandlers',
       'registerPoolHandlers pool',
-      'registerPackHandlers importer',
+      'registerPackHandlers importer exporter',
       'registerStageViewHandlers',
       'registerCanvasReadyHandler',
       'flushOnQuit settings',
@@ -971,6 +1018,81 @@ describe('the primary instance', () => {
     );
     expect(state.order).toContain('app.exit 1');
     expect(state.logs.some((line) => line.includes('panels.cjs'))).toBe(true);
+  });
+});
+
+describe('the pack export and removal (Story 3.3)', () => {
+  it("exports with main/packs' exportPack, from its store", async () => {
+    await startMain();
+    // The copy main.ts imported (startMain reset the module registry).
+    const { exportPack } = await import('../../src/main/packs/export');
+    expect(state.exporterOptions?.store).toStrictEqual({ fake: 'packs' });
+    expect(state.exporterOptions?.exportPack).toBe(exportPack);
+  });
+
+  it('匯出: the save dialog lists only .awpet files, starts with the name it is given, and is a sheet on the panel window', async () => {
+    await startMain();
+    await becomeReady();
+    const win = state.panelOptions?.createWindow({});
+    state.saveDialogResult = {
+      canceled: false,
+      filePath: '/x/sample-pack-1.0.0.awpet',
+    };
+
+    expect(
+      await state.exporterOptions?.chooseTarget('sample-pack-1.0.0.awpet'),
+    ).toBe('/x/sample-pack-1.0.0.awpet');
+    expect(state.saveDialogCalls).toStrictEqual([
+      [
+        win,
+        {
+          title: '匯出角色包',
+          defaultPath: 'sample-pack-1.0.0.awpet',
+          properties: ['createDirectory', 'showOverwriteConfirmation'],
+          filters: [{ name: '角色包', extensions: ['awpet'] }],
+        },
+      ],
+    ]);
+  });
+
+  it('匯出: with no panel window (or a destroyed one) the save dialog has no parent', async () => {
+    await startMain();
+    await becomeReady();
+
+    await state.exporterOptions?.chooseTarget('a-pack-1.0.0.awpet');
+    const win = state.panelOptions?.createWindow({}) as {
+      destroyed: boolean;
+    };
+    win.destroyed = true;
+    await state.exporterOptions?.chooseTarget('a-pack-1.0.0.awpet');
+
+    expect(state.saveDialogCalls.map((call) => call.length)).toStrictEqual([
+      1, 1,
+    ]);
+  });
+
+  it.each([
+    ['canceled', { canceled: true, filePath: '' }],
+    ['no path', { canceled: false, filePath: '' }],
+  ])(
+    '取消匯出: a save dialog answering %s answers null',
+    async (_label, result) => {
+      await startMain();
+      await becomeReady();
+      state.saveDialogResult = result;
+
+      expect(
+        await state.exporterOptions?.chooseTarget('a-pack-1.0.0.awpet'),
+      ).toBeNull();
+    },
+  );
+
+  it("移除: packs:remove removes from main/packs' store with removePack", async () => {
+    await startMain();
+    state.order = [];
+
+    expect(state.removeHandler?.('sample-pack')).toStrictEqual({ ok: true });
+    expect(state.order).toStrictEqual(['removePack packs sample-pack']);
   });
 });
 

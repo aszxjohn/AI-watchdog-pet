@@ -12,6 +12,8 @@ import type {
   canvasSetHover,
   packsChoose,
   packsConfirm,
+  packsExport,
+  packsRemove,
   poolSetReleased,
   settingsGet,
   settingsPatch,
@@ -72,6 +74,18 @@ export interface PanelsApi {
      * through StageView; do not update local state from the reply.
      */
     confirm(replace: boolean): Promise<IpcResult<IpcData<typeof packsConfirm>>>;
+    /**
+     * Asks main to open the save dialog and export the installed pack
+     * `packId` (Story 3.3). Answers at once; the export's progress and
+     * outcome come back through StageView's `packExport` section.
+     */
+    export(packId: string): Promise<IpcResult<IpcData<typeof packsExport>>>;
+    /**
+     * Removes the installed pack `packId` (the page has had the user
+     * confirm it). Answers once done: removed, or why nothing changed;
+     * the list comes back through StageView's `packs` section.
+     */
+    remove(packId: string): Promise<IpcResult<IpcData<typeof packsRemove>>>;
   };
   readonly stageView: StageViewApi;
 }

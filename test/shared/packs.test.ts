@@ -3,18 +3,25 @@ import {
   characterKey,
   characterKeySchema,
   PACK_ENTRY_PROBLEMS,
+  PACK_EXPORT_FAILURE_CODES,
   PACK_IMAGE_LIMITS,
   PACK_INSTALL_FAILURE_CODES,
+  PACK_REMOVE_FAILURE_CODES,
   PACK_REJECTION_CODES,
   PACK_SIZE_LIMITS,
+  IDLE_PACK_EXPORT,
   IDLE_PACK_IMPORT,
   packCharacterSummarySchema,
   packIndexEntrySchema,
   packIndexFileSchema,
   packManifestIssueSchema,
   packRejectionSchema,
+  packRemoveResultSchema,
   PACKS_SCHEMA_VERSION,
   packsConfirmInputSchema,
+  packsExportInputSchema,
+  packsRemoveInputSchema,
+  stagePackExportSchema,
   stagePackImportSchema,
   stagePackSchema,
   stagePacksSchema,
@@ -170,6 +177,8 @@ describe('the code lists', () => {
     ['PACK_IMAGE_LIMITS', PACK_IMAGE_LIMITS],
     ['PACK_ENTRY_PROBLEMS', PACK_ENTRY_PROBLEMS],
     ['PACK_INSTALL_FAILURE_CODES', PACK_INSTALL_FAILURE_CODES],
+    ['PACK_EXPORT_FAILURE_CODES', PACK_EXPORT_FAILURE_CODES],
+    ['PACK_REMOVE_FAILURE_CODES', PACK_REMOVE_FAILURE_CODES],
   ])('%s lists each code once, in kebab-case', (_name, codes) => {
     expect(new Set(codes).size).toBe(codes.length);
     for (const code of codes) {
@@ -436,6 +445,130 @@ describe('packsConfirmInputSchema', () => {
     ['two flags', [true, true]],
   ])('rejects %s', (_label, args) => {
     expectRejected(packsConfirmInputSchema, args);
+  });
+});
+
+describe('the export and removal codes (Story 3.3)', () => {
+  it('an export fails as not-installed, read-failed or write-failed', () => {
+    expect(PACK_EXPORT_FAILURE_CODES).toStrictEqual([
+      'not-installed',
+      'read-failed',
+      'write-failed',
+    ]);
+  });
+
+  it('a removal fails as not-installed, index-unwritable or index-write-failed', () => {
+    expect(PACK_REMOVE_FAILURE_CODES).toStrictEqual([
+      'not-installed',
+      'index-unwritable',
+      'index-write-failed',
+    ]);
+  });
+});
+
+describe('stagePackExportSchema', () => {
+  const EXPORTED = {
+    phase: 'result',
+    outcome: 'exported',
+    packId: 'sample-pack',
+    name: '樣本包',
+    version: '1.4.0',
+  };
+
+  it('starts idle', () => {
+    expect(IDLE_PACK_EXPORT).toStrictEqual({ phase: 'idle' });
+    expect(Object.isFrozen(IDLE_PACK_EXPORT)).toBe(true);
+  });
+
+  it.each<[string, unknown]>([
+    ['idle', { phase: 'idle' }],
+    ['saving', { phase: 'saving', packId: 'sample-pack' }],
+    ['an exported result', EXPORTED],
+    ...PACK_EXPORT_FAILURE_CODES.map((code): [string, unknown] => [
+      `a ${code} result`,
+      { phase: 'result', outcome: 'failed', packId: 'sample-pack', code },
+    ]),
+  ])('round-trips %s', (_label, value) => {
+    expectRoundTrip(stagePackExportSchema, value);
+  });
+
+  it.each<[string, unknown]>([
+    ['an unknown phase', { phase: 'writing' }],
+    ['no phase', {}],
+    ['saving with no pack id', { phase: 'saving' }],
+    ['saving with a bad pack id', { phase: 'saving', packId: 'Sample' }],
+    [
+      'saving with the place picked',
+      { phase: 'saving', packId: 'sample-pack', file: '/a.awpet' },
+    ],
+    ['a result with no outcome', { phase: 'result' }],
+    ['an unknown outcome', { phase: 'result', outcome: 'cancelled' }],
+    ['an exported result with no version', { ...EXPORTED, version: undefined }],
+    ['an exported result with a bad version', { ...EXPORTED, version: 'v1' }],
+    ['an exported result with a blank name', { ...EXPORTED, name: '  ' }],
+    [
+      'an exported result with the place picked',
+      { ...EXPORTED, file: '/Users/someone/Desktop/a.awpet' },
+    ],
+    [
+      'a failed result with an unknown code',
+      {
+        phase: 'result',
+        outcome: 'failed',
+        packId: 'sample-pack',
+        code: 'disk-full',
+      },
+    ],
+    [
+      'a failed result with no pack id',
+      { phase: 'result', outcome: 'failed', code: 'read-failed' },
+    ],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(stagePackExportSchema, value);
+  });
+});
+
+describe.each([
+  ['packsExportInputSchema', packsExportInputSchema],
+  ['packsRemoveInputSchema', packsRemoveInputSchema],
+])('%s', (_name, schema) => {
+  it.each([[['sample-pack']], [['ab']]])('takes %j', (args) => {
+    expectRoundTrip(schema, args);
+  });
+
+  it.each([
+    ['nothing', []],
+    ['an id with upper case', ['Sample-Pack']],
+    ['an id with a slash', ['sample/pack']],
+    ['dot dot', ['..']],
+    ['an all-digit id', ['123']],
+    ['a Windows device name', ['nul']],
+    ['a number', [1]],
+    ['two ids', ['sample-pack', 'other-pack']],
+  ])('rejects %s', (_label, args) => {
+    expectRejected(schema, args);
+  });
+});
+
+describe('packRemoveResultSchema', () => {
+  it.each<[string, unknown]>([
+    ['removed', { ok: true }],
+    ...PACK_REMOVE_FAILURE_CODES.map((code): [string, unknown] => [
+      code,
+      { ok: false, code },
+    ]),
+  ])('round-trips %s', (_label, value) => {
+    expectRoundTrip(packRemoveResultSchema, value);
+  });
+
+  it.each<[string, unknown]>([
+    ['nothing', undefined],
+    ['removed with a code', { ok: true, code: 'not-installed' }],
+    ['a failure with no code', { ok: false }],
+    ['a failure with an unknown code', { ok: false, code: 'disk-full' }],
+    ['an install failure code', { ok: false, code: 'stale-plan' }],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(packRemoveResultSchema, value);
   });
 });
 

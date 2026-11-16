@@ -129,6 +129,8 @@ context:
 
 - 2026-11-16 審查修補後驗證（主流程重跑）：四項檢查全過（85 檔通過、1 檔跳過；4213 個測試通過、2 個跳過；depcruise 0 違規）；I/O 矩陣 16 列都有測試且都跑過；diff 裡沒有刪掉的 `expect(`。
 
+- CI：commit `359244e`（2026-11-16）後，GitHub Actions 的 macOS、Windows 都通過（run 43831436270）。
+
 ## Spec Change Log
 
 ## Review Triage Log

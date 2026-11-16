@@ -7,6 +7,8 @@ import {
   appGetVersion,
   packsChoose,
   packsConfirm,
+  packsExport,
+  packsRemove,
   poolSetReleased,
   settingsGet,
   settingsPatch,
@@ -31,6 +33,8 @@ const api: PanelsApi = Object.freeze({
   packs: Object.freeze({
     choose: () => invoke(packsChoose),
     confirm: (replace: boolean) => invoke(packsConfirm, replace),
+    export: (packId: string) => invoke(packsExport, packId),
+    remove: (packId: string) => invoke(packsRemove, packId),
   }),
   stageView: Object.freeze({
     subscribe: subscribeStageView,

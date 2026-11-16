@@ -3,7 +3,11 @@ import {
   DETECTION_ID_MAX_LENGTH,
   sessionKeySchema,
 } from './detection-events';
-import { stagePackImportSchema, stagePacksSchema } from './packs';
+import {
+  stagePackExportSchema,
+  stagePackImportSchema,
+  stagePacksSchema,
+} from './packs';
 import { stagePoolSchema } from './pool';
 import { settingsStateSchema } from './settings';
 import { adapterHealthSchema, sourceCodeSchema } from './sources';
@@ -24,7 +28,9 @@ import { z } from './zod-setup';
  *   different deltas (each delta is rev + 1);
  * - `packs`: main/packs (Story 3.2), the installed character packs;
  * - `packImport`: main/packs (Story 3.2), where the one import at a time
- *   is (reading, waiting for the user to confirm a replace, or its result).
+ *   is (reading, waiting for the user to confirm a replace, or its result);
+ * - `packExport`: main/packs (Story 3.3), where the one export at a time
+ *   is (saving, or its result).
  */
 
 /**
@@ -163,6 +169,7 @@ export const stageViewSchema = z.strictObject({
   pool: stagePoolSchema,
   packs: stagePacksSchema,
   packImport: stagePackImportSchema,
+  packExport: stagePackExportSchema,
 });
 
 export type StageView = z.infer<typeof stageViewSchema>;
@@ -190,6 +197,9 @@ export type StageViewPacksSections = Pick<StageView, 'packs'>;
 /** The section main/packs' importer owns. */
 export type StageViewPackImportSections = Pick<StageView, 'packImport'>;
 
+/** The section main/packs' exporter owns. */
+export type StageViewPackExportSections = Pick<StageView, 'packExport'>;
+
 /** The answer to `stage-view:subscribe`: the whole view at `rev`. */
 export const stageViewSnapshotSchema = z.strictObject({
   rev: stageViewRevSchema,
@@ -214,6 +224,7 @@ export const stageViewSectionsSchema = z
     pool: stagePoolSchema.exactOptional(),
     packs: stagePacksSchema.exactOptional(),
     packImport: stagePackImportSchema.exactOptional(),
+    packExport: stagePackExportSchema.exactOptional(),
   })
   .refine((sections) => Object.keys(sections).length > 0, {
     message: 'a delta carries at least one section',

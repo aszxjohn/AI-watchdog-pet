@@ -398,3 +398,43 @@ body {
 .pack-list + .pack-import {
   margin-top: 24px;
 }
+
+/*
+ * 角色包 › 已安裝, Story 3.3's second half: each pack's 匯出… and 移除… at
+ * the end of its header, the removal question under the header, and the
+ * export status line under the list.
+ */
+.pack-item-actions {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.pack-remove-confirm {
+  margin: 8px 0 4px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.pack-remove-confirm p {
+  margin: 0 0 8px;
+}
+
+.pack-remove-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pack-export-status {
+  margin: 12px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.pack-export-status.is-progress {
+  color: var(--muted);
+}
+
+.pack-export-status.is-error {
+  color: var(--error);
+}

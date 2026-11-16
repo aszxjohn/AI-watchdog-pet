@@ -13,11 +13,13 @@
  *    ~/.cursor/projects), the pool (the released sessions, from
  *    assignments.json; swept once detection's start-up sync is over), the
  *    installed character packs (userData/packs, cleaned of what an install
- *    left behind) and the pack import flow (main/packs' importer: the
- *    角色包 page's file dialog, on the panel), StageView (settings,
+ *    left behind), the pack import flow (main/packs' importer: the
+ *    角色包 page's file dialog, on the panel) and export flow (main/packs'
+ *    exporter: the save dialog, on the panel), StageView (settings,
  *    main/windows' displays, canvas and power sections, main/detection's
- *    sessions and adapters, main/pool's pool, main/packs' packs and
- *    packImport) and the IPC handlers, and guards every window
+ *    sessions and adapters, main/pool's pool, main/packs' packs,
+ *    packImport and packExport) and the IPC handlers (removing a pack
+ *    among them), and guards every window
  *    webContents. The canvas's hover and right-click handlers come
  *    once the canvas windows exist; a right-click on the demo session's
  *    square opens the demo menu, which calls detection.setDemo as the
@@ -60,6 +62,7 @@ import {
   screen,
   session,
   type OpenDialogOptions,
+  type SaveDialogOptions,
 } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -80,6 +83,8 @@ import {
 } from './detection/detection';
 import { registerIpcHandler } from './ipc/register';
 import { errorCode, initRunLog, logEvent } from './log/run-log';
+import { exportPack } from './packs/export';
+import { createPackExporter } from './packs/exporter';
 import { createPackImporter } from './packs/importer';
 import { inspectPack } from './packs/inspect';
 import { installPack } from './packs/install';
@@ -91,6 +96,7 @@ import {
   packFileFromArgv,
 } from './packs/launch-files';
 import { handlePackProtocol } from './packs/protocol';
+import { removePack } from './packs/remove';
 import { loadPacks } from './packs/store';
 import { flushOnQuit } from './persist/quit';
 import { registerPoolHandlers } from './pool/ipc';
@@ -189,6 +195,29 @@ async function choosePackFile(
 }
 
 /**
+ * The 匯出… save dialog: a sheet on the panel when one is open, only
+ * `.awpet` files, `defaultName` as the file name to start with (in the
+ * folder the system picks). Asks before replacing a file (on Linux too).
+ * Answers the place picked, or null when cancelled.
+ */
+async function choosePackTarget(
+  parent: BrowserWindow | undefined,
+  defaultName: string,
+): Promise<string | null> {
+  const options: SaveDialogOptions = {
+    title: '匯出角色包',
+    defaultPath: defaultName,
+    properties: ['createDirectory', 'showOverwriteConfirmation'],
+    filters: [{ name: '角色包', extensions: [PACK_FILE_EXTENSION.slice(1)] }],
+  };
+  const result =
+    parent === undefined
+      ? await dialog.showSaveDialog(options)
+      : await dialog.showSaveDialog(parent, options);
+  return result.canceled || result.filePath === '' ? null : result.filePath;
+}
+
+/**
  * Runs one startup step after `ready`. A step that throws is logged with its
  * name and errorCode, and the caller goes on with the next one: a missing
  * feature beats a missing tray.
@@ -207,9 +236,9 @@ function startupStep(name: string, run: () => void): void {
 
 function startPrimaryInstance(): void {
   // Startup order: run log, settings, detection, pool, packs and their
-  // importer, StageView, IPC handlers, window guards; the tray and windows
-  // once ready. userData is the same folder for `npm start` and the
-  // packaged app.
+  // importer and exporter, StageView, IPC handlers, window guards; the tray
+  // and windows once ready. userData is the same folder for `npm start` and
+  // the packaged app.
   const userData = app.getPath('userData');
   initRunLog(path.join(userData, 'logs'));
   logEvent(
@@ -258,19 +287,28 @@ function startPrimaryInstance(): void {
   // folder per pack) and the packs section; loading also removes what an
   // earlier install left behind. Its importer is the one import flow (the
   // 角色包 page's file dialog, a .awpet from outside) and owns the
-  // packImport section; its dialog opens on the panel window.
+  // packImport section; its exporter (each pack's 匯出…) owns the
+  // packExport section. Both dialogs open on the panel window. Removing a
+  // pack (its 移除…) is one quick call, answered by packs:remove itself.
   const packs = loadPacks({ dir: path.join(userData, 'packs') });
   let panelWindow: BrowserWindow | undefined;
+  /** The panel window, while one is open: the dialogs' parent. */
+  function openPanelWindow(): BrowserWindow | undefined {
+    return panelWindow === undefined || panelWindow.isDestroyed()
+      ? undefined
+      : panelWindow;
+  }
   const importer = createPackImporter({
     store: packs,
     inspect: inspectPack,
     install: installPack,
-    chooseFile: () =>
-      choosePackFile(
-        panelWindow === undefined || panelWindow.isDestroyed()
-          ? undefined
-          : panelWindow,
-      ),
+    chooseFile: () => choosePackFile(openPanelWindow()),
+  });
+  const exporter = createPackExporter({
+    store: packs,
+    exportPack,
+    chooseTarget: (defaultName) =>
+      choosePackTarget(openPanelWindow(), defaultName),
   });
   const stageView = createStageView({
     settings,
@@ -279,12 +317,15 @@ function startPrimaryInstance(): void {
     pool,
     packs,
     packImport: importer,
+    packExport: exporter,
   });
 
   registerIpcHandler(appGetVersion, ['panels'], () => app.getVersion());
   registerSettingsHandlers(settings);
   registerPoolHandlers(pool);
-  registerPackHandlers(importer);
+  registerPackHandlers(importer, exporter, (packId) =>
+    removePack(packs, packId),
+  );
   registerStageViewHandlers(stageView);
   registerCanvasReadyHandler();
 

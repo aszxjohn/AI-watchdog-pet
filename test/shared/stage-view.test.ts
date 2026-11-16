@@ -84,6 +84,7 @@ const VIEW: StageView = {
   pool: { released: ['demo:1'] },
   packs: { installed: [PACK] },
   packImport: { phase: 'idle' },
+  packExport: { phase: 'idle' },
 };
 const NEXT_SETTINGS = {
   rev: 4,
@@ -338,6 +339,8 @@ describe('stageViewSchema', () => {
     ['no packs section', { ...VIEW, packs: undefined }],
     ['no packImport section', { ...VIEW, packImport: undefined }],
     ['an unknown import phase', { ...VIEW, packImport: { phase: 'done' } }],
+    ['no packExport section', { ...VIEW, packExport: undefined }],
+    ['an unknown export phase', { ...VIEW, packExport: { phase: 'done' } }],
     [
       'installed packs out of order',
       {
@@ -436,6 +439,19 @@ describe('stageViewDeltaSchema', () => {
         },
       },
     ],
+    ['packExport', { packExport: { phase: 'saving', packId: PACK.id } }],
+    [
+      'packs and packExport together',
+      {
+        packs: { installed: [] },
+        packExport: {
+          phase: 'result',
+          outcome: 'failed',
+          packId: PACK.id,
+          code: 'not-installed',
+        },
+      },
+    ],
   ])('round-trips a delta with %s', (_label, sections) => {
     expectRoundTrip(stageViewDeltaSchema, { rev: 8, sections });
   });
@@ -455,6 +471,23 @@ describe('stageViewDeltaSchema', () => {
     ['undefined pool', { rev: 1, sections: { pool: undefined } }],
     ['undefined packs', { rev: 1, sections: { packs: undefined } }],
     ['undefined packImport', { rev: 1, sections: { packImport: undefined } }],
+    ['undefined packExport', { rev: 1, sections: { packExport: undefined } }],
+    [
+      'a packExport result with a path on the disk',
+      {
+        rev: 1,
+        sections: {
+          packExport: {
+            phase: 'result',
+            outcome: 'exported',
+            packId: PACK.id,
+            name: PACK.name,
+            version: PACK.version,
+            file: '/a.awpet',
+          },
+        },
+      },
+    ],
     [
       'a packImport result with a path on the disk',
       {
@@ -524,6 +557,7 @@ describe('applyStageViewDelta', () => {
       pool: VIEW.pool,
       packs: VIEW.packs,
       packImport: VIEW.packImport,
+      packExport: VIEW.packExport,
     });
   });
 });

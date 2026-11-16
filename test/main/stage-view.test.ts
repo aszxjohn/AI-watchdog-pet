@@ -22,6 +22,7 @@ import {
   stageViewDeltaSchema,
   stageViewSnapshotSchema,
   type StageViewDetectionSections,
+  type StageViewPackExportSections,
   type StageViewPackImportSections,
   type StageViewPacksSections,
   type StageViewPoolSections,
@@ -37,6 +38,7 @@ let detection: ReturnType<typeof fakeDetection>;
 let pool: ReturnType<typeof fakePool>;
 let packs: ReturnType<typeof fakePacks>;
 let packImport: ReturnType<typeof fakePackImport>;
+let packExport: ReturnType<typeof fakePackExport>;
 let hub: StageViewHub;
 
 /**
@@ -150,6 +152,35 @@ function fakePackImport() {
   };
 }
 
+/**
+ * A stand-in for main/packs' exporter: update() replaces its section and
+ * tells the listeners, as the exporter does (any value, so a test can hand
+ * StageView one that fails the schema).
+ */
+function fakePackExport() {
+  let sections: StageViewPackExportSections = {
+    packExport: { phase: 'idle' },
+  };
+  const listeners = new Set<(changed: StageViewPackExportSections) => void>();
+  return {
+    get: () => sections,
+    onChange(listener: (changed: StageViewPackExportSections) => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    update(packExport: unknown) {
+      sections = {
+        packExport: packExport as StageViewPackExportSections['packExport'],
+      };
+      for (const listener of listeners) {
+        listener(sections);
+      }
+    },
+  };
+}
+
 /** main/windows' sections before ready. */
 const WINDOWS_BEFORE_READY = {
   displays: [],
@@ -164,6 +195,8 @@ const NO_POOL = { pool: { released: [] } };
 const NO_PACKS = { packs: { installed: [] } };
 /** main/packs' importer before any import. */
 const NO_PACK_IMPORT = { packImport: { phase: 'idle' } };
+/** main/packs' exporter before any export. */
+const NO_PACK_EXPORT = { packExport: { phase: 'idle' } };
 const PACK = {
   id: 'sample-pack',
   name: '範例包',
@@ -205,6 +238,7 @@ beforeEach(() => {
   pool = fakePool();
   packs = fakePacks();
   packImport = fakePackImport();
+  packExport = fakePackExport();
   hub = createStageView({
     settings,
     windows,
@@ -212,6 +246,7 @@ beforeEach(() => {
     pool,
     packs,
     packImport,
+    packExport,
   });
 });
 
@@ -245,6 +280,7 @@ describe('StageView composition', () => {
         ...NO_POOL,
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
+        ...NO_PACK_EXPORT,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(snapshot).success).toBe(true);
@@ -299,6 +335,7 @@ describe('StageView composition', () => {
         ...NO_POOL,
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
+        ...NO_PACK_EXPORT,
       },
     });
   });
@@ -314,6 +351,7 @@ describe('StageView composition', () => {
       pool,
       packs,
       packImport,
+      packExport,
     });
 
     expect(later.snapshot().rev).toBe(0);
@@ -357,6 +395,7 @@ describe("main/windows' sections", () => {
       pool,
       packs,
       packImport,
+      packExport,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -370,6 +409,7 @@ describe("main/windows' sections", () => {
         ...NO_POOL,
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
+        ...NO_PACK_EXPORT,
       },
     });
   });
@@ -402,6 +442,7 @@ describe("main/windows' sections", () => {
         ...NO_POOL,
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
+        ...NO_PACK_EXPORT,
       },
     });
   });
@@ -460,6 +501,7 @@ describe("main/detection's sections", () => {
       pool,
       packs,
       packImport,
+      packExport,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -472,6 +514,7 @@ describe("main/detection's sections", () => {
         ...NO_POOL,
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
+        ...NO_PACK_EXPORT,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -523,6 +566,7 @@ describe("main/pool's section", () => {
       pool,
       packs,
       packImport,
+      packExport,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -534,6 +578,7 @@ describe("main/pool's section", () => {
         pool: { released: ['claude-code:a', 'demo:1'] },
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
+        ...NO_PACK_EXPORT,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -597,6 +642,7 @@ describe("main/packs' section", () => {
       pool,
       packs,
       packImport,
+      packExport,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -608,6 +654,7 @@ describe("main/packs' section", () => {
         ...NO_POOL,
         packs: { installed: [PACK] },
         ...NO_PACK_IMPORT,
+        ...NO_PACK_EXPORT,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -672,6 +719,7 @@ describe("main/packs' importer section", () => {
       pool,
       packs,
       packImport,
+      packExport,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -683,6 +731,7 @@ describe("main/packs' importer section", () => {
         ...NO_POOL,
         ...NO_PACKS,
         packImport: CONFIRM,
+        ...NO_PACK_EXPORT,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -742,6 +791,104 @@ describe("main/packs' importer section", () => {
       '[stage-view] dropped a delta that fails the schema (sections: packImport; fields: packImport.phase); rev stays 0',
     ]);
   });
+});
+
+describe("main/packs' exporter section", () => {
+  const SAVING = { phase: 'saving', packId: 'sample-pack' };
+  const EXPORTED = {
+    phase: 'result',
+    outcome: 'exported',
+    packId: PACK.id,
+    name: PACK.name,
+    version: PACK.version,
+  };
+
+  it('starts from what the exporter has', () => {
+    packExport.update(SAVING);
+
+    const later = createStageView({
+      settings,
+      windows,
+      detection,
+      pool,
+      packs,
+      packImport,
+      packExport,
+    });
+
+    expect(later.snapshot()).toStrictEqual({
+      rev: 0,
+      view: {
+        settings: settings.get(),
+        ...WINDOWS_BEFORE_READY,
+        ...NO_DETECTION,
+        ...NO_POOL,
+        ...NO_PACKS,
+        ...NO_PACK_IMPORT,
+        packExport: SAVING,
+      },
+    });
+    expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
+      true,
+    );
+  });
+
+  it('pushes one delta per change, carrying the packExport section only, on the shared rev', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    packExport.update(SAVING);
+    packs.update([PACK]);
+    packExport.update(EXPORTED);
+
+    expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
+      { rev: 1, sections: { packExport: SAVING } },
+      { rev: 2, sections: { packs: { installed: [PACK] } } },
+      { rev: 3, sections: { packExport: EXPORTED } },
+    ]);
+    for (const { args } of subscriber.sent) {
+      expect(stageViewDeltaSchema.safeParse(args[0]).success).toBe(true);
+    }
+    expect(hub.snapshot().view.packExport).toStrictEqual(EXPORTED);
+  });
+
+  it.each<[string, unknown, string]>([
+    ['an unknown phase', { phase: 'writing' }, 'packExport.phase'],
+    [
+      'a result with a path on the disk',
+      { ...EXPORTED, file: '/Users/someone/Desktop/a.awpet' },
+      'packExport.file',
+    ],
+    [
+      'a failure with an unknown code',
+      {
+        phase: 'result',
+        outcome: 'failed',
+        packId: PACK.id,
+        code: 'disk-full',
+      },
+      'packExport.code',
+    ],
+  ])(
+    'drops a packExport section that fails the schema before moving rev: %s',
+    (_label, section, fields) => {
+      const subscriber = contents(1);
+      hub.subscribe(subscriber);
+
+      packExport.update(section);
+
+      expect(subscriber.sent).toStrictEqual([]);
+      expect(hub.snapshot().rev).toBe(0);
+      expect(hub.snapshot().view.packExport).toStrictEqual({ phase: 'idle' });
+      expect(
+        vi
+          .mocked(console.error)
+          .mock.calls.map((call: unknown[]) => String(call[0])),
+      ).toStrictEqual([
+        `[stage-view] dropped a delta that fails the schema (sections: packExport; fields: ${fields}); rev stays 0`,
+      ]);
+    },
+  );
 });
 
 describe('a delta that fails the schema (I/O matrix: 壞增量)', () => {
@@ -857,6 +1004,7 @@ describe('subscribers', () => {
         ...NO_POOL,
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
+        ...NO_PACK_EXPORT,
       },
     });
     expect(hub.subscriberCount()).toBe(1);

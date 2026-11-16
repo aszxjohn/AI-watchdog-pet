@@ -13,6 +13,8 @@ import {
   parseIpcResult,
   packsChoose,
   packsConfirm,
+  packsExport,
+  packsRemove,
   poolSetReleased,
   settingsGet,
   settingsPatch,
@@ -204,6 +206,7 @@ describe('settings and StageView contracts', () => {
       pool: { released: [] },
       packs: { installed: [] },
       packImport: { phase: 'idle' },
+      packExport: { phase: 'idle' },
     },
   };
   const DELTA = { rev: 6, sections: { settings: STATE } };
@@ -447,5 +450,36 @@ describe('packs:choose and packs:confirm contracts', () => {
     expectRejected(packsConfirm.input, [true, false]);
     expectRoundTrip(packsConfirm.output, null);
     expectRejected(packsConfirm.output, undefined);
+  });
+});
+
+describe('packs:export and packs:remove contracts (Story 3.3)', () => {
+  it('have <domain>:<action> names', () => {
+    expect(packsExport.channel).toBe('packs:export');
+    expect(packsRemove.channel).toBe('packs:remove');
+    expect(isIpcChannelName(packsExport.channel)).toBe(true);
+    expect(isIpcChannelName(packsRemove.channel)).toBe(true);
+  });
+
+  it('packs:export takes one pack id and answers null', () => {
+    expectRoundTrip(packsExport.input, ['sample-pack']);
+    expectRejected(packsExport.input, []);
+    expectRejected(packsExport.input, ['Sample-Pack']);
+    expectRejected(packsExport.input, ['/a.awpet']);
+    expectRejected(packsExport.input, ['sample-pack', '/a.awpet']);
+    expectRoundTrip(packsExport.output, null);
+    expectRejected(packsExport.output, '/a.awpet');
+  });
+
+  it('packs:remove takes one pack id and answers removed or a failure code', () => {
+    expectRoundTrip(packsRemove.input, ['sample-pack']);
+    expectRejected(packsRemove.input, []);
+    expectRejected(packsRemove.input, ['..']);
+    expectRejected(packsRemove.input, ['sample-pack', true]);
+    expectRoundTrip(packsRemove.output, { ok: true });
+    expectRoundTrip(packsRemove.output, { ok: false, code: 'not-installed' });
+    expectRejected(packsRemove.output, null);
+    expectRejected(packsRemove.output, { ok: false, code: 'disk-full' });
+    expectRejected(packsRemove.output, { ok: true, code: 'not-installed' });
   });
 });
