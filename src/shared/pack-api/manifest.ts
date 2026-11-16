@@ -20,21 +20,34 @@ import { apiVersionSchema } from './version';
  * its feet, in base pixels, y pointing down.
  */
 
-/** Windows device names, which cannot be a folder name there. */
+/**
+ * Windows device names (Microsoft's reserved list, COM0 and LPT0 included),
+ * which cannot be a file or folder name there.
+ */
 const WINDOWS_DEVICE_NAMES = new Set([
   'con',
   'prn',
   'aux',
   'nul',
-  ...Array.from({ length: 9 }, (_, i) => `com${i + 1}`),
-  ...Array.from({ length: 9 }, (_, i) => `lpt${i + 1}`),
+  ...Array.from({ length: 10 }, (_, i) => `com${i}`),
+  ...Array.from({ length: 10 }, (_, i) => `lpt${i}`),
 ]);
+
+/**
+ * Whether Windows treats a file or folder called `name` as a device: the
+ * part before its first `.`, in any case, is a device name (`con`,
+ * `NUL.js`, `com0.png`).
+ */
+export function isWindowsDeviceName(name: string): boolean {
+  const stem = name.split('.', 1)[0] ?? '';
+  return WINDOWS_DEVICE_NAMES.has(stem.toLowerCase());
+}
 
 /**
  * A pack id: an id that also works as the host of `pack://<packId>/` and as
  * a folder name on every platform. Not all digits and not starting with
  * `0x` (Chromium turns such a host of a standard scheme into an IPv4
- * address), and not a Windows device name.
+ * address), and not a Windows device name (`com0` and `lpt0` included).
  */
 export const packIdSchema = idSchema.superRefine((id, ctx) => {
   if (/^[0-9]+$/.test(id)) {
@@ -86,12 +99,20 @@ function isPackPath(path: string): boolean {
  * A file inside the pack, relative to its folder, written the one way its
  * `pack://` URL is: segments split by `/`, each a PACK_PATH_SEGMENT. So no
  * leading or doubled `/`, no `.` or `..` segment, no `\`, drive letter, `%`,
- * `#`, `?` or control character. The import (3.2) still checks every path it
- * unpacks.
+ * `#`, `?` or control character. No segment is a Windows device name before
+ * its first `.` (`con.png`, `img/NUL.js`). The import (3.2) still checks
+ * every path it unpacks.
  */
 export const packPathSchema = z
   .string()
-  .refine(isPackPath, ruleIssue('invalid-pack-path', 'not a pack path'));
+  .refine(isPackPath, ruleIssue('invalid-pack-path', 'not a pack path'))
+  .refine(
+    (path) => !path.split('/').some(isWindowsDeviceName),
+    ruleIssue(
+      'pack-path-device-name',
+      'no segment of a pack path is a Windows device name',
+    ),
+  );
 
 /** The pack's entry script: a pack path ending in `.js`. */
 export const entryPathSchema = packPathSchema.refine(
@@ -172,7 +193,8 @@ const characterSchema = z.strictObject({
 export type PackCharacter = z.infer<typeof characterSchema>;
 
 type ManifestFields = {
-  readonly assets: Readonly<Record<string, unknown>>;
+  readonly entry: string;
+  readonly assets: Readonly<Record<string, { readonly path: string }>>;
   readonly characters: readonly PackCharacter[];
   readonly projectiles?: Readonly<Record<string, string>>;
 };
@@ -187,7 +209,10 @@ function isInside(inner: LocalBox, outer: LocalBox): boolean {
   );
 }
 
-/** The cross-field rules: references, repeats, `fallback`, the hitbox. */
+/**
+ * The cross-field rules: references, repeats, `fallback`, the hitbox, and
+ * paths that differ only in case.
+ */
 function checkManifest(manifest: ManifestFields, ctx: z.RefinementCtx): void {
   const hasAsset = (key: string) => Object.hasOwn(manifest.assets, key);
   const issue = (
@@ -195,6 +220,33 @@ function checkManifest(manifest: ManifestFields, ctx: z.RefinementCtx): void {
     message: string,
     path: PropertyKey[],
   ) => addRuleIssue(ctx, rule, message, path);
+
+  // macOS and Windows file systems ignore case by default, so `img/A.png`
+  // and `img/a.png` would be one file there and two elsewhere. The same
+  // path written twice is one file and is allowed.
+  const spellings = new Map<string, string>();
+  const declared: [PropertyKey[], string][] = [
+    [['entry'], manifest.entry],
+    ...Object.entries(manifest.assets).map(
+      ([key, asset]): [PropertyKey[], string] => [
+        ['assets', key, 'path'],
+        asset.path,
+      ],
+    ),
+  ];
+  for (const [at, path] of declared) {
+    const folded = path.toLowerCase();
+    const first = spellings.get(folded);
+    if (first === undefined) {
+      spellings.set(folded, path);
+    } else if (first !== path) {
+      issue(
+        'pack-path-case-conflict',
+        'two paths in a manifest do not differ only in case',
+        at,
+      );
+    }
+  }
 
   for (const i of repeatedIndexes(manifest.characters.map((c) => c.id))) {
     issue('duplicate-character-id', 'character ids are unique', [

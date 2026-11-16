@@ -63,6 +63,16 @@ const CODEX_SESSION = {
   confidence: 'inferred',
 } as const;
 const ADAPTER = { source: 'demo', health: 'ok' } as const;
+const PACK = {
+  id: 'sample-pack',
+  name: '範例包',
+  version: '1.2.0',
+  apiVersion: '1.0',
+  characters: [
+    { id: 'probe-a', name: '探針甲', height: 110 },
+    { id: 'probe-b', name: '探針乙', height: 96.5 },
+  ],
+};
 
 const VIEW: StageView = {
   settings: { rev: 0, values: { ...SETTINGS_DEFAULTS, canvasDisplayId: null } },
@@ -72,6 +82,7 @@ const VIEW: StageView = {
   sessions: [SESSION],
   adapters: [ADAPTER],
   pool: { released: ['demo:1'] },
+  packs: { installed: [PACK] },
 };
 const NEXT_SETTINGS = {
   rev: 4,
@@ -303,6 +314,7 @@ describe('stageViewSchema', () => {
       sessions: [],
       adapters: [],
       pool: { released: [] },
+      packs: { installed: [] },
     });
   });
 
@@ -322,6 +334,15 @@ describe('stageViewSchema', () => {
     ['no sessions section', { ...VIEW, sessions: undefined }],
     ['no adapters section', { ...VIEW, adapters: undefined }],
     ['no pool section', { ...VIEW, pool: undefined }],
+    ['no packs section', { ...VIEW, packs: undefined }],
+    [
+      'installed packs out of order',
+      {
+        ...VIEW,
+        packs: { installed: [PACK, { ...PACK, id: 'another-pack' }] },
+      },
+    ],
+    ['a pack installed twice', { ...VIEW, packs: { installed: [PACK, PACK] } }],
     [
       'released keys out of order',
       { ...VIEW, pool: { released: ['demo:1', 'claude-code:a'] } },
@@ -396,6 +417,8 @@ describe('stageViewDeltaSchema', () => {
     ['sessions and adapters together', { sessions: [], adapters: [] }],
     ['pool', { pool: { released: ['codex:0199a3c2-7f1e', 'demo:1'] } }],
     ['nothing released any more', { pool: { released: [] } }],
+    ['packs', { packs: { installed: [PACK] } }],
+    ['no packs any more', { packs: { installed: [] } }],
   ])('round-trips a delta with %s', (_label, sections) => {
     expectRoundTrip(stageViewDeltaSchema, { rev: 8, sections });
   });
@@ -413,6 +436,16 @@ describe('stageViewDeltaSchema', () => {
     ['null displays', { rev: 1, sections: { displays: null } }],
     ['undefined sessions', { rev: 1, sections: { sessions: undefined } }],
     ['undefined pool', { rev: 1, sections: { pool: undefined } }],
+    ['undefined packs', { rev: 1, sections: { packs: undefined } }],
+    [
+      'a pack with served paths (they stay in main)',
+      {
+        rev: 1,
+        sections: {
+          packs: { installed: [{ ...PACK, servedPaths: ['entry.js'] }] },
+        },
+      },
+    ],
     [
       'a pool with a bad key',
       { rev: 1, sections: { pool: { released: ['vim:1'] } } },
@@ -462,6 +495,7 @@ describe('applyStageViewDelta', () => {
       sessions: [SESSION],
       adapters: [ADAPTER],
       pool: VIEW.pool,
+      packs: VIEW.packs,
     });
   });
 });

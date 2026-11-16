@@ -72,6 +72,7 @@ describe('createWindowsStageSource', () => {
         sessions: [],
         adapters: [],
         pool: { released: [] },
+        packs: { installed: [] },
       }).success,
     ).toBe(true);
   });

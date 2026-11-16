@@ -33,6 +33,8 @@ export const PACK_API_ISSUE_RULES = [
   'pack-id-hex-prefix',
   'pack-id-device-name',
   'invalid-pack-path',
+  'pack-path-device-name',
+  'pack-path-case-conflict',
   'entry-not-js',
   'scale-off-grid',
   'duplicate-wander-area',

@@ -26,6 +26,7 @@ function snapshot(rev: number, id: number | null = null): StageViewSnapshot {
       sessions: [],
       adapters: [],
       pool: { released: [] },
+      packs: { installed: [] },
     },
   };
 }

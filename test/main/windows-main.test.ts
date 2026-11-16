@@ -223,6 +223,20 @@ vi.mock('../../src/main/pool/store', () => ({
   },
 }));
 
+vi.mock('../../src/main/packs/store', () => ({
+  loadPacks: (options: { dir: string }) => {
+    state.order.push(`loadPacks ${options.dir.replaceAll('\\', '/')}`);
+    return { fake: 'packs' };
+  },
+}));
+
+vi.mock('../../src/main/packs/protocol', () => ({
+  handlePackProtocol: (store: { fake: string }) => {
+    state.order.push(`handlePackProtocol ${store.fake}`);
+    state.maybeFail('handlePackProtocol');
+  },
+}));
+
 vi.mock('../../src/main/pool/ipc', () => ({
   registerPoolHandlers: (store: { fake: string }) => {
     state.order.push(`registerPoolHandlers ${store.fake}`);
@@ -469,6 +483,7 @@ function readySteps(): string[] {
     `buildApplicationMenu ${process.platform}`,
     `Menu.setApplicationMenu {"fake":"menu ${process.platform}"}`,
     'handleAppProtocol',
+    'handlePackProtocol packs',
     'dock.hideAtStartup',
     `createTray ${process.platform}`,
     'watchDemoState detection',
@@ -557,7 +572,8 @@ describe('the primary instance', () => {
       'createDetection settings={"fake":"settings"} adapters=[{"fake":"claude-code-adapter"},{"fake":"gemini-adapter"},{"fake":"cursor-adapter"}]',
       'loadPool /fake/userData/assignments.json',
       'detection.onSynced',
-      'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} detection={"fake":"detection"} pool={"fake":"pool"}',
+      'loadPacks /fake/userData/packs',
+      'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} detection={"fake":"detection"} pool={"fake":"pool"} packs={"fake":"packs"}',
       'registerIpcHandler app:get-version ["panels"]',
       'registerSettingsHandlers',
       'registerPoolHandlers pool',
@@ -575,7 +591,7 @@ describe('the primary instance', () => {
     expect(state.logs[0]).toMatch(/^app: start version=1\.0\.0 /);
   });
 
-  it('once ready: session guards, application menu, app:// handler, Dock hidden, tray, then the canvas and the power and sleep watch; no panel', async () => {
+  it('once ready: session guards, application menu, app:// handler, pack:// handler, Dock hidden, tray, then the canvas and the power and sleep watch; no panel', async () => {
     await startMain();
     state.order = [];
     await becomeReady();
@@ -587,6 +603,7 @@ describe('the primary instance', () => {
   it.each([
     ['menu', 'buildApplicationMenu'],
     ['app-protocol', 'handleAppProtocol'],
+    ['pack-protocol', 'handlePackProtocol'],
     ['dock', 'dock.hideAtStartup'],
     ['tray', 'createTray'],
     ['canvas', 'watchDisplays'],

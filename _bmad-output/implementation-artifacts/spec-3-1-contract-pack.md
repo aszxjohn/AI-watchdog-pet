@@ -124,6 +124,8 @@ context:
 
 - 2026-11-13 審查修補後：`stage` 與訊息改在 vm realm 內建立（宿主只提供一個收兩個字串的記錄回呼，訊息以 JSON 字串送入），入口前加 `'use strict'`、凍結 8 個常用內建原型、移除 `Intl` 等宿主全域，並驗證沿 `.constructor` 拿不到 `Date`；補 `params` 生效、沙盒重啟（帶己方 actor 的 `init`）、despawn 的實質斷言，每格斷言己方 actor 都有條目；`.DS_Store` 與 symlink 處理一致；單圖驗證是 PNG；字面值掃描改為不分大小寫、去掉 `-`／`_` 後比對；作者文件補選填欄位的 `undefined`／`null` 陷阱、§10 原則（依 SES 2.3.0 原始碼：ECMAScript 內建物件扣除部分、SES 的少數全域如 `harden`、加上 `stage`）、§8.3 節拍、§8.4 沙盒生命週期與執行失敗、§9 更新規則、§11 尚未定案清單（全部照 `epic-3-context.md` 並註明出處）。開發代理回報反向驗證：故意改壞 `entry.js` 7 種都有測試失敗。我重跑四項檢查全過（74 檔、3470 個測試；depcruise 210 個模組、0 違規）；`src/` 沒有改動。作者文件 §9「參數 key 或角色 id 改名後舊調整不再套用」是開發代理從設定的記錄方式推得，不是 epic 原文。
 
+- CI：使用者 commit `641b795`（2026-11-13）後，GitHub Actions 的 macOS、Windows 都通過（run 43406138042）；`3-1-角色包-api-v1-契約與契約測試包` 設為 `done`（上半段 `d8c999f` 的 CI 為 run 43395062801）。
+
 ## Spec Change Log
 
 ## Review Triage Log

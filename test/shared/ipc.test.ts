@@ -200,6 +200,7 @@ describe('settings and StageView contracts', () => {
       sessions: [],
       adapters: [],
       pool: { released: [] },
+      packs: { installed: [] },
     },
   };
   const DELTA = { rev: 6, sections: { settings: STATE } };

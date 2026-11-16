@@ -248,6 +248,7 @@ describe('dependency-cruiser rules', () => {
     'jsonl-core-not-to-source-adapters',
     'detection-not-to-pool',
     'persist-not-to-owners',
+    'packs-not-to-detection-or-pool',
     'preload-only-electron-and-shared',
     'overlay-no-react',
     'react-only-in-panels',
@@ -332,10 +333,22 @@ describe('dependency-cruiser rules', () => {
       ),
       'src/main/pool/target.ts': target,
       'src/main/settings/target.ts': target,
+      'src/main/packs/target.ts': target,
+      'src/main/detection/target.ts': target,
       'src/main/detection/to-pool.ts': imports('../pool/target'),
       'src/main/persist/to-owners.ts': imports(
         '../settings/target',
         '../pool/target',
+        '../packs/target',
+      ),
+      'src/main/packs/to-owners.ts': imports(
+        '../detection/target',
+        '../pool/target',
+      ),
+      'src/main/packs/allowed.ts': imports(
+        './target',
+        '../persist/to-owners',
+        '../../shared/target',
       ),
       'src/main/runs.ts': imports(
         'node:child_process',
@@ -496,6 +509,21 @@ describe('dependency-cruiser rules', () => {
       'src/main/persist/to-owners.ts',
       'src/main/pool/target.ts',
     ],
+    [
+      'persist-not-to-owners',
+      'src/main/persist/to-owners.ts',
+      'src/main/packs/target.ts',
+    ],
+    [
+      'packs-not-to-detection-or-pool',
+      'src/main/packs/to-owners.ts',
+      'src/main/detection/target.ts',
+    ],
+    [
+      'packs-not-to-detection-or-pool',
+      'src/main/packs/to-owners.ts',
+      'src/main/pool/target.ts',
+    ],
   ])('%s: %s -> %s', (rule, from, to) => {
     expect(targets(rule, from)).toContain(to);
   });
@@ -567,6 +595,12 @@ describe('dependency-cruiser rules', () => {
     expect(cycle).toStrictEqual([
       'src/main/cycle-a.ts <-> src/main/cycle-b.ts',
     ]);
+  });
+
+  it('lets main/packs import its own folder, main/persist and src/shared', () => {
+    expect(
+      violations.filter((v) => v.from === 'src/main/packs/allowed.ts'),
+    ).toStrictEqual([]);
   });
 
   it('lets main/ipc import main/windows/environment.ts', () => {

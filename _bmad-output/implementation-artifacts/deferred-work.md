@@ -229,3 +229,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-1-contract-pack.md`
   summary: `src/main/detection/adapters/cursor/project-name.ts` 第 6、15 行註解的範例路徑含系列名稱，可能違反 NFR7；換成中性的範例路徑，並考慮讓字面值掃描加入從 `characters/` 產生的禁用名單
   evidence: Story 3.1 下半段審查 B17（medium）。2.7 寫入的既有註解，不是下半段造成；下半段的字面值掃描只比對契約包的 id。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-2-pack-import-core.md`
+  summary: Story 3.2 下半段：「角色包」頁的匯入按鈕（main 開選檔對話框）、匯入進度與結果（中文拒絕原因，依拒絕代碼與 `PACK_API_ISSUE_RULES` 對照）、同 packId 的替換確認（顯示新舊名稱與版本）與降版警告、第二實例參數與 macOS `open-file` 帶來的 `.awpet` 走同一個匯入流程（打開面板到「角色包」頁）
+  evidence: 使用者 2026-11-16 選擇把 3.2 拆兩段，先做核心（檢查、安裝、`pack://`、StageView `packs` 區段）。IPC 的 10 秒逾時（`IPC_HANDLER_TIMEOUT_MS`）讓選檔、確認不能卡在一次呼叫裡，匯入狀態要放在 main 經 StageView 發佈；第二實例沒有面板可回覆，要打開面板。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-2-pack-import-core.md`
+  summary: `.awpet` 的檢查與安裝在 Electron main thread 同步進行（`vm.Script` 編譯最多 64 MiB 的入口、同步寫入最多 512 個檔），而且所有檔案在讀 manifest 之前就全部解壓；考慮先讀 `manifest.json` 再解其他檔、替入口大小設上限，或把檢查移到 utilityProcess／worker
+  evidence: Story 3.2 上半段審查 B11（未量測，若成立為 medium）。期間 tray、IPC、StageView 推送都會卡住，V8 parser 的攻擊面也落在權限最高的 process；下半段接上匯入按鈕前要量一次 64 MiB 包的檢查時間。

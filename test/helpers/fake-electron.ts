@@ -9,6 +9,8 @@
  * - `sender.send` (what pushToRenderer calls) structured-clones the payload
  *   and calls every ipcRenderer.on listener for that channel, synchronously
  *   and in order.
+ * - protocol.handle records each scheme's handler in `protocolHandlers`;
+ *   a second handler for one scheme throws, as Electron does.
  *
  * Use it with `vi.mock('electron', () => import('../helpers/fake-electron'))`
  * and call resetFakeElectron() in beforeEach. A test that re-imports modules
@@ -24,6 +26,20 @@ type RendererListener = (event: IpcRendererEvent, ...args: unknown[]) => void;
 export const listeners = new Map<string, Listener>();
 export const rendererListeners = new Map<string, RendererListener[]>();
 export const exposed = new Map<string, unknown>();
+
+type ProtocolHandler = (request: Request) => Response | Promise<Response>;
+
+/** What protocol.handle was given, by scheme. */
+export const protocolHandlers = new Map<string, ProtocolHandler>();
+
+export const protocol = {
+  handle(scheme: string, handler: ProtocolHandler): void {
+    if (protocolHandlers.has(scheme)) {
+      throw new Error(`The scheme has been handled: ${scheme}`);
+    }
+    protocolHandlers.set(scheme, handler);
+  },
+};
 
 export const app = { isPackaged: false };
 
@@ -152,6 +168,7 @@ export function resetFakeElectron(): void {
   listeners.clear();
   rendererListeners.clear();
   exposed.clear();
+  protocolHandlers.clear();
   app.isPackaged = false;
   sender = createFakeWebContents(1);
 }

@@ -447,6 +447,7 @@ describe('the StageView status line', () => {
           sessions: [],
           adapters: [],
           pool: { released: [] },
+          packs: { installed: [] },
         },
       }),
     ).toBe('StageView rev 9｜畫布螢幕：主螢幕（暫用主螢幕）');

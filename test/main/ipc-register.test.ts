@@ -386,6 +386,7 @@ describe('registerIpcHandler', () => {
           sessions: [],
           adapters: [],
           pool: { released: [] },
+          packs: { installed: [] },
         },
       };
       const PATCH = {

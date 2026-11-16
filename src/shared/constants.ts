@@ -43,6 +43,48 @@ export const SETTINGS_FLUSH_DEBOUNCE_MS = 500;
  */
 export const POOL_FLUSH_DEBOUNCE_MS = 500;
 
+/**
+ * The limits of one `.awpet` import (Story 3.2, chosen by the user on
+ * 2026-11-16). main/packs rejects a pack that goes over any of them:
+ * - PACK_IMPORT_MAX_TOTAL_BYTES: the sizes of all its files added up,
+ *   unpacked (counted again while unpacking: a file that turns out longer
+ *   than it says stops the import);
+ * - PACK_IMPORT_MAX_FILES: how many files it has (folders not counted);
+ * - PACK_IMPORT_MAX_IMAGE_SIDE: the width and the height of each image it
+ *   declares, in pixels;
+ * - PACK_IMPORT_MAX_TOTAL_PIXELS: width × height of all its declared images
+ *   added up.
+ */
+export const PACK_IMPORT_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+
+/** See PACK_IMPORT_MAX_TOTAL_BYTES. */
+export const PACK_IMPORT_MAX_FILES = 512;
+
+/** See PACK_IMPORT_MAX_TOTAL_BYTES. */
+export const PACK_IMPORT_MAX_IMAGE_SIDE = 4096;
+
+/** See PACK_IMPORT_MAX_TOTAL_BYTES. */
+export const PACK_IMPORT_MAX_TOTAL_PIXELS = 64_000_000;
+
+/**
+ * Most entries a `.awpet` may list, folders included, checked before any
+ * entry is read: twice PACK_IMPORT_MAX_FILES leaves room for a folder per
+ * file.
+ */
+export const PACK_IMPORT_MAX_ENTRIES = PACK_IMPORT_MAX_FILES * 2;
+
+/** Longest entry name in a `.awpet`, in characters (root folder included). */
+export const PACK_IMPORT_MAX_PATH_LENGTH = 255;
+
+/** Most `/`-separated segments an entry name in a `.awpet` may have. */
+export const PACK_IMPORT_MAX_PATH_SEGMENTS = 32;
+
+/**
+ * Longest entry name a refused import quotes back (the display layer shows
+ * it); a longer one is cut and ends with `…`.
+ */
+export const PACK_REJECTED_NAME_MAX_LENGTH = 200;
+
 /** Run log files whose hour started longer ago than this are deleted. */
 export const RUN_LOG_RETENTION_MS = 24 * 60 * 60 * 1000;
 

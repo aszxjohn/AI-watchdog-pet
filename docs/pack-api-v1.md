@@ -39,12 +39,23 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
 
 匯入時，以下情況整包會被拒絕，並顯示原因：
 
-- 路徑含 `..`、是絕對路徑，或是捷徑檔。
-- 超過解壓總大小、檔案數、圖片寬高或總像素的上限（數值由舞台決定）。
-- manifest 不符 schema，或入口無法解析。
+- zip 裡任何一個檔案或資料夾的名稱不符合 2.3 的路徑寫法（所以只能用 ASCII 的 `A-Z`、`a-z`、`0-9`、`.`、`_`、`-`，不能有 `..`、空的段、開頭的 `/`、磁碟代號、`\`、空白、非 ASCII 字元或 Windows 裝置名稱），名稱超過 255 字元，或超過 32 段。說明檔、授權檔這類 manifest 沒用到的檔案也一樣。
+- 捷徑檔（symlink、`.lnk`）。
+- 兩個路徑只差大小寫（例如 `img/A.png` 與 `img/a.png`），或檔案與資料夾同名。macOS 與 Windows 預設不分大小寫，它們會變成同一個檔。
+- 根目錄不只一個資料夾，或資料夾名稱與 manifest 的 `id` 不同。
+- 超過上限：
+  - zip 裡的項目數 1024（資料夾也算，在讀任何項目之前先判斷）；
+  - 解壓總大小 64 MiB（舞台邊解邊算，檔案實際比宣告的大也算超過）；
+  - 檔案數 512（資料夾不算）；
+  - 每張宣告的圖寬、高各 4096 像素；
+  - 所有宣告的圖加起來 6400 萬像素（寬 × 高）。
+- 宣告的圖（`image` 素材與 spritesheet 的圖）不是 PNG（以檔頭判斷），或檔名不是以 `.png` 結尾（小寫）。v1.0 只收 PNG。
+- 缺 `manifest.json`、它不是 JSON，或不符 schema。
+- `entry`、`assets` 的路徑或 spritesheet 的 `meta.image` 在包裡找不到（大小寫也要一致）。
+- 入口無法解析（見第 6 節）。
 - `apiVersion` 與舞台不相容（見第 9 節）。
 
-出處：根目錄只放一個 `<packId>/`、匯入的拒絕條件見 `_bmad-output/implementation-artifacts/epic-3-context.md`「Technical Decisions」的 `.awpet` 與 manifest、「Requirements & Constraints」的匯入。
+出處：根目錄只放一個 `<packId>/`、匯入的拒絕條件見 `_bmad-output/implementation-artifacts/epic-3-context.md`「Technical Decisions」的 `.awpet` 與 manifest、「Requirements & Constraints」的匯入；上限的數值與只收 PNG 是 2026-11-16 定案（`_bmad-output/implementation-artifacts/spec-3-2-pack-import-core.md`）。
 
 ## 2. manifest.json
 
@@ -75,7 +86,13 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
 `assets` 的兩種素材：
 
 - `image`：單張圖。
-- `spritesheet`：PixiJS 格式的 spritesheet JSON。它的 `meta.image` 是相對於這個 JSON 的路徑，圖檔本身不用列進 `assets`。
+- `spritesheet`：PixiJS 格式的 spritesheet JSON。它的 `meta.image` 是相對於這個 JSON 的路徑，圖檔本身不用列進 `assets`。以下任一情況，匯入時拒絕（spritesheet 不合格）：
+  - `path` 不是以 `.json` 結尾（小寫）；
+  - 內容不是 JSON 物件，或沒有 `frames` 物件；
+  - `meta.image` 不是字串，或它本身不符合 2.3 的寫法（不能以 `/` 開頭，不能有空的段、`.`、`..`：舞台不替你化簡路徑）；
+  - `meta` 裡有 `related_multi_packs`（PixiJS 會去載入連結的其他 sheet，v1.0 不支援）。
+
+  `meta.image` 相對於 JSON 算出來的檔案必須在包裡，而且是 PNG。
 
 ```json
 {
@@ -102,7 +119,7 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
 
 - 不能全是數字（例如 `2048`）。
 - 不能以 `0x` 開頭。
-- 不能是 Windows 的裝置名稱：`con`、`prn`、`aux`、`nul`、`com1`～`com9`、`lpt1`～`lpt9`。
+- 不能是 Windows 的裝置名稱：`con`、`prn`、`aux`、`nul`、`com0`～`com9`、`lpt0`～`lpt9`。
 
 角色 id 是跨版本的穩定身分。改了角色 id，舞台會當作舊角色消失、多了一個新角色。
 
@@ -113,10 +130,12 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
 - 用 `/` 分隔，不能以 `/` 開頭，不能有連續的 `//`。
 - 每一段只能用 `A-Z`、`a-z`、`0-9`、`.`、`_`、`-`，不能是空的，也不能以 `.` 結尾（所以沒有 `.`、`..`）。
 - 因此不能有 `\`、磁碟代號、`%`、`#`、`?`、空白或控制字元。
+- 每一段在第一個 `.` 之前的部分不能是 Windows 的裝置名稱（2.2 的清單，不分大小寫），例如 `con.png`、`img/NUL.js`、`aux/a.png`。
+- manifest 裡的路徑（`entry` 與 `assets` 的 `path`）不能只差大小寫，例如同時有 `img/A.png` 與 `img/a.png`。同一個路徑寫兩次（兩個素材 key 用同一張圖）可以。
 
 | 可以 | 不行 |
 |---|---|
-| `entry.js`、`img/probe-one-plain.png`、`dist/v2/main.js` | `/entry.js`、`./entry.js`、`img//a.png`、`img\a.png`、`../a.png`、`a.`、`my file.png` |
+| `entry.js`、`img/probe-one-plain.png`、`dist/v2/main.js`、`img/com10.png` | `/entry.js`、`./entry.js`、`img//a.png`、`img\a.png`、`../a.png`、`a.`、`my file.png`、`con.png`、`img/Lpt0.json` |
 
 ## 3. 角色
 
@@ -258,6 +277,12 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
 `entry` 指向一支**已自行打包好的 classic script**：
 
 - 不能有 `import` 或 `require`。需要第三方程式時，請先用打包工具合成單一檔案。
+- 匯入時舞台只編譯、不執行入口（以 strict mode 編譯成 classic script）。以下寫法整包會被拒絕，連出現在註解與字串裡的也算（SES 對整份程式文字做同樣的比對，求值時一樣會拒絕）：
+  - 語法錯誤，包括 ESM 的 `import`／`export`。
+  - HTML 註解記號 `<!--` 或 `-->`，例如 `a-->b` 也算。
+  - import 運算式：`import(…)`、`import /* … */ (…)`。`obj.import(…)` 不算。
+  - 直接 `eval(…)`。`obj.eval(…)` 不算。
+  - `require(…)`、`require /* … */ (…)`，前面有 `.` 也算。
 - 程式在 strict mode 下求值。
 - SES 的 `lockdown()` 已凍結所有內建物件，不能修改 `Array.prototype` 這類物件。會改內建物件的 polyfill 不能用。
 - 整支程式**求值的結果**（最後一個運算式的值）必須是工廠函式 `(stage) => handlers`。
@@ -402,6 +427,7 @@ if (busy) {
 - 指令或 `draw` 有多出來的欄位，就不合法。
 - 每則 `draw` 的指令數、位元組數、發射器數，以及 `bitmap` 的尺寸與每秒張數都有上限（舞台常數）。超過時整則丟棄，並記錄包 id；這也是執行失敗的條件之一（見 8.4）。
 - 素材由舞台從 `pack://<packId>/<version>/<path>` 載入並快取。除了 `bitmap`，包不傳任何圖檔資料。
+- `pack://` 只提供入口、`assets` 的路徑，以及已宣告 spritesheet 的 `meta.image`。包裡的其他檔案（包括 `manifest.json`、說明檔）會照樣安裝，但從 `pack://` 讀不到。
 
 ### 8.2 `stage`
 
@@ -515,5 +541,4 @@ if (busy) {
   - sprite 以圖的哪一點對齊 `x`、`y`，以及圖的像素怎麼換算成基準像素。
   - 粒子 preset 的正式清單：目前接受任何 id 格式的名稱，之後只接受清單裡的。
 - **素材：**
-  - 支援的圖片格式。範例包只用 PNG。
-  - spritesheet JSON 支援哪些欄位（範例包只用 `frames[].frame`、`meta.image`、`meta.size`、`meta.scale`），以及 `meta.image` 經 `pack://` 載入時怎麼解析。
+  - spritesheet JSON 支援哪些欄位（範例包只用 `frames[].frame`、`meta.image`、`meta.size`、`meta.scale`）。圖片格式已定案：v1.0 只收 PNG（第 1 節）。

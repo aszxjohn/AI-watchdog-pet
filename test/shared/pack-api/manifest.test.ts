@@ -171,6 +171,28 @@ describe('I/O matrix', () => {
     expectRejected(manifestSchema, manifestWith([...B, 'defaults'], defaults));
   });
 
+  it.each<[string, SamplePath, string]>([
+    ['two assets', ['assets', 'spark', 'path'], 'IMG/Body-Plain.png'],
+    ['an asset and the entry', ['assets', 'spark', 'path'], 'Dist/Entry.js'],
+  ])(
+    '大小寫衝突: %s whose paths differ only in case are rejected, at the later one',
+    (_label, path, value) => {
+      const manifest = manifestWith(path, value);
+      expect(
+        ruleIssues(manifestSchema, manifest).filter(
+          (issue) => issue.rule === 'pack-path-case-conflict',
+        ),
+      ).toStrictEqual([{ rule: 'pack-path-case-conflict', path: [...path] }]);
+    },
+  );
+
+  it('大小寫衝突: two asset keys with the same path, case and all, are fine', () => {
+    expectRoundTrip(
+      manifestSchema,
+      manifestWith(['assets', 'spark', 'path'], 'img/body-plain.png'),
+    );
+  });
+
   it('defaults: scale and part of wander are accepted', () => {
     expectRoundTrip(
       manifestSchema,
@@ -376,20 +398,12 @@ describe('manifestSchema', () => {
 });
 
 describe('packIdSchema', () => {
-  it.each([
-    'ab',
-    'a1',
-    '1a',
-    '1-2',
-    'x0',
-    '0y',
-    'com0',
-    'com10',
-    'con1',
-    'lpt',
-  ])('accepts %s', (id) => {
-    expectRoundTrip(packIdSchema, id);
-  });
+  it.each(['ab', 'a1', '1a', '1-2', 'x0', '0y', 'com10', 'con1', 'lpt'])(
+    'accepts %s',
+    (id) => {
+      expectRoundTrip(packIdSchema, id);
+    },
+  );
 
   it.each<[string, PackApiIssueRule]>([
     ['00', 'pack-id-all-digits'],
@@ -403,8 +417,10 @@ describe('packIdSchema', () => {
     ['prn', 'pack-id-device-name'],
     ['aux', 'pack-id-device-name'],
     ['nul', 'pack-id-device-name'],
+    ['com0', 'pack-id-device-name'],
     ['com1', 'pack-id-device-name'],
     ['com9', 'pack-id-device-name'],
+    ['lpt0', 'pack-id-device-name'],
     ['lpt1', 'pack-id-device-name'],
     ['lpt9', 'pack-id-device-name'],
   ])('rejects %s as %s', (id, rule) => {
@@ -463,6 +479,10 @@ describe('pack paths', () => {
     '.hidden/a.png',
     '.hidden.png',
     'img/.a.b-c_d',
+    'img/com10.png',
+    'console.js',
+    'img/.con.png',
+    'auxiliary/a.png',
   ])('a pack path may be %s', (path) => {
     expectRoundTrip(packPathSchema, path);
   });
@@ -490,6 +510,28 @@ describe('pack paths', () => {
     ['a non-ASCII letter', '圖/a.png'],
   ])('a pack path may not have %s', (_label, path) => {
     expectRuleIssue(packPathSchema, path, 'invalid-pack-path', []);
+  });
+
+  it.each([
+    'con',
+    'con.png',
+    'img/NUL.js',
+    'aux/a.png',
+    'img/Prn.sheet.json',
+    'com0.png',
+    'img/lpt9',
+    'COM1.js',
+  ])(
+    'a pack path may not have a Windows device name before a segment’s first . (%s)',
+    (path) => {
+      expect(ruleIssues(packPathSchema, path)).toStrictEqual([
+        { rule: 'pack-path-device-name', path: [] },
+      ]);
+    },
+  );
+
+  it('an entry may not be named after a Windows device either', () => {
+    expectRuleIssue(entryPathSchema, 'nul.js', 'pack-path-device-name', []);
   });
 
   it('a pack path is a string', () => {

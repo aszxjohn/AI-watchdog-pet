@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDetection } from '../../src/main/detection/detection';
 import { registerIpcHandler } from '../../src/main/ipc/register';
+import { loadPacks } from '../../src/main/packs/store';
 import { registerPoolHandlers } from '../../src/main/pool/ipc';
 import { loadPool, type PoolStore } from '../../src/main/pool/store';
 import { registerSettingsHandlers } from '../../src/main/settings/ipc';
@@ -65,6 +66,7 @@ function startMain(): SettingsStore {
       windows: createWindowsStageSource(),
       detection,
       pool,
+      packs: loadPacks({ dir: path.join(dir, 'packs') }),
     }),
   );
   return settings;
@@ -128,6 +130,7 @@ describe('panels preload', () => {
         sessions: [],
         adapters: [],
         pool: { released: [] },
+        packs: { installed: [] },
       },
     });
 

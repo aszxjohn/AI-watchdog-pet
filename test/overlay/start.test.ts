@@ -31,6 +31,7 @@ const SNAPSHOT: StageViewSnapshot = {
     sessions: [],
     adapters: [],
     pool: { released: [] },
+    packs: { installed: [] },
   },
 };
 

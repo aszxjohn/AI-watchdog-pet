@@ -22,6 +22,7 @@ import {
   stageViewDeltaSchema,
   stageViewSnapshotSchema,
   type StageViewDetectionSections,
+  type StageViewPacksSections,
   type StageViewPoolSections,
 } from '../../src/shared/stage-view';
 import * as fake from '../helpers/fake-electron';
@@ -33,6 +34,7 @@ let settings: SettingsStore;
 let windows: WindowsStageSource;
 let detection: ReturnType<typeof fakeDetection>;
 let pool: ReturnType<typeof fakePool>;
+let packs: ReturnType<typeof fakePacks>;
 let hub: StageViewHub;
 
 /**
@@ -88,6 +90,35 @@ function fakePool() {
   };
 }
 
+/**
+ * A stand-in for main/packs' section: update() replaces it and tells the
+ * listeners, as main/packs does (any value, so a test can hand StageView
+ * one that fails the schema).
+ */
+function fakePacks() {
+  let sections: StageViewPacksSections = { packs: { installed: [] } };
+  const listeners = new Set<(changed: StageViewPacksSections) => void>();
+  return {
+    get: () => sections,
+    onChange(listener: (changed: StageViewPacksSections) => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    update(installed: readonly unknown[]) {
+      sections = {
+        packs: {
+          installed: installed as StageViewPacksSections['packs']['installed'],
+        },
+      };
+      for (const listener of listeners) {
+        listener(sections);
+      }
+    },
+  };
+}
+
 /** main/windows' sections before ready. */
 const WINDOWS_BEFORE_READY = {
   displays: [],
@@ -98,6 +129,15 @@ const WINDOWS_BEFORE_READY = {
 const NO_DETECTION = { sessions: [], adapters: [] };
 /** main/pool's section with nothing released. */
 const NO_POOL = { pool: { released: [] } };
+/** main/packs' section with no pack installed. */
+const NO_PACKS = { packs: { installed: [] } };
+const PACK = {
+  id: 'sample-pack',
+  name: '範例包',
+  version: '1.0.0',
+  apiVersion: '1.0',
+  characters: [{ id: 'probe-a', name: '探針甲', height: 110 }],
+};
 const DEMO_SESSION = {
   sessionKey: 'demo:1',
   source: 'demo',
@@ -130,7 +170,8 @@ beforeEach(() => {
   windows = createWindowsStageSource();
   detection = fakeDetection();
   pool = fakePool();
-  hub = createStageView({ settings, windows, detection, pool });
+  packs = fakePacks();
+  hub = createStageView({ settings, windows, detection, pool, packs });
 });
 
 afterEach(() => {
@@ -161,6 +202,7 @@ describe('StageView composition', () => {
         ...WINDOWS_BEFORE_READY,
         ...NO_DETECTION,
         ...NO_POOL,
+        ...NO_PACKS,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(snapshot).success).toBe(true);
@@ -213,6 +255,7 @@ describe('StageView composition', () => {
         ...WINDOWS_BEFORE_READY,
         ...NO_DETECTION,
         ...NO_POOL,
+        ...NO_PACKS,
       },
     });
   });
@@ -221,7 +264,13 @@ describe('StageView composition', () => {
     setDisplay(1);
     setDisplay(2);
 
-    const later = createStageView({ settings, windows, detection, pool });
+    const later = createStageView({
+      settings,
+      windows,
+      detection,
+      pool,
+      packs,
+    });
 
     expect(later.snapshot().rev).toBe(0);
     expect(later.snapshot().view.settings.rev).toBe(2);
@@ -257,7 +306,13 @@ describe("main/windows' sections", () => {
   it('starts from what the windows source has', () => {
     windows.update({ displays: [DISPLAY], canvas: CANVAS });
 
-    const later = createStageView({ settings, windows, detection, pool });
+    const later = createStageView({
+      settings,
+      windows,
+      detection,
+      pool,
+      packs,
+    });
 
     expect(later.snapshot()).toStrictEqual({
       rev: 0,
@@ -268,6 +323,7 @@ describe("main/windows' sections", () => {
         power: WINDOWS_BEFORE_READY.power,
         ...NO_DETECTION,
         ...NO_POOL,
+        ...NO_PACKS,
       },
     });
   });
@@ -298,6 +354,7 @@ describe("main/windows' sections", () => {
         power: { suspended: true, locked: false },
         ...NO_DETECTION,
         ...NO_POOL,
+        ...NO_PACKS,
       },
     });
   });
@@ -349,7 +406,13 @@ describe("main/detection's sections", () => {
   it('starts from what main/detection has', () => {
     detection.update({ sessions: [DEMO_SESSION], adapters: [DEMO_ADAPTER] });
 
-    const later = createStageView({ settings, windows, detection, pool });
+    const later = createStageView({
+      settings,
+      windows,
+      detection,
+      pool,
+      packs,
+    });
 
     expect(later.snapshot()).toStrictEqual({
       rev: 0,
@@ -359,6 +422,7 @@ describe("main/detection's sections", () => {
         sessions: [DEMO_SESSION],
         adapters: [DEMO_ADAPTER],
         ...NO_POOL,
+        ...NO_PACKS,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -403,7 +467,13 @@ describe("main/pool's section", () => {
   it('starts from what main/pool has', () => {
     pool.update(['claude-code:a', 'demo:1']);
 
-    const later = createStageView({ settings, windows, detection, pool });
+    const later = createStageView({
+      settings,
+      windows,
+      detection,
+      pool,
+      packs,
+    });
 
     expect(later.snapshot()).toStrictEqual({
       rev: 0,
@@ -412,6 +482,7 @@ describe("main/pool's section", () => {
         ...WINDOWS_BEFORE_READY,
         ...NO_DETECTION,
         pool: { released: ['claude-code:a', 'demo:1'] },
+        ...NO_PACKS,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -460,6 +531,70 @@ describe("main/pool's section", () => {
         .mock.calls.map((call: unknown[]) => String(call[0])),
     ).toStrictEqual([
       '[stage-view] dropped a delta that fails the schema (sections: pool; fields: pool.released); rev stays 0',
+    ]);
+  });
+});
+
+describe("main/packs' section", () => {
+  it('starts from what main/packs has', () => {
+    packs.update([PACK]);
+
+    const later = createStageView({
+      settings,
+      windows,
+      detection,
+      pool,
+      packs,
+    });
+
+    expect(later.snapshot()).toStrictEqual({
+      rev: 0,
+      view: {
+        settings: settings.get(),
+        ...WINDOWS_BEFORE_READY,
+        ...NO_DETECTION,
+        ...NO_POOL,
+        packs: { installed: [PACK] },
+      },
+    });
+    expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
+      true,
+    );
+  });
+
+  it('pushes one delta per change, carrying the packs section only, on the shared rev', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    pool.update(['demo:1']);
+    packs.update([PACK]);
+    packs.update([]);
+
+    expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
+      { rev: 1, sections: { pool: { released: ['demo:1'] } } },
+      { rev: 2, sections: { packs: { installed: [PACK] } } },
+      { rev: 3, sections: { packs: { installed: [] } } },
+    ]);
+    for (const { args } of subscriber.sent) {
+      expect(stageViewDeltaSchema.safeParse(args[0]).success).toBe(true);
+    }
+    expect(hub.snapshot().view.packs).toStrictEqual({ installed: [] });
+  });
+
+  it('drops a packs section that fails the schema before moving rev: packs out of order', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    packs.update([PACK, { ...PACK, id: 'another-pack' }]);
+
+    expect(subscriber.sent).toStrictEqual([]);
+    expect(hub.snapshot().rev).toBe(0);
+    expect(
+      vi
+        .mocked(console.error)
+        .mock.calls.map((call: unknown[]) => String(call[0])),
+    ).toStrictEqual([
+      '[stage-view] dropped a delta that fails the schema (sections: packs; fields: packs.installed); rev stays 0',
     ]);
   });
 });
@@ -575,6 +710,7 @@ describe('subscribers', () => {
         ...WINDOWS_BEFORE_READY,
         ...NO_DETECTION,
         ...NO_POOL,
+        ...NO_PACKS,
       },
     });
     expect(hub.subscriberCount()).toBe(1);

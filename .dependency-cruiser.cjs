@@ -98,10 +98,18 @@ module.exports = {
     {
       name: 'persist-not-to-owners',
       comment:
-        'main/persist is the file handling main/settings and main/pool share (Story 2.8): it must not depend on either of them.',
+        'main/persist is the file handling main/settings, main/pool and main/packs share (Stories 2.8, 3.2): it must not depend on any of them.',
       severity: 'error',
       from: { path: '^src/main/persist/' },
-      to: { path: '^src/main/(settings|pool)/' },
+      to: { path: '^src/main/(settings|pool|packs)/' },
+    },
+    {
+      name: 'packs-not-to-detection-or-pool',
+      comment:
+        'main/packs checks, installs and serves character packs (Story 3.2): it does not depend on main/detection or main/pool; main.ts wires them together.',
+      severity: 'error',
+      from: { path: '^src/main/packs/' },
+      to: { path: '^src/main/(detection|pool)/' },
     },
     {
       name: 'preload-only-electron-and-shared',

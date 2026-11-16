@@ -11,18 +11,21 @@
  *    the Claude Code adapter reading ~/.claude/projects, the Gemini CLI
  *    adapter reading ~/.gemini/tmp, the Cursor adapter reading
  *    ~/.cursor/projects), the pool (the released sessions, from
- *    assignments.json; swept once detection's start-up sync is over),
- *    StageView (settings, main/windows' displays, canvas and power sections,
- *    main/detection's sessions and adapters, and main/pool's pool) and the
- *    IPC handlers, and guards every window webContents. The canvas's hover
- *    and right-click handlers come once the canvas windows exist; a
- *    right-click on the demo session's square opens the demo menu, which
- *    calls detection.setDemo as the tray's 示範模式 does.
+ *    assignments.json; swept once detection's start-up sync is over), the
+ *    installed character packs (userData/packs, cleaned of what an install
+ *    left behind), StageView (settings, main/windows' displays, canvas and
+ *    power sections, main/detection's sessions and adapters, main/pool's
+ *    pool and main/packs' packs) and the IPC handlers, and guards every
+ *    window webContents. The canvas's hover and right-click handlers come
+ *    once the canvas windows exist; a right-click on the demo session's
+ *    square opens the demo menu, which calls detection.setDemo as the
+ *    tray's 示範模式 does.
  * 3. Once ready: the session guards, the application menu, the `app://`
- *    handler, the Dock icon hidden, the tray icon (its 示範模式 check mark
- *    follows detection, whichever menu changed it), then the stage: the
- *    canvas on the chosen display (following display and settings changes)
- *    and the sleep / lock watch (sleep also goes to detection's clock).
+ *    handler, the `pack://` handler, the Dock icon hidden, the tray icon
+ *    (its 示範模式 check mark follows detection, whichever menu changed
+ *    it), then the stage: the canvas on the chosen display (following
+ *    display and settings changes) and the sleep / lock watch (sleep also
+ *    goes to detection's clock).
  *    Each step that throws is logged as an error with its errorCode and the
  *    next one still runs, so a failure in any other step does not stop the
  *    tray from being created; only the session guards are different:
@@ -66,6 +69,8 @@ import {
 } from './detection/detection';
 import { registerIpcHandler } from './ipc/register';
 import { errorCode, initRunLog, logEvent } from './log/run-log';
+import { handlePackProtocol } from './packs/protocol';
+import { loadPacks } from './packs/store';
 import { flushOnQuit } from './persist/quit';
 import { registerPoolHandlers } from './pool/ipc';
 import { loadPool } from './pool/store';
@@ -157,8 +162,8 @@ function startupStep(name: string, run: () => void): void {
 }
 
 function startPrimaryInstance(): void {
-  // Startup order: run log, settings, detection, pool, StageView, IPC
-  // handlers, window guards; the tray and windows once ready. userData is
+  // Startup order: run log, settings, detection, pool, packs, StageView,
+  // IPC handlers, window guards; the tray and windows once ready. userData is
   // the same folder for `npm start` and the packaged app.
   const userData = app.getPath('userData');
   initRunLog(path.join(userData, 'logs'));
@@ -204,11 +209,17 @@ function startPrimaryInstance(): void {
   detection.onSynced((reported, unconfirmed) => {
     pool.sweep(reported, unconfirmed);
   });
+  // main/packs owns the installed character packs (packs/index.json and a
+  // folder per pack) and the packs section; loading also removes what an
+  // earlier install left behind. Checking and installing a .awpet come
+  // with the 角色包 page (Story 3.2's second half).
+  const packs = loadPacks({ dir: path.join(userData, 'packs') });
   const stageView = createStageView({
     settings,
     windows: stageSources,
     detection,
     pool,
+    packs,
   });
 
   registerIpcHandler(appGetVersion, ['panels'], () => app.getVersion());
@@ -337,6 +348,10 @@ function startPrimaryInstance(): void {
       });
       startupStep('app-protocol', () => {
         handleAppProtocol(__dirname);
+      });
+      // Only the files the installed packs declared, as `app://` above.
+      startupStep('pack-protocol', () => {
+        handlePackProtocol(packs);
       });
       startupStep('dock', () => {
         dock.hideAtStartup();

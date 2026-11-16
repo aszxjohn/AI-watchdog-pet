@@ -31,6 +31,7 @@ export type RunLogCategory =
   | 'app'
   | 'detection'
   | 'ipc'
+  | 'packs'
   | 'pool'
   | 'settings'
   | 'stage-view'
