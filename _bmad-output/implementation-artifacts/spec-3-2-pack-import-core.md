@@ -139,6 +139,8 @@ context:
 - 2026-11-16 審查修補後：所有 zip 項目（檔案與資料夾）都套用 ASCII 路徑字元集（`packPathSchema`），擋掉 `entry.jſ` 覆寫、上標裝置名與段尾空白；新增 `PACK_IMPORT_MAX_ENTRIES` 1024、`PACK_IMPORT_MAX_PATH_LENGTH` 255、`PACK_IMPORT_MAX_PATH_SEGMENTS` 32，前綴逐段累加；啟動清理只在 `index.json` 成功載入時刪包資料夾，否則只清 `.staging-*` 與 `index.json.tmp`；同版本回復改成先把新資料夾移開再放回 backup（backup 名稱帶 packId 與版本），啟動時遇到 index 指向不存在的資料夾會先還原對應的 backup；`stale-plan` 失敗代碼；入口檢查照 ses 2.3.0 transforms（新增 `html-comment`、`direct-eval`）；spritesheet 檢查原始 `meta.image`、拒絕 `related_multi_packs`、要求 `.json` 與 `frames`；拒絕原因的名稱截斷到 200 字元並跳脫控制與 bidi 字元；資料夾不見的包記錯誤並排除；錯誤分類改看 `syscall`；包檔案寫入加 `flush`；補 `pack://` 先註冊後安裝與上限邊界的測試；作者文件與 protocol.ts 註解同步。我重跑四項檢查全過（80 檔、3775 個測試；depcruise 229 個模組、0 違規），沒有刪任何既有 `expect(`。
 - 2026-11-16：sprint 的 `3-2-…` 維持 in-progress，下半段（匯入按鈕、拒絕原因中文顯示、替換確認、第二實例）完成並經 CI 確認後才改 review／done。
 
+- 2026-11-16 CI：commit `a5b2ede` 在 macOS 通過、Windows 失敗（run 43799778028）。唯一失敗的測試是 `packs-inspect.test.ts`「a folder is unreadable-file」：Windows 把資料夾當成空檔案打開，yauzl 回報沒有 `syscall` 的錯誤而被分類成 `invalid-archive`。主 session 修正：`readPackArchive` 交給 yauzl 前先 `statSync`，不是一般檔案或 stat 失敗都回 `unreadable-file`；本機四項檢查重跑全過（80 檔、3775 個測試）。
+
 ## Spec Change Log
 
 ## Review Triage Log

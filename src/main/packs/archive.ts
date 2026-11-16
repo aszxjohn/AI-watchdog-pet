@@ -30,6 +30,7 @@
  * does.
  */
 import { Buffer } from 'node:buffer';
+import { statSync } from 'node:fs';
 import yauzl, { type Entry, type ZipFile } from 'yauzl';
 import {
   PACK_IMPORT_MAX_ENTRIES,
@@ -287,6 +288,16 @@ function openZip(file: string): Promise<ZipFile> {
 export async function readPackArchive(
   file: string,
 ): Promise<PackArchiveResult> {
+  // Not a regular file (a folder, or nothing there) is unreadable-file on
+  // every platform: Windows opens a folder like an empty file, and yauzl
+  // would then call it a damaged zip.
+  try {
+    if (!statSync(file).isFile()) {
+      return { ok: false, rejection: { code: 'unreadable-file' } };
+    }
+  } catch {
+    return { ok: false, rejection: { code: 'unreadable-file' } };
+  }
   let zip: ZipFile;
   try {
     zip = await openZip(file);
