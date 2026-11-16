@@ -85,6 +85,13 @@ export const PACK_IMPORT_MAX_PATH_SEGMENTS = 32;
  */
 export const PACK_REJECTED_NAME_MAX_LENGTH = 200;
 
+/**
+ * Most manifest problems a refused import publishes in StageView's
+ * `packImport` section (the 角色包 page shows them all and counts the
+ * rest), so a manifest with thousands of problems stays a small message.
+ */
+export const PACK_IMPORT_REPORTED_ISSUES_MAX = 5;
+
 /** Run log files whose hour started longer ago than this are deleted. */
 export const RUN_LOG_RETENTION_MS = 24 * 60 * 60 * 1000;
 

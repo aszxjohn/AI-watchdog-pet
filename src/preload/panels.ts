@@ -5,6 +5,8 @@ import { PRELOAD_API_KEY } from '../shared/constants';
 import type { SessionKey } from '../shared/detection-events';
 import {
   appGetVersion,
+  packsChoose,
+  packsConfirm,
   poolSetReleased,
   settingsGet,
   settingsPatch,
@@ -25,6 +27,10 @@ const api: PanelsApi = Object.freeze({
   pool: Object.freeze({
     setReleased: (sessionKey: SessionKey, released: boolean) =>
       invoke(poolSetReleased, sessionKey, released),
+  }),
+  packs: Object.freeze({
+    choose: () => invoke(packsChoose),
+    confirm: (replace: boolean) => invoke(packsConfirm, replace),
   }),
   stageView: Object.freeze({
     subscribe: subscribeStageView,

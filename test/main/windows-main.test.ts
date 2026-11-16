@@ -4,9 +4,20 @@
  * second instance and the primary instance. Each module's own behaviour is
  * tested in its own file.
  */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type Listener = (...args: unknown[]) => void;
+
+/** What main.ts passed to createPackImporter. */
+interface ImporterOptions {
+  readonly store: { fake: string };
+  readonly inspect: unknown;
+  readonly install: unknown;
+  chooseFile(): Promise<string | null>;
+}
 
 const state = vi.hoisted(() => {
   const s = {
@@ -36,7 +47,20 @@ const state = vi.hoisted(() => {
     /** What main.ts passed to buildApplicationMenu. */
     menuActions: undefined as { closePanel(): void } | undefined,
     /** What main.ts passed to createPanelWindows. */
-    panelOptions: undefined as { focusApp?: () => void } | undefined,
+    panelOptions: undefined as
+      | {
+          focusApp?: () => void;
+          createWindow(options: unknown): unknown;
+        }
+      | undefined,
+    /** What main.ts passed to createPackImporter. */
+    importerOptions: undefined as ImporterOptions | undefined,
+    /** What dialog.showOpenDialog was called with, and what it answers. */
+    dialogCalls: [] as unknown[][],
+    dialogResult: { canceled: true, filePaths: [] } as {
+      canceled: boolean;
+      filePaths: string[];
+    },
     /** What main.ts passed to watchDisplays and watchPower. */
     displaysOptions: undefined as Record<string, unknown> | undefined,
     powerArgs: undefined as unknown[] | undefined,
@@ -83,6 +107,9 @@ const state = vi.hoisted(() => {
       s.trayActions = undefined;
       s.menuActions = undefined;
       s.panelOptions = undefined;
+      s.importerOptions = undefined;
+      s.dialogCalls = [];
+      s.dialogResult = { canceled: true, filePaths: [] };
       s.displaysOptions = undefined;
       s.powerArgs = undefined;
       s.sleepArgs = undefined;
@@ -143,14 +170,23 @@ vi.mock('electron', () => ({
     whenReady: () => state.ready,
   },
   BrowserWindow: class {
+    destroyed = false;
     constructor() {
       state.order.push('new BrowserWindow');
+    }
+    isDestroyed() {
+      return this.destroyed;
     }
   },
   dialog: {
     showErrorBox: (title: string) => {
       state.order.push(`dialog.showErrorBox ${title}`);
       state.maybeFail('dialog.showErrorBox');
+    },
+    showOpenDialog: async (...args: unknown[]) => {
+      state.dialogCalls.push(args);
+      state.maybeFail('dialog.showOpenDialog');
+      return state.dialogResult;
     },
   },
   Menu: {
@@ -227,6 +263,26 @@ vi.mock('../../src/main/packs/store', () => ({
   loadPacks: (options: { dir: string }) => {
     state.order.push(`loadPacks ${options.dir.replaceAll('\\', '/')}`);
     return { fake: 'packs' };
+  },
+}));
+
+vi.mock('../../src/main/packs/importer', () => ({
+  createPackImporter: (options: ImporterOptions) => {
+    state.order.push(`createPackImporter ${options.store.fake}`);
+    state.importerOptions = options;
+    return {
+      fake: 'importer',
+      // The file's name only: the folder is a temp folder.
+      start: async (file: string) => {
+        state.order.push(`importer.start ${path.basename(file)}`);
+      },
+    };
+  },
+}));
+
+vi.mock('../../src/main/packs/ipc', () => ({
+  registerPackHandlers: (importer: { fake: string }) => {
+    state.order.push(`registerPackHandlers ${importer.fake}`);
   },
 }));
 
@@ -409,7 +465,9 @@ vi.mock('../../src/main/windows/dock', () => ({
 
 vi.mock('../../src/main/windows/panel-window', () => ({
   PRELOAD_BUNDLES: { panels: 'panels.cjs', overlay: 'overlay.cjs' },
-  createPanelWindows: (options: { preload: string; focusApp?: () => void }) => {
+  createPanelWindows: (
+    options: NonNullable<typeof state.panelOptions> & { preload: string },
+  ) => {
     state.panelOptions = options;
     state.order.push(
       `createPanelWindows ${options.preload.split(/[\\/]/).at(-1)}`,
@@ -417,6 +475,7 @@ vi.mock('../../src/main/windows/panel-window', () => ({
     return {
       open: (page: string) => {
         state.order.push(`panels.open ${page}`);
+        state.maybeFail('panels.open');
       },
       openOrFocus: (page: string) => {
         state.order.push(`panels.openOrFocus ${page}`);
@@ -573,10 +632,12 @@ describe('the primary instance', () => {
       'loadPool /fake/userData/assignments.json',
       'detection.onSynced',
       'loadPacks /fake/userData/packs',
-      'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} detection={"fake":"detection"} pool={"fake":"pool"} packs={"fake":"packs"}',
+      'createPackImporter packs',
+      'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} detection={"fake":"detection"} pool={"fake":"pool"} packs={"fake":"packs"} packImport={"fake":"importer"}',
       'registerIpcHandler app:get-version ["panels"]',
       'registerSettingsHandlers',
       'registerPoolHandlers pool',
+      'registerPackHandlers importer',
       'registerStageViewHandlers',
       'registerCanvasReadyHandler',
       'flushOnQuit settings',
@@ -910,5 +971,279 @@ describe('the primary instance', () => {
     );
     expect(state.order).toContain('app.exit 1');
     expect(state.logs.some((line) => line.includes('panels.cjs'))).toBe(true);
+  });
+});
+
+describe('the pack import entry points (Story 3.2)', () => {
+  let dir: string;
+  const realArgv = process.argv;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awp-main-awpet-'));
+  });
+
+  afterEach(() => {
+    process.argv = realArgv;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** An existing file `name` in the temp folder; answers its path. */
+  function file(name: string): string {
+    const at = path.join(dir, name);
+    fs.writeFileSync(at, 'zip');
+    return at;
+  }
+
+  function settle(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  /** No log line names the temp folder. */
+  function expectNoPathLogged(): void {
+    for (const line of state.logs) {
+      expect(line).not.toContain(dir);
+    }
+  }
+
+  describe('the importer', () => {
+    it('checks and installs with main/packs, in its store', async () => {
+      await startMain();
+      // The copies main.ts imported (startMain reset the module registry).
+      const { inspectPack } = await import('../../src/main/packs/inspect');
+      const { installPack } = await import('../../src/main/packs/install');
+      expect(state.importerOptions?.store).toStrictEqual({ fake: 'packs' });
+      expect(state.importerOptions?.inspect).toBe(inspectPack);
+      expect(state.importerOptions?.install).toBe(installPack);
+    });
+
+    it('選檔: the file dialog lists only .awpet files, one file, as a sheet on the panel window', async () => {
+      await startMain();
+      await becomeReady();
+      const win = state.panelOptions?.createWindow({});
+      state.dialogResult = { canceled: false, filePaths: ['/x/a.awpet'] };
+
+      expect(await state.importerOptions?.chooseFile()).toBe('/x/a.awpet');
+      expect(state.dialogCalls).toStrictEqual([
+        [
+          win,
+          {
+            title: '匯入角色包',
+            properties: ['openFile'],
+            filters: [{ name: '角色包', extensions: ['awpet'] }],
+          },
+        ],
+      ]);
+    });
+
+    it('選檔: with no panel window (or a destroyed one) the dialog has no parent', async () => {
+      await startMain();
+      await becomeReady();
+
+      await state.importerOptions?.chooseFile();
+      const win = state.panelOptions?.createWindow({}) as {
+        destroyed: boolean;
+      };
+      win.destroyed = true;
+      await state.importerOptions?.chooseFile();
+
+      expect(state.dialogCalls.map((call) => call.length)).toStrictEqual([
+        1, 1,
+      ]);
+    });
+
+    it('取消選檔: a cancelled dialog answers null', async () => {
+      await startMain();
+      await becomeReady();
+      state.dialogResult = { canceled: true, filePaths: [] };
+
+      expect(await state.importerOptions?.chooseFile()).toBeNull();
+    });
+  });
+
+  describe('I/O matrix', () => {
+    it('第二實例: a .awpet in a second launch is imported once ready, with the panel opened on 角色包 (not brought up on its page)', async () => {
+      const pack = file('sample.awpet');
+      await startMain();
+      await becomeReady();
+      state.order = [];
+
+      emit('second-instance', {}, ['electron', '.', pack], '/repo');
+      await settle();
+
+      expect(state.order).toStrictEqual([
+        'importer.start sample.awpet',
+        'panels.open packs',
+      ]);
+      expect(state.logs).toContain(
+        'packs: second-instance: a .awpet to import',
+      );
+      expect(state.errors).toStrictEqual([]);
+      expectNoPathLogged();
+    });
+
+    it('第二實例: a relative path is taken from its working folder; only the first .awpet counts', async () => {
+      file('first.awpet');
+      file('second.awpet');
+      await startMain();
+      await becomeReady();
+      state.order = [];
+
+      emit(
+        'second-instance',
+        {},
+        ['app.exe', '--flag', 'first.awpet', 'second.awpet'],
+        dir,
+      );
+      await settle();
+
+      expect(state.order).toStrictEqual([
+        'importer.start first.awpet',
+        'panels.open packs',
+      ]);
+    });
+
+    it('第二實例: one before ready waits for it', async () => {
+      const pack = file('early.awpet');
+      await startMain();
+      emit('second-instance', {}, [pack], '/repo');
+      await settle();
+      expect(state.order).not.toContain('importer.start early.awpet');
+
+      await becomeReady();
+
+      expect(state.order.slice(-2)).toStrictEqual([
+        'importer.start early.awpet',
+        'panels.open packs',
+      ]);
+    });
+
+    it('第二實例: a panel that fails to open is logged; the import still starts', async () => {
+      const pack = file('sample.awpet');
+      await startMain();
+      await becomeReady();
+      state.failing.add('panels.open');
+      state.order = [];
+
+      emit('second-instance', {}, [pack], '/repo');
+      await settle();
+
+      expect(state.order).toStrictEqual([
+        'importer.start sample.awpet',
+        'panels.open packs',
+      ]);
+      expect(state.errors).toStrictEqual([
+        'windows: opening the panel for a .awpet failed: EFAKE',
+      ]);
+    });
+
+    it('不是 .awpet: other arguments, a missing .awpet, a folder named .awpet or another file only bring the panel up, as before', async () => {
+      fs.mkdirSync(path.join(dir, 'folder.awpet'));
+      const other = file('notes.txt');
+      await startMain();
+      await becomeReady();
+      state.order = [];
+
+      emit(
+        'second-instance',
+        {},
+        [
+          'electron',
+          '.',
+          other,
+          path.join(dir, 'missing.awpet'),
+          path.join(dir, 'folder.awpet'),
+          '--open=x.awpet',
+        ],
+        dir,
+      );
+      await settle();
+
+      expect(state.order).toStrictEqual(['panels.openOrFocus sessions']);
+      expect(state.logs.join('\n')).not.toContain('a .awpet to import');
+    });
+
+    it('啟動參數: a .awpet in the first launch arguments is imported once ready, the panel opened on 角色包', async () => {
+      const pack = file('launch.awpet');
+      process.argv = ['/Applications/App', pack];
+      await startMain();
+      expect(state.order).not.toContain('importer.start launch.awpet');
+      state.order = [];
+
+      await becomeReady();
+
+      expect(state.order).toStrictEqual([
+        ...readySteps(),
+        'importer.start launch.awpet',
+        'panels.open packs',
+      ]);
+      expect(state.logs).toContain(
+        'packs: launch arguments: a .awpet to import',
+      );
+      expectNoPathLogged();
+    });
+
+    it('啟動參數: without a .awpet nothing is imported and no panel opens', async () => {
+      process.argv = ['/Applications/App', file('notes.txt')];
+      await startMain();
+      state.order = [];
+
+      await becomeReady();
+
+      expect(state.order).toStrictEqual(readySteps());
+    });
+
+    it('open-file: before ready it is held, preventDefault called, and imported once ready', async () => {
+      const pack = file('opened.awpet');
+      await startMain();
+      const preventDefault = vi.fn();
+
+      emit('open-file', { preventDefault }, pack);
+      await settle();
+
+      expect(preventDefault).toHaveBeenCalledOnce();
+      expect(state.order).not.toContain('importer.start opened.awpet');
+      state.order = [];
+      await becomeReady();
+      expect(state.order).toStrictEqual([
+        ...readySteps(),
+        'importer.start opened.awpet',
+        'panels.open packs',
+      ]);
+      expect(state.logs).toContain('packs: open-file: a .awpet to import');
+      expectNoPathLogged();
+    });
+
+    it('open-file: after ready it is imported at once', async () => {
+      const pack = file('opened.awpet');
+      await startMain();
+      await becomeReady();
+      state.order = [];
+      const preventDefault = vi.fn();
+
+      emit('open-file', { preventDefault }, pack);
+
+      expect(preventDefault).toHaveBeenCalledOnce();
+      expect(state.order).toStrictEqual([
+        'importer.start opened.awpet',
+        'panels.open packs',
+      ]);
+    });
+
+    it('open-file: a file that is not a .awpet is ignored with one line (still preventDefault)', async () => {
+      const other = file('notes.txt');
+      await startMain();
+      await becomeReady();
+      state.order = [];
+      const preventDefault = vi.fn();
+
+      emit('open-file', { preventDefault }, other);
+
+      expect(preventDefault).toHaveBeenCalledOnce();
+      expect(state.order).toStrictEqual([]);
+      expect(state.logs).toContain(
+        'packs: open-file: not a .awpet file; ignored',
+      );
+      expectNoPathLogged();
+    });
   });
 });

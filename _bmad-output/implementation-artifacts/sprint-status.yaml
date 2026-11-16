@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-03-2026 15:49
-last_updated: 11-16-2026 10:12
+last_updated: 11-16-2026 15:19
 project: gundam-pet
 project_key: NOKEY
 tracking_system: file-system
@@ -58,7 +58,7 @@ development_status:
 
   epic-3: in-progress
   3-1-角色包-api-v1-契約與契約測試包: done
-  3-2-匯入與安裝-awpet: in-progress
+  3-2-匯入與安裝-awpet: review
   3-3-角色包管理頁: backlog
   3-4-池子與-session-分配: backlog
   3-5-角色包沙盒與載入鏈: backlog

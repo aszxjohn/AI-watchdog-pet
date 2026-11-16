@@ -11,6 +11,8 @@ import {
   ipcResultSchema,
   isIpcChannelName,
   parseIpcResult,
+  packsChoose,
+  packsConfirm,
   poolSetReleased,
   settingsGet,
   settingsPatch,
@@ -201,6 +203,7 @@ describe('settings and StageView contracts', () => {
       adapters: [],
       pool: { released: [] },
       packs: { installed: [] },
+      packImport: { phase: 'idle' },
     },
   };
   const DELTA = { rev: 6, sections: { settings: STATE } };
@@ -418,5 +421,31 @@ describe('pool:set-released contract', () => {
     expectRoundTrip(poolSetReleased.output, null);
     expectRejected(poolSetReleased.output, undefined);
     expectRejected(poolSetReleased.output, true);
+  });
+});
+
+describe('packs:choose and packs:confirm contracts', () => {
+  it('use valid channel names', () => {
+    expect(packsChoose.channel).toBe('packs:choose');
+    expect(packsConfirm.channel).toBe('packs:confirm');
+    expect(isIpcChannelName(packsChoose.channel)).toBe(true);
+    expect(isIpcChannelName(packsConfirm.channel)).toBe(true);
+  });
+
+  it('packs:choose takes nothing and answers null', () => {
+    expectRoundTrip(packsChoose.input, []);
+    expectRejected(packsChoose.input, ['/a.awpet']);
+    expectRoundTrip(packsChoose.output, null);
+    expectRejected(packsChoose.output, '/a.awpet');
+  });
+
+  it('packs:confirm takes one boolean and answers null', () => {
+    expectRoundTrip(packsConfirm.input, [true]);
+    expectRoundTrip(packsConfirm.input, [false]);
+    expectRejected(packsConfirm.input, []);
+    expectRejected(packsConfirm.input, ['yes']);
+    expectRejected(packsConfirm.input, [true, false]);
+    expectRoundTrip(packsConfirm.output, null);
+    expectRejected(packsConfirm.output, undefined);
   });
 });

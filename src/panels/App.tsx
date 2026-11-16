@@ -7,11 +7,13 @@
  * the left change it. 管理 session lists the detected sessions (each can be
  * released or shown again) and the running adapters' health; 舞台設定
  * lists the displays for the canvas and the detection timings (計時);
- * 角色包 shows 即將推出 for now.
+ * 角色包 has the import (匯入角色包…, how it went, the replace
+ * confirmation); the installed list comes with Story 3.3.
  *
  * Renderer state only ever comes from StageView (AD-20): a setting changes
- * through `settings.patch` and a release through `pool.setReleased`, and
- * the page shows the outcome once StageView brings it back, never earlier.
+ * through `settings.patch`, a release through `pool.setReleased` and an
+ * import through `packs.choose` / `packs.confirm`, and the page shows the
+ * outcome once StageView brings it back, never earlier.
  */
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { PRELOAD_API_KEY, PRODUCT_NAME } from '../shared/constants';
@@ -27,6 +29,15 @@ import {
   type DisplayChoiceState,
 } from './display-options';
 import { currentHashPage, followHashPage } from './hash-page';
+import {
+  createPackImportActions,
+  IDLE_PACK_IMPORT_ACTIONS,
+  IMPORT_BUTTON_LABEL,
+  PACK_IMPORT_HEADING,
+  packImportControls,
+  packImportView,
+  type PackImportActionState,
+} from './pack-import';
 import {
   ADAPTERS_HEADING,
   adapterRows,
@@ -456,6 +467,113 @@ function Sessions({
   );
 }
 
+/**
+ * 角色包 › 匯入: the 匯入角色包… button, the status line (with the manifest
+ * problems of a refusal under it) and, while a pack of an installed id
+ * waits, the replace confirmation (取代 / 取消, with the downgrade
+ * warning). What each shows is packImportView, from StageView's
+ * `packImport` section; which buttons are disabled and what each sends is
+ * packImportControls; the send logic (a failure shown with the section
+ * left as it is) is createPackImportActions. This only renders them.
+ */
+function PackImport({
+  awp,
+  snapshot,
+}: {
+  awp: PanelsApi | undefined;
+  snapshot: StageViewSnapshot | null;
+}) {
+  const [state, setState] = useState<PackImportActionState>(
+    IDLE_PACK_IMPORT_ACTIONS,
+  );
+  const actions = useMemo(
+    () =>
+      awp === undefined
+        ? undefined
+        : createPackImportActions(
+            {
+              choose: () => awp.packs.choose(),
+              confirm: (replace) => awp.packs.confirm(replace),
+            },
+            setState,
+          ),
+    [awp],
+  );
+
+  if (snapshot === null) {
+    return <p className="coming-soon">讀取中…</p>;
+  }
+  const view = packImportView(snapshot.view.packImport);
+  const controls = packImportControls(
+    view,
+    state.sending,
+    actions !== undefined,
+  );
+
+  return (
+    <section className="pack-import" aria-labelledby="pack-import-heading">
+      <h2 id="pack-import-heading">{PACK_IMPORT_HEADING}</h2>
+      <button
+        type="button"
+        disabled={controls.importDisabled}
+        onClick={() => {
+          void actions?.choose();
+        }}
+      >
+        {IMPORT_BUTTON_LABEL}
+      </button>
+      {view.status === null ? null : (
+        <div
+          className={`pack-import-status is-${view.status.tone}`}
+          role={view.status.tone === 'error' ? 'alert' : 'status'}
+        >
+          <p>{view.status.text}</p>
+          {view.status.details.length === 0 ? null : (
+            <ul>
+              {view.status.details.map((line, i) => (
+                <li key={i}>{line}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      {view.confirm === null ? null : (
+        <div
+          className="pack-confirm"
+          role="group"
+          aria-labelledby="pack-confirm-question"
+        >
+          <p id="pack-confirm-question">{view.confirm.question}</p>
+          {view.confirm.downgradeWarning === null ? null : (
+            <p className="pack-confirm-warning">
+              {view.confirm.downgradeWarning}
+            </p>
+          )}
+          <div className="pack-confirm-actions">
+            {controls.confirmButtons.map((button) => (
+              <button
+                key={button.key}
+                type="button"
+                disabled={button.disabled}
+                onClick={() => {
+                  void actions?.confirm(button.replace);
+                }}
+              >
+                {button.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {state.error === null ? null : (
+        <p className="setting-error" role="alert">
+          {state.error}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function App({ awp }: { awp: PanelsApi | undefined }) {
   const page = useHashPage();
   const version = useVersionLine(awp);
@@ -486,7 +604,7 @@ export function App({ awp }: { awp: PanelsApi | undefined }) {
         ) : page === 'sessions' ? (
           <Sessions awp={awp} snapshot={stageView.snapshot} />
         ) : (
-          <p className="coming-soon">即將推出</p>
+          <PackImport awp={awp} snapshot={stageView.snapshot} />
         )}
       </main>
       <footer className="panel-status">

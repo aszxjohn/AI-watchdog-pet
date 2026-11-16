@@ -10,6 +10,8 @@ import type {
   canvasContextMenu,
   canvasReady,
   canvasSetHover,
+  packsChoose,
+  packsConfirm,
   poolSetReleased,
   settingsGet,
   settingsPatch,
@@ -56,6 +58,20 @@ export interface PanelsApi {
       sessionKey: SessionKey,
       released: boolean,
     ): Promise<IpcResult<IpcData<typeof poolSetReleased>>>;
+  };
+  readonly packs: {
+    /**
+     * Asks main to open the file dialog and import the `.awpet` picked
+     * (Story 3.2). Answers at once; the import's progress and outcome
+     * come back through StageView's `packImport` section.
+     */
+    choose(): Promise<IpcResult<IpcData<typeof packsChoose>>>;
+    /**
+     * Replaces the installed version with the pack waiting for
+     * confirmation (true), or leaves it (false). The outcome comes back
+     * through StageView; do not update local state from the reply.
+     */
+    confirm(replace: boolean): Promise<IpcResult<IpcData<typeof packsConfirm>>>;
   };
   readonly stageView: StageViewApi;
 }

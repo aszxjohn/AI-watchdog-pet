@@ -1,4 +1,5 @@
 import { sessionKeySchema } from './detection-events';
+import { packsConfirmInputSchema } from './packs';
 import { poolSetReleasedInputSchema } from './pool';
 import {
   settingsPatchResultSchema,
@@ -146,6 +147,31 @@ export const settingsPatch = {
 export const poolSetReleased = {
   channel: 'pool:set-released',
   input: poolSetReleasedInputSchema,
+  output: z.null(),
+} as const satisfies IpcContract;
+
+/**
+ * `packs:choose`: main opens a file dialog (only `.awpet` files) on the
+ * panel and imports the file picked (Story 3.2). Answers null at once,
+ * before the dialog closes; the import goes on in main and comes back
+ * through StageView's `packImport` section. Nothing happens while an
+ * import is being read or waits for confirmation.
+ */
+export const packsChoose = {
+  channel: 'packs:choose',
+  input: z.tuple([]),
+  output: z.null(),
+} as const satisfies IpcContract;
+
+/**
+ * `packs:confirm`: replaces the installed version with the pack waiting
+ * for confirmation (true) or leaves it (false). Answers null at once;
+ * nothing happens unless a pack waits for confirmation. The outcome comes
+ * back through StageView's `packImport` (and `packs`) sections.
+ */
+export const packsConfirm = {
+  channel: 'packs:confirm',
+  input: packsConfirmInputSchema,
   output: z.null(),
 } as const satisfies IpcContract;
 

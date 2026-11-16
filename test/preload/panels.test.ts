@@ -4,6 +4,10 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDetection } from '../../src/main/detection/detection';
 import { registerIpcHandler } from '../../src/main/ipc/register';
+import { createPackImporter } from '../../src/main/packs/importer';
+import { inspectPack } from '../../src/main/packs/inspect';
+import { installPack } from '../../src/main/packs/install';
+import { registerPackHandlers } from '../../src/main/packs/ipc';
 import { loadPacks } from '../../src/main/packs/store';
 import { registerPoolHandlers } from '../../src/main/pool/ipc';
 import { loadPool, type PoolStore } from '../../src/main/pool/store';
@@ -50,23 +54,35 @@ async function loadApi(): Promise<PanelsApi> {
 }
 
 /**
- * main as main.ts wires it, with settings.json and assignments.json in a
- * temp folder.
+ * main as main.ts wires it, with settings.json, assignments.json and the
+ * packs folder in a temp folder. The file dialog is `chooseFile`
+ * (cancelled by default).
  */
-function startMain(): SettingsStore {
+function startMain(
+  chooseFile: () => Promise<string | null> = async () => null,
+): SettingsStore {
   vi.spyOn(console, 'info').mockImplementation(() => {});
   settings = loadSettings({ file: path.join(dir, 'settings.json') });
   const detection = createDetection({ settings });
   pool = loadPool({ file: path.join(dir, 'assignments.json') });
+  const packs = loadPacks({ dir: path.join(dir, 'packs') });
+  const packImport = createPackImporter({
+    store: packs,
+    inspect: inspectPack,
+    install: installPack,
+    chooseFile,
+  });
   registerSettingsHandlers(settings);
   registerPoolHandlers(pool);
+  registerPackHandlers(packImport);
   registerStageViewHandlers(
     createStageView({
       settings,
       windows: createWindowsStageSource(),
       detection,
       pool,
-      packs: loadPacks({ dir: path.join(dir, 'packs') }),
+      packs,
+      packImport,
     }),
   );
   return settings;
@@ -83,13 +99,16 @@ describe('panels preload', () => {
     expect([...fake.exposed.keys()]).toStrictEqual(['awp']);
     expect(Object.keys(api).sort()).toStrictEqual([
       'app',
+      'packs',
       'pool',
       'settings',
       'stageView',
     ]);
     expect(Object.keys(api.pool)).toStrictEqual(['setReleased']);
+    expect(Object.keys(api.packs)).toStrictEqual(['choose', 'confirm']);
     expect(Object.isFrozen(api)).toBe(true);
     expect(Object.isFrozen(api.pool)).toBe(true);
+    expect(Object.isFrozen(api.packs)).toBe(true);
     expect(Object.isFrozen(api.settings)).toBe(true);
     expect(Object.isFrozen(api.stageView)).toBe(true);
   });
@@ -131,6 +150,7 @@ describe('panels preload', () => {
         adapters: [],
         pool: { released: [] },
         packs: { installed: [] },
+        packImport: { phase: 'idle' },
       },
     });
 
@@ -230,5 +250,66 @@ describe('panels preload', () => {
     });
     expect(listener).toHaveBeenCalledOnce();
     expect(pool?.get()).toStrictEqual({ pool: { released: [] } });
+  });
+
+  it('a packs.choose answers null at once; StageView shows reading while the dialog is open, and the phase before once it is cancelled', async () => {
+    let close: (file: string | null) => void = () => {};
+    startMain(
+      () =>
+        new Promise<string | null>((resolve) => {
+          close = resolve;
+        }),
+    );
+    const api = await loadApi();
+    const listener = vi.fn<(snapshot: StageViewSnapshot) => void>();
+    api.stageView.subscribe(listener);
+    await settle();
+
+    expect(await api.packs.choose()).toStrictEqual({ ok: true, data: null });
+    await settle();
+    expect(listener.mock.lastCall?.[0]).toMatchObject({
+      rev: 1,
+      view: { packImport: { phase: 'reading' } },
+    });
+
+    close(null);
+    await settle();
+    expect(listener.mock.lastCall?.[0]).toMatchObject({
+      rev: 2,
+      view: { packImport: { phase: 'idle' } },
+    });
+  });
+
+  it('packs.confirm answers null, and nothing changes when no pack waits for confirmation', async () => {
+    startMain();
+    const api = await loadApi();
+    const listener = vi.fn();
+    api.stageView.subscribe(listener);
+    await settle();
+
+    expect(await api.packs.confirm(true)).toStrictEqual({
+      ok: true,
+      data: null,
+    });
+    await settle();
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it('packs.confirm answers invalid-input to a flag that is not a boolean, and nothing changes', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    startMain();
+    const api = await loadApi();
+    const listener = vi.fn();
+    api.stageView.subscribe(listener);
+    await settle();
+
+    const result = await api.packs.confirm('yes' as unknown as boolean);
+    await settle();
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'invalid-input' },
+    });
+    expect(listener).toHaveBeenCalledOnce();
   });
 });

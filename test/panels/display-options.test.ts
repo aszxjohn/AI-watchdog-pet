@@ -448,6 +448,7 @@ describe('the StageView status line', () => {
           adapters: [],
           pool: { released: [] },
           packs: { installed: [] },
+          packImport: { phase: 'idle' },
         },
       }),
     ).toBe('StageView rev 9｜畫布螢幕：主螢幕（暫用主螢幕）');

@@ -230,8 +230,14 @@
   summary: `src/main/detection/adapters/cursor/project-name.ts` 第 6、15 行註解的範例路徑含系列名稱，可能違反 NFR7；換成中性的範例路徑，並考慮讓字面值掃描加入從 `characters/` 產生的禁用名單
   evidence: Story 3.1 下半段審查 B17（medium）。2.7 寫入的既有註解，不是下半段造成；下半段的字面值掃描只比對契約包的 id。
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-2-pack-import-core.md`
-  summary: Story 3.2 下半段：「角色包」頁的匯入按鈕（main 開選檔對話框）、匯入進度與結果（中文拒絕原因，依拒絕代碼與 `PACK_API_ISSUE_RULES` 對照）、同 packId 的替換確認（顯示新舊名稱與版本）與降版警告、第二實例參數與 macOS `open-file` 帶來的 `.awpet` 走同一個匯入流程（打開面板到「角色包」頁）
-  evidence: 使用者 2026-11-16 選擇把 3.2 拆兩段，先做核心（檢查、安裝、`pack://`、StageView `packs` 區段）。IPC 的 10 秒逾時（`IPC_HANDLER_TIMEOUT_MS`）讓選檔、確認不能卡在一次呼叫裡，匯入狀態要放在 main 經 StageView 發佈；第二實例沒有面板可回覆，要打開面板。
+  summary: Story 3.2 下半段：「角色包」頁的匯入按鈕（main 開選檔對話框）、匯入進度與結果（中文拒絕原因，依拒絕代碼與 `PACK_API_ISSUE_RULES` 對照）、同 packId 的替換確認（顯示新舊名稱與版本）與降版警告、第二實例參數與 macOS `open-file` 帶來的 `.awpet` 走同一個匯入流程（打開面板到「角色包」頁）（已解決）
+  evidence: 使用者 2026-11-16 選擇把 3.2 拆兩段，先做核心（檢查、安裝、`pack://`、StageView `packs` 區段）。IPC 的 10 秒逾時（`IPC_HANDLER_TIMEOUT_MS`）讓選檔、確認不能卡在一次呼叫裡，匯入狀態要放在 main 經 StageView 發佈；第二實例沒有面板可回覆，要打開面板。已由 `spec-3-2-pack-import-entry.md`（Story 3.2 下半段）完成。
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-2-pack-import-core.md`
-  summary: `.awpet` 的檢查與安裝在 Electron main thread 同步進行（`vm.Script` 編譯最多 64 MiB 的入口、同步寫入最多 512 個檔），而且所有檔案在讀 manifest 之前就全部解壓；考慮先讀 `manifest.json` 再解其他檔、替入口大小設上限，或把檢查移到 utilityProcess／worker
-  evidence: Story 3.2 上半段審查 B11（未量測，若成立為 medium）。期間 tray、IPC、StageView 推送都會卡住，V8 parser 的攻擊面也落在權限最高的 process；下半段接上匯入按鈕前要量一次 64 MiB 包的檢查時間。
+  summary: `.awpet` 的檢查與安裝在 Electron main thread 同步進行（`vm.Script` 編譯最多 64 MiB 的入口、同步寫入最多 512 個檔），而且所有檔案在讀 manifest 之前就全部解壓；考慮先讀 `manifest.json` 再解其他檔、替入口大小設上限，或把檢查移到 utilityProcess／worker（已解決）
+  evidence: Story 3.2 上半段審查 B11（未量測，若成立為 medium）。期間 tray、IPC、StageView 推送都會卡住，V8 parser 的攻擊面也落在權限最高的 process；下半段接上匯入按鈕前要量一次 64 MiB 包的檢查時間。已在 `spec-3-2-pack-import-entry.md` 量測（數字見其 Implementation Notes）；main thread 卡住的問題延續到 source_spec 為 `spec-3-2-pack-import-entry.md` 的那一筆。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-2-pack-import-entry.md`
+  summary: 接近上限的 `.awpet` 匯入會讓 main thread 卡 2 秒以上：512 個檔時 `installPack` 約 2.0～2.1 s（每個檔 fsync），約 64 MiB 的入口時 `inspectPack` 約 2.1～2.3 s（`vm.Script` 編譯約 1.9 s）。建議：(1) 替入口加大小上限（例如 4～8 MiB，編譯時間大致隨大小線性），最便宜；(2) 檢查與安裝移到 `utilityProcess` 或 `worker_threads`（main 只收計畫或結果），期間 tray、IPC、StageView 照常；(3) 安裝改成先寫完所有檔、再逐一 fsync（或只在寫 `index.json` 前統一 fsync），減少寫入與 fsync 交錯的成本，要另外量
+  evidence: Story 3.2 下半段量測（上半段審查 B11 延後的量測），Apple M4、本機 Node 的 vitest，`AWP_MEASURE_IMPORT=1 npx vitest run test/main/packs-import-timing.test.ts` 可重跑；數字記在 `spec-3-2-pack-import-entry.md` 的 Implementation Notes。Electron 內的 V8 版本不同，數字可能有差。目前匯入期間面板只顯示「讀取中…」，卡住時連這行都要等推送恢復才會更新。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-2-pack-import-entry.md`
+  summary: 選檔對話框的 promise 若永遠不 settle（例如面板在 sheet 開著時被銷毀），`packImport` 會卡在「讀取中」，之後的匯入都被忽略，直到重啟
+  evidence: Story 3.2 下半段審查 E1（maybe-false，若成立為 medium）。macOS 視窗掛著 sheet 時關閉鈕停用，面板只在使用者關閉或結束 app 時銷毀，日常大概碰不到；要確認的是 Electron 45 在父視窗銷毀時 `dialog.showOpenDialog(parent, …)` 會不會回 `canceled`。若不會，importer 需要在面板關閉時把 `reading`（選檔中）退回原狀態。

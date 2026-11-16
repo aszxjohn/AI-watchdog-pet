@@ -32,6 +32,7 @@ const SNAPSHOT: StageViewSnapshot = {
     adapters: [],
     pool: { released: [] },
     packs: { installed: [] },
+    packImport: { phase: 'idle' },
   },
 };
 

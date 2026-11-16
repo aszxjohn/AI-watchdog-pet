@@ -387,6 +387,7 @@ describe('registerIpcHandler', () => {
           adapters: [],
           pool: { released: [] },
           packs: { installed: [] },
+          packImport: { phase: 'idle' },
         },
       };
       const PATCH = {

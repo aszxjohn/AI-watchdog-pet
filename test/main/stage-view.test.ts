@@ -22,6 +22,7 @@ import {
   stageViewDeltaSchema,
   stageViewSnapshotSchema,
   type StageViewDetectionSections,
+  type StageViewPackImportSections,
   type StageViewPacksSections,
   type StageViewPoolSections,
 } from '../../src/shared/stage-view';
@@ -35,6 +36,7 @@ let windows: WindowsStageSource;
 let detection: ReturnType<typeof fakeDetection>;
 let pool: ReturnType<typeof fakePool>;
 let packs: ReturnType<typeof fakePacks>;
+let packImport: ReturnType<typeof fakePackImport>;
 let hub: StageViewHub;
 
 /**
@@ -119,6 +121,35 @@ function fakePacks() {
   };
 }
 
+/**
+ * A stand-in for main/packs' importer: update() replaces its section and
+ * tells the listeners, as the importer does (any value, so a test can hand
+ * StageView one that fails the schema).
+ */
+function fakePackImport() {
+  let sections: StageViewPackImportSections = {
+    packImport: { phase: 'idle' },
+  };
+  const listeners = new Set<(changed: StageViewPackImportSections) => void>();
+  return {
+    get: () => sections,
+    onChange(listener: (changed: StageViewPackImportSections) => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    update(packImport: unknown) {
+      sections = {
+        packImport: packImport as StageViewPackImportSections['packImport'],
+      };
+      for (const listener of listeners) {
+        listener(sections);
+      }
+    },
+  };
+}
+
 /** main/windows' sections before ready. */
 const WINDOWS_BEFORE_READY = {
   displays: [],
@@ -131,6 +162,8 @@ const NO_DETECTION = { sessions: [], adapters: [] };
 const NO_POOL = { pool: { released: [] } };
 /** main/packs' section with no pack installed. */
 const NO_PACKS = { packs: { installed: [] } };
+/** main/packs' importer before any import. */
+const NO_PACK_IMPORT = { packImport: { phase: 'idle' } };
 const PACK = {
   id: 'sample-pack',
   name: '範例包',
@@ -171,7 +204,15 @@ beforeEach(() => {
   detection = fakeDetection();
   pool = fakePool();
   packs = fakePacks();
-  hub = createStageView({ settings, windows, detection, pool, packs });
+  packImport = fakePackImport();
+  hub = createStageView({
+    settings,
+    windows,
+    detection,
+    pool,
+    packs,
+    packImport,
+  });
 });
 
 afterEach(() => {
@@ -203,6 +244,7 @@ describe('StageView composition', () => {
         ...NO_DETECTION,
         ...NO_POOL,
         ...NO_PACKS,
+        ...NO_PACK_IMPORT,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(snapshot).success).toBe(true);
@@ -256,6 +298,7 @@ describe('StageView composition', () => {
         ...NO_DETECTION,
         ...NO_POOL,
         ...NO_PACKS,
+        ...NO_PACK_IMPORT,
       },
     });
   });
@@ -270,6 +313,7 @@ describe('StageView composition', () => {
       detection,
       pool,
       packs,
+      packImport,
     });
 
     expect(later.snapshot().rev).toBe(0);
@@ -312,6 +356,7 @@ describe("main/windows' sections", () => {
       detection,
       pool,
       packs,
+      packImport,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -324,6 +369,7 @@ describe("main/windows' sections", () => {
         ...NO_DETECTION,
         ...NO_POOL,
         ...NO_PACKS,
+        ...NO_PACK_IMPORT,
       },
     });
   });
@@ -355,6 +401,7 @@ describe("main/windows' sections", () => {
         ...NO_DETECTION,
         ...NO_POOL,
         ...NO_PACKS,
+        ...NO_PACK_IMPORT,
       },
     });
   });
@@ -412,6 +459,7 @@ describe("main/detection's sections", () => {
       detection,
       pool,
       packs,
+      packImport,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -423,6 +471,7 @@ describe("main/detection's sections", () => {
         adapters: [DEMO_ADAPTER],
         ...NO_POOL,
         ...NO_PACKS,
+        ...NO_PACK_IMPORT,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -473,6 +522,7 @@ describe("main/pool's section", () => {
       detection,
       pool,
       packs,
+      packImport,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -483,6 +533,7 @@ describe("main/pool's section", () => {
         ...NO_DETECTION,
         pool: { released: ['claude-code:a', 'demo:1'] },
         ...NO_PACKS,
+        ...NO_PACK_IMPORT,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -545,6 +596,7 @@ describe("main/packs' section", () => {
       detection,
       pool,
       packs,
+      packImport,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -555,6 +607,7 @@ describe("main/packs' section", () => {
         ...NO_DETECTION,
         ...NO_POOL,
         packs: { installed: [PACK] },
+        ...NO_PACK_IMPORT,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -595,6 +648,98 @@ describe("main/packs' section", () => {
         .mock.calls.map((call: unknown[]) => String(call[0])),
     ).toStrictEqual([
       '[stage-view] dropped a delta that fails the schema (sections: packs; fields: packs.installed); rev stays 0',
+    ]);
+  });
+});
+
+describe("main/packs' importer section", () => {
+  const CONFIRM = {
+    phase: 'confirm',
+    packId: 'sample-pack',
+    name: '範例包',
+    version: '1.1.0',
+    previous: { name: '範例包', version: '1.0.0' },
+    downgrade: false,
+  };
+
+  it('starts from what the importer has', () => {
+    packImport.update(CONFIRM);
+
+    const later = createStageView({
+      settings,
+      windows,
+      detection,
+      pool,
+      packs,
+      packImport,
+    });
+
+    expect(later.snapshot()).toStrictEqual({
+      rev: 0,
+      view: {
+        settings: settings.get(),
+        ...WINDOWS_BEFORE_READY,
+        ...NO_DETECTION,
+        ...NO_POOL,
+        ...NO_PACKS,
+        packImport: CONFIRM,
+      },
+    });
+    expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
+      true,
+    );
+  });
+
+  it('pushes one delta per change, carrying the packImport section only, on the shared rev', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    packImport.update({ phase: 'reading' });
+    packs.update([PACK]);
+    packImport.update({
+      phase: 'result',
+      outcome: 'installed',
+      packId: PACK.id,
+      name: PACK.name,
+      version: PACK.version,
+    });
+
+    expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
+      { rev: 1, sections: { packImport: { phase: 'reading' } } },
+      { rev: 2, sections: { packs: { installed: [PACK] } } },
+      {
+        rev: 3,
+        sections: {
+          packImport: {
+            phase: 'result',
+            outcome: 'installed',
+            packId: PACK.id,
+            name: PACK.name,
+            version: PACK.version,
+          },
+        },
+      },
+    ]);
+    for (const { args } of subscriber.sent) {
+      expect(stageViewDeltaSchema.safeParse(args[0]).success).toBe(true);
+    }
+  });
+
+  it('drops a packImport section that fails the schema before moving rev: an unknown phase', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    packImport.update({ phase: 'installing' });
+
+    expect(subscriber.sent).toStrictEqual([]);
+    expect(hub.snapshot().rev).toBe(0);
+    expect(hub.snapshot().view.packImport).toStrictEqual({ phase: 'idle' });
+    expect(
+      vi
+        .mocked(console.error)
+        .mock.calls.map((call: unknown[]) => String(call[0])),
+    ).toStrictEqual([
+      '[stage-view] dropped a delta that fails the schema (sections: packImport; fields: packImport.phase); rev stays 0',
     ]);
   });
 });
@@ -711,6 +856,7 @@ describe('subscribers', () => {
         ...NO_DETECTION,
         ...NO_POOL,
         ...NO_PACKS,
+        ...NO_PACK_IMPORT,
       },
     });
     expect(hub.subscriberCount()).toBe(1);

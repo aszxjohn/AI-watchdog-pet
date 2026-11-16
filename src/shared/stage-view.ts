@@ -3,7 +3,7 @@ import {
   DETECTION_ID_MAX_LENGTH,
   sessionKeySchema,
 } from './detection-events';
-import { stagePacksSchema } from './packs';
+import { stagePackImportSchema, stagePacksSchema } from './packs';
 import { stagePoolSchema } from './pool';
 import { settingsStateSchema } from './settings';
 import { adapterHealthSchema, sourceCodeSchema } from './sources';
@@ -22,7 +22,9 @@ import { z } from './zod-setup';
  *   matches them to `sessions` by key. Any one snapshot is a consistent
  *   view at a single `rev`; a session and its release may still arrive in
  *   different deltas (each delta is rev + 1);
- * - `packs`: main/packs (Story 3.2), the installed character packs.
+ * - `packs`: main/packs (Story 3.2), the installed character packs;
+ * - `packImport`: main/packs (Story 3.2), where the one import at a time
+ *   is (reading, waiting for the user to confirm a replace, or its result).
  */
 
 /**
@@ -160,6 +162,7 @@ export const stageViewSchema = z.strictObject({
   adapters: stageAdaptersSchema,
   pool: stagePoolSchema,
   packs: stagePacksSchema,
+  packImport: stagePackImportSchema,
 });
 
 export type StageView = z.infer<typeof stageViewSchema>;
@@ -181,8 +184,11 @@ export type StageViewDetectionSections = Pick<
 /** The section main/pool owns. */
 export type StageViewPoolSections = Pick<StageView, 'pool'>;
 
-/** The section main/packs owns. */
+/** The section main/packs' store owns. */
 export type StageViewPacksSections = Pick<StageView, 'packs'>;
+
+/** The section main/packs' importer owns. */
+export type StageViewPackImportSections = Pick<StageView, 'packImport'>;
 
 /** The answer to `stage-view:subscribe`: the whole view at `rev`. */
 export const stageViewSnapshotSchema = z.strictObject({
@@ -207,6 +213,7 @@ export const stageViewSectionsSchema = z
     adapters: stageAdaptersSchema.exactOptional(),
     pool: stagePoolSchema.exactOptional(),
     packs: stagePacksSchema.exactOptional(),
+    packImport: stagePackImportSchema.exactOptional(),
   })
   .refine((sections) => Object.keys(sections).length > 0, {
     message: 'a delta carries at least one section',

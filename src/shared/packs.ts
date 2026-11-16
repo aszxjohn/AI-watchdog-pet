@@ -1,4 +1,9 @@
 import {
+  PACK_IMPORT_REPORTED_ISSUES_MAX,
+  PACK_REJECTED_NAME_MAX_LENGTH,
+} from './constants';
+import {
+  API_INCOMPATIBILITY_REASONS,
   type ApiIncompatibilityReason,
   type ApiVersion,
   apiVersionSchema,
@@ -6,6 +11,7 @@ import {
   idSchema,
   labelSchema,
   MANIFEST_CHARACTERS_MAX,
+  PACK_API_ISSUE_RULES,
   type PackApiIssueRule,
   packIdSchema,
   packPathSchema,
@@ -19,7 +25,9 @@ import { z } from './zod-setup';
  * in `userData/packs/<packId>/<version>/`), and publishes them as
  * StageView's `packs` section. This file also lists the codes an import
  * is refused with and an install fails with: English codes only, the
- * display layer words them.
+ * display layer words them. And StageView's `packImport` section: where the
+ * one import at a time is (Story 3.2's second half), with `packs:confirm`'s
+ * arguments.
  */
 
 /** The `schemaVersion` main/packs reads and writes in index.json. */
@@ -292,3 +300,162 @@ export const PACK_INSTALL_FAILURE_CODES = [
 
 export type PackInstallFailureCode =
   (typeof PACK_INSTALL_FAILURE_CODES)[number];
+
+// ---------------------------------------------------------------------------
+// The import as StageView carries it (Story 3.2's second half).
+
+/**
+ * A name quoted in a published rejection: at most
+ * PACK_REJECTED_NAME_MAX_LENGTH characters and then `…` (main/packs cuts
+ * every quoted name and manifest path segment so before publishing).
+ */
+export const packQuotedNameSchema = z
+  .string()
+  .max(PACK_REJECTED_NAME_MAX_LENGTH + 1);
+
+/** One manifest problem as published: PackManifestIssue, checked. */
+export const packManifestIssueSchema = z.strictObject({
+  code: z.string().min(1).max(64),
+  rule: z.enum(PACK_API_ISSUE_RULES).exactOptional(),
+  path: z
+    .array(z.union([packQuotedNameSchema, z.int().nonnegative()]))
+    .max(64)
+    .readonly(),
+});
+
+/** A path-quoting rejection of `code`. */
+function quotingRejection<const C extends PackRejectionCode>(code: C) {
+  return z.strictObject({
+    code: z.literal(code),
+    path: packQuotedNameSchema,
+  });
+}
+
+/** A rejection of `code` with nothing more to say. */
+function plainRejection<const C extends PackRejectionCode>(code: C) {
+  return z.strictObject({ code: z.literal(code) });
+}
+
+/**
+ * PackRejection as published in StageView's `packImport` section: every
+ * code with what its message needs. Its output is a PackRejection (checked
+ * at compile time); an `invalid-manifest` here holds at most
+ * PACK_IMPORT_REPORTED_ISSUES_MAX issues (the section counts the rest).
+ */
+export const packRejectionSchema = z.discriminatedUnion('code', [
+  plainRejection('unreadable-file'),
+  plainRejection('invalid-archive'),
+  quotingRejection('unsafe-path'),
+  quotingRejection('shortcut'),
+  quotingRejection('name-conflict'),
+  plainRejection('invalid-root'),
+  z.strictObject({
+    code: z.literal('too-large'),
+    limit: z.enum(PACK_SIZE_LIMITS),
+  }),
+  plainRejection('missing-manifest'),
+  plainRejection('manifest-not-json'),
+  z.strictObject({
+    code: z.literal('api-incompatible'),
+    reason: z.enum(API_INCOMPATIBILITY_REASONS),
+    required: apiVersionSchema,
+  }),
+  z.strictObject({
+    code: z.literal('invalid-manifest'),
+    issues: z
+      .array(packManifestIssueSchema)
+      .max(PACK_IMPORT_REPORTED_ISSUES_MAX)
+      .readonly(),
+  }),
+  z.strictObject({
+    code: z.literal('root-folder-mismatch'),
+    folder: packQuotedNameSchema,
+    packId: idSchema,
+  }),
+  quotingRejection('missing-file'),
+  z.strictObject({
+    code: z.literal('entry-unparsable'),
+    reason: z.enum(PACK_ENTRY_PROBLEMS),
+  }),
+  quotingRejection('unsupported-image-format'),
+  quotingRejection('invalid-spritesheet'),
+  z.strictObject({
+    code: z.literal('image-too-large'),
+    limit: z.enum(PACK_IMAGE_LIMITS),
+    path: packQuotedNameSchema.exactOptional(),
+  }),
+]) satisfies z.ZodType<PackRejection>;
+
+/** The installed version a confirmation names: its name and version. */
+const packNameAndVersionShape = {
+  name: labelSchema,
+  version: packVersionSchema,
+};
+
+/**
+ * StageView's `packImport` section: where the one import at a time is
+ * (main/packs' importer owns it), told apart by `phase`:
+ * - `idle`: none yet this run;
+ * - `reading`: the file dialog is open, a `.awpet` is being checked, or a
+ *   confirmed pack is being installed (the 匯入 button is disabled);
+ * - `confirm`: a pack of an installed id waits for the user to replace
+ *   the installed version (`previous`) or not; `downgrade` when the new
+ *   version is older;
+ * - `result`, told apart by `outcome`: `installed` (the pack, now in the
+ *   `packs` section), `rejected` (why, in English codes; `moreIssues`
+ *   counts the manifest problems left out of an `invalid-manifest`, 0
+ *   otherwise), `failed` (the install's failure code; the version
+ *   installed before is unchanged) or `cancelled` (the user did not
+ *   replace it).
+ * Names and versions only, never a path on the user's disk.
+ */
+export const stagePackImportSchema = z.discriminatedUnion('phase', [
+  z.strictObject({ phase: z.literal('idle') }),
+  z.strictObject({ phase: z.literal('reading') }),
+  z.strictObject({
+    phase: z.literal('confirm'),
+    packId: packIdSchema,
+    ...packNameAndVersionShape,
+    previous: z.strictObject(packNameAndVersionShape),
+    downgrade: z.boolean(),
+  }),
+  z.discriminatedUnion('outcome', [
+    z.strictObject({
+      phase: z.literal('result'),
+      outcome: z.literal('installed'),
+      packId: packIdSchema,
+      ...packNameAndVersionShape,
+    }),
+    z
+      .strictObject({
+        phase: z.literal('result'),
+        outcome: z.literal('rejected'),
+        rejection: packRejectionSchema,
+        moreIssues: z.int().nonnegative(),
+      })
+      .refine(
+        ({ rejection, moreIssues }) =>
+          rejection.code === 'invalid-manifest' || moreIssues === 0,
+        { message: 'only an invalid-manifest has more issues' },
+      ),
+    z.strictObject({
+      phase: z.literal('result'),
+      outcome: z.literal('failed'),
+      code: z.enum(PACK_INSTALL_FAILURE_CODES),
+    }),
+    z.strictObject({
+      phase: z.literal('result'),
+      outcome: z.literal('cancelled'),
+    }),
+  ]),
+]);
+
+export type StagePackImport = z.infer<typeof stagePackImportSchema>;
+
+/** Where every run's import starts. */
+export const IDLE_PACK_IMPORT: StagePackImport = Object.freeze({
+  phase: 'idle',
+});
+
+/** `packs:confirm`'s arguments: true replaces the installed version. */
+export const packsConfirmInputSchema = z.tuple([z.boolean()]);

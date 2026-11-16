@@ -141,6 +141,8 @@ context:
 
 - 2026-11-16 CI：commit `a5b2ede` 在 macOS 通過、Windows 失敗（run 43799778028）。唯一失敗的測試是 `packs-inspect.test.ts`「a folder is unreadable-file」：Windows 把資料夾當成空檔案打開，yauzl 回報沒有 `syscall` 的錯誤而被分類成 `invalid-archive`。主 session 修正：`readPackArchive` 交給 yauzl 前先 `statSync`，不是一般檔案或 stat 失敗都回 `unreadable-file`；本機四項檢查重跑全過（80 檔、3775 個測試）。
 
+- CI：修正 commit `8d08883`（2026-11-16）後，GitHub Actions 的 macOS、Windows 都通過（run 43800720113）。
+
 ## Spec Change Log
 
 ## Review Triage Log

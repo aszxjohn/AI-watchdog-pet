@@ -83,6 +83,7 @@ const VIEW: StageView = {
   adapters: [ADAPTER],
   pool: { released: ['demo:1'] },
   packs: { installed: [PACK] },
+  packImport: { phase: 'idle' },
 };
 const NEXT_SETTINGS = {
   rev: 4,
@@ -335,6 +336,8 @@ describe('stageViewSchema', () => {
     ['no adapters section', { ...VIEW, adapters: undefined }],
     ['no pool section', { ...VIEW, pool: undefined }],
     ['no packs section', { ...VIEW, packs: undefined }],
+    ['no packImport section', { ...VIEW, packImport: undefined }],
+    ['an unknown import phase', { ...VIEW, packImport: { phase: 'done' } }],
     [
       'installed packs out of order',
       {
@@ -419,6 +422,20 @@ describe('stageViewDeltaSchema', () => {
     ['nothing released any more', { pool: { released: [] } }],
     ['packs', { packs: { installed: [PACK] } }],
     ['no packs any more', { packs: { installed: [] } }],
+    ['packImport', { packImport: { phase: 'reading' } }],
+    [
+      'packs and packImport together',
+      {
+        packs: { installed: [PACK] },
+        packImport: {
+          phase: 'result',
+          outcome: 'installed',
+          packId: PACK.id,
+          name: PACK.name,
+          version: PACK.version,
+        },
+      },
+    ],
   ])('round-trips a delta with %s', (_label, sections) => {
     expectRoundTrip(stageViewDeltaSchema, { rev: 8, sections });
   });
@@ -437,6 +454,16 @@ describe('stageViewDeltaSchema', () => {
     ['undefined sessions', { rev: 1, sections: { sessions: undefined } }],
     ['undefined pool', { rev: 1, sections: { pool: undefined } }],
     ['undefined packs', { rev: 1, sections: { packs: undefined } }],
+    ['undefined packImport', { rev: 1, sections: { packImport: undefined } }],
+    [
+      'a packImport result with a path on the disk',
+      {
+        rev: 1,
+        sections: {
+          packImport: { phase: 'result', outcome: 'cancelled', file: '/a' },
+        },
+      },
+    ],
     [
       'a pack with served paths (they stay in main)',
       {
@@ -496,6 +523,7 @@ describe('applyStageViewDelta', () => {
       adapters: [ADAPTER],
       pool: VIEW.pool,
       packs: VIEW.packs,
+      packImport: VIEW.packImport,
     });
   });
 });
