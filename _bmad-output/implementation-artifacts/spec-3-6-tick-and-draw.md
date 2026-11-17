@@ -201,6 +201,8 @@ context:
 
 - 2026-11-17 審查修補後驗證（主流程重跑）：五項檢查全過（110 檔通過、1 檔跳過；5169 個測試通過、2 個跳過；depcruise 307 個模組、0 違規；`npm run e2e` 12 個全過）；`out/` 沒有被動到；被刪的既有 `expect(` 剩 68 行，來源同上一筆紀錄（右鍵改回送 `canvas:context-menu`，canvas-input 有幾條斷言恢復）。
 
+- CI：commit `8f97265`（2026-11-17）後，GitHub Actions 的 unit（check）與 e2e 在 macOS、Windows 都通過（run 44057113708）。
+
 ## Spec Change Log
 
 ## Review Triage Log
