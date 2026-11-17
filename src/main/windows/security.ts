@@ -25,6 +25,7 @@ import {
   devServersOf,
   isAllowedNavigationUrl,
   isAllowedRequestUrl,
+  rendererOfUrl,
   type WindowsEnvironment,
 } from './environment';
 
@@ -130,8 +131,9 @@ export function createRequestFilter(
 
 /**
  * Response headers for a response from one of the dev servers, with that
- * server's dev CSP in place of any CSP it had; undefined (leave the response
- * alone) for any other URL or when there is no dev server.
+ * server's dev CSP (for its renderer: the overlay's may frame `pack:`) in
+ * place of any CSP it had; undefined (leave the response alone) for any
+ * other URL or when there is no dev server.
  */
 export function devCspHeaders(
   details: {
@@ -152,13 +154,14 @@ export function devCspHeaders(
   if (!devServersOf(env).some((server) => server.origin === origin)) {
     return undefined;
   }
+  const page = rendererOfUrl(details.url, env) ?? 'panels';
   const headers: Record<string, string[]> = {};
   for (const [name, value] of Object.entries(details.responseHeaders ?? {})) {
     if (name.toLowerCase() !== 'content-security-policy') {
       headers[name] = Array.isArray(value) ? value : [value];
     }
   }
-  headers['Content-Security-Policy'] = [devServerCsp(origin)];
+  headers['Content-Security-Policy'] = [devServerCsp(origin, page)];
   return headers;
 }
 

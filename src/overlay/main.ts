@@ -9,12 +9,18 @@ import 'pixi.js/unsafe-eval';
 // (demo-square.ts, removed in Epic 3) and lets it take the mouse (AD-14):
 // canvas-input.ts decides what to draw and what to ask main; this file
 // only forwards the DOM events to it and draws with PixiJS.
+//
+// It also hosts the character packs' sandboxes (Story 3.5): pack-host
+// follows StageView's actors and packs and keeps one sandbox iframe per
+// pack with an actor on stage.
 import './index.css';
 import { Application, Assets, Graphics, Text } from 'pixi.js';
 import { PRELOAD_API_KEY } from '../shared/constants';
 import type { OverlayApi, PreloadHost } from '../shared/preload-api';
 import { createCanvasInput } from './canvas-input';
 import { DEMO_SQUARE_LIGHT_TEXT, type DemoSquare } from './demo-square';
+import { createDomSandboxFrames } from './pack-host/dom';
+import { createPackHost } from './pack-host/host';
 import { startOverlay, type InitialisedCanvas } from './start';
 
 // Before any texture loads: the default loader decodes in a blob Worker,
@@ -50,6 +56,29 @@ function draw(square: DemoSquare | null): void {
 }
 
 const input = createCanvasInput({ api, draw });
+
+// The packs' sandboxes; none without the preload API (startOverlay logs that).
+const packHost =
+  api === undefined
+    ? undefined
+    : createPackHost({
+        api: api.packs,
+        frames: createDomSandboxFrames({
+          createIframe: () => document.createElement('iframe'),
+          attach: (iframe) => {
+            document.body.append(iframe);
+          },
+          window,
+          createChannel: () => new MessageChannel(),
+        }),
+        clock: {
+          now: () => performance.now(),
+          setTimer: (run, delayMs) => window.setTimeout(run, delayMs),
+          clearTimer: (handle) => {
+            window.clearTimeout(handle as number);
+          },
+        },
+      });
 
 // While click-through, macOS and Windows still forward mouse moves here
 // (AD-14); Linux forwards nothing, so none of these fire there.
@@ -113,5 +142,6 @@ void startOverlay({
         ? 'none'
         : `${canvas.bounds.width}x${canvas.bounds.height}`;
     input.onView(snapshot.view);
+    packHost?.onView(snapshot.view);
   },
 });

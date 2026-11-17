@@ -44,9 +44,9 @@ const BETA: PackIndexEntry = {
   servedPaths: ['main.js'],
 };
 
-/** What StageView carries of an entry. */
+/** What StageView carries of an entry (whose apiVersion fits). */
 function staged({ servedPaths: _served, ...pack }: PackIndexEntry) {
-  return pack;
+  return { ...pack, compatibility: { compatible: true } };
 }
 
 let root: string;
@@ -184,6 +184,24 @@ describe('loading index.json', () => {
 });
 
 describe('I/O matrix', () => {
+  it('不相容: says of each pack whether its apiVersion fits this stage, and if not why and the version it needs', () => {
+    const newer = { ...ALPHA, apiVersion: '1.9' };
+    const other = { ...BETA, apiVersion: '2.0' };
+    writeIndex({ schemaVersion: 1, packs: [newer, other] });
+    makeFolders('alpha-pack/1.2.0', 'beta-pack/0.3.1');
+
+    const store = load();
+
+    expect(store.list()).toStrictEqual([newer, other]);
+    expect(
+      store.get().packs.installed.map((pack) => pack.compatibility),
+    ).toStrictEqual([
+      { compatible: false, reason: 'pack-newer', required: '1.9' },
+      { compatible: false, reason: 'major-mismatch', required: '2.0' },
+    ]);
+    expect(stagePacksSchema.safeParse(store.get().packs).success).toBe(true);
+  });
+
   it.each([
     ['not JSON', '{"schemaVersion": 1, "packs": [', 'not valid JSON'],
     ['empty', '', 'not valid JSON'],

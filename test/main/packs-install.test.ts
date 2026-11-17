@@ -179,7 +179,8 @@ describe('I/O matrix', () => {
       packs: [plan.index],
     });
     expect(store.list()).toStrictEqual([plan.index]);
-    const { servedPaths: _served, ...staged } = plan.index;
+    const { servedPaths: _served, ...entry } = plan.index;
+    const staged = { ...entry, compatibility: { compatible: true } };
     expect(heard).toStrictEqual([{ packs: { installed: [staged] } }]);
     expect(packsLines('info')).toContain(
       `[packs] installed pack ${CONTRACT_PACK_ID} (7 files)`,
@@ -221,7 +222,8 @@ describe('I/O matrix', () => {
 
     install(store, plan);
 
-    const { servedPaths: _served, ...staged } = plan.index;
+    const { servedPaths: _served, ...entry } = plan.index;
+    const staged = { ...entry, compatibility: { compatible: true } };
     expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
       { rev: 1, sections: { packs: { installed: [staged] } } },
     ]);

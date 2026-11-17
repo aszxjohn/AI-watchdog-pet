@@ -13,6 +13,10 @@
  *   one place they are worked out. Settings of packs or characters that
  *   are not installed stay in settings.json and are not listed.
  * - 加入池子 can be changed whether or not the pack is 上場.
+ * - A pack whose `apiVersion` does not fit this stage (installed before
+ *   the app changed its API version) says why, in the words an
+ *   `api-incompatible` refusal uses (Story 3.5); it is not in the pool
+ *   whatever its checkboxes say, and its program never runs.
  *
  * Also here: the one op each checkbox sends (an op changes one key only,
  * never a whole setting), when the checkboxes are disabled, and what
@@ -43,6 +47,7 @@ import {
   type PackExportFailureCode,
   type PackRemoveFailureCode,
   type PackRemoveResult,
+  type StagePack,
   type StagePackExport,
   type StagePacks,
 } from '../shared/packs';
@@ -55,7 +60,7 @@ import {
   type SettingsValues,
 } from '../shared/settings';
 import { NOT_SAVED_TEXT, patchErrorText } from './display-options';
-import { isolatedName } from './pack-import';
+import { apiIncompatibleText, isolatedName } from './pack-import';
 
 export const PACK_LIST_HEADING = '已安裝';
 export const NO_PACKS_TEXT = '還沒有安裝角色包';
@@ -90,6 +95,19 @@ export function heightHintText(height: number): string | null {
 /** The version as the list shows it. */
 export function versionText(version: string): string {
   return `版本 ${version}`;
+}
+
+/**
+ * What the list says of a pack that does not fit this stage's API: why
+ * (apiIncompatibleText), and that it stays off stage. Null for a pack
+ * that fits.
+ */
+export function incompatibleText(
+  compatibility: StagePack['compatibility'],
+): string | null {
+  return compatibility.compatible
+    ? null
+    : `無法上場：${apiIncompatibleText(compatibility.reason, compatibility.required)}`;
 }
 
 /** An op one of the list's checkboxes sends: one key of one keyed setting. */
@@ -160,6 +178,8 @@ export interface PackListPack {
   readonly name: string;
   /** versionText. */
   readonly version: string;
+  /** incompatibleText: why it cannot go on stage, or null. */
+  readonly incompatible: string | null;
   readonly enabled: PackListCheckbox;
   /** In the manifest's order. */
   readonly characters: readonly PackListCharacter[];
@@ -182,6 +202,7 @@ export function packListView(
         id: pack.id,
         name: pack.name,
         version: versionText(pack.version),
+        incompatible: incompatibleText(pack.compatibility),
         enabled: {
           id: `enabled:${pack.id}`,
           checked: enabled,

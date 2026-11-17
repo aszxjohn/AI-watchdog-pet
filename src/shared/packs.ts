@@ -1,4 +1,5 @@
 import {
+  PACK_IMPORT_MAX_TOTAL_BYTES,
   PACK_IMPORT_REPORTED_ISSUES_MAX,
   PACK_REJECTED_NAME_MAX_LENGTH,
 } from './constants';
@@ -109,9 +110,11 @@ const installedPackShape = {
 
 /**
  * One installed pack in index.json. `servedPaths` are the files
- * `pack://<id>/<version>/` answers, worked out at install: the entry, every
- * `assets` path, and the image (`meta.image`) of each declared spritesheet.
- * Story 3.9 adds its failure mark here as an optional field.
+ * `pack://<id>/<version>/` answers, worked out at install, sorted: the
+ * entry, every `assets` path, and the image (`meta.image`) of each
+ * declared spritesheet. Which one is the entry only the installed
+ * `manifest.json` says. Story 3.9 adds its failure mark here as an
+ * optional field.
  */
 export const packIndexEntrySchema = z.strictObject({
   ...installedPackShape,
@@ -139,8 +142,32 @@ export const packIndexFileSchema = z.strictObject({
 
 export type PackIndexFile = z.infer<typeof packIndexFileSchema>;
 
-/** One installed pack as StageView carries it: index.json's entry without `servedPaths`. */
-export const stagePackSchema = z.strictObject(installedPackShape);
+/**
+ * Whether an installed pack's `apiVersion` fits this stage
+ * (checkApiCompatibility, Story 3.5): compatible, or why not and the API
+ * version the pack declares. A pack can be installed and incompatible after
+ * the app changed its API version; such a pack is not in the pool and its
+ * entry is never handed to a sandbox.
+ */
+export const packCompatibilitySchema = z.discriminatedUnion('compatible', [
+  z.strictObject({ compatible: z.literal(true) }),
+  z.strictObject({
+    compatible: z.literal(false),
+    reason: z.enum(API_INCOMPATIBILITY_REASONS),
+    required: apiVersionSchema,
+  }),
+]);
+
+export type PackCompatibility = z.infer<typeof packCompatibilitySchema>;
+
+/**
+ * One installed pack as StageView carries it: index.json's entry without
+ * `servedPaths`, with whether it fits this stage (Story 3.5).
+ */
+export const stagePackSchema = z.strictObject({
+  ...installedPackShape,
+  compatibility: packCompatibilitySchema,
+});
 
 export type StagePack = z.infer<typeof stagePackSchema>;
 
@@ -589,3 +616,43 @@ export const packRemoveResultSchema = z.discriminatedUnion('ok', [
 ]);
 
 export type PackRemoveResult = z.infer<typeof packRemoveResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Handing a pack's entry to its sandbox (Story 3.5).
+
+/**
+ * Every code `packs:get-entry` fails with; nothing is handed over then:
+ * - `not-installed`: no pack of that id is installed (any more);
+ * - `api-incompatible`: its `apiVersion` does not fit this stage (checked
+ *   again right before handing the entry over);
+ * - `read-failed`: its entry file is missing or cannot be read.
+ */
+export const PACK_ENTRY_FAILURE_CODES = [
+  'not-installed',
+  'api-incompatible',
+  'read-failed',
+] as const;
+
+export type PackEntryFailureCode = (typeof PACK_ENTRY_FAILURE_CODES)[number];
+
+/** `packs:get-entry`'s arguments: the id of the installed pack. */
+export const packsGetEntryInputSchema = z.tuple([packIdSchema]);
+
+/**
+ * `packs:get-entry`'s answer: the installed pack's id, version and entry
+ * source (the file its manifest's `entry` names), or why not.
+ */
+export const packEntryResultSchema = z.discriminatedUnion('ok', [
+  z.strictObject({
+    ok: z.literal(true),
+    packId: packIdSchema,
+    version: packVersionSchema,
+    source: z.string().max(PACK_IMPORT_MAX_TOTAL_BYTES),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    code: z.enum(PACK_ENTRY_FAILURE_CODES),
+  }),
+]);
+
+export type PackEntryResult = z.infer<typeof packEntryResultSchema>;

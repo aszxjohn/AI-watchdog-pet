@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   characterKey,
   characterKeySchema,
+  PACK_ENTRY_FAILURE_CODES,
   PACK_ENTRY_PROBLEMS,
   PACK_EXPORT_FAILURE_CODES,
   PACK_IMAGE_LIMITS,
@@ -12,6 +13,8 @@ import {
   IDLE_PACK_EXPORT,
   IDLE_PACK_IMPORT,
   packCharacterSummarySchema,
+  packCompatibilitySchema,
+  packEntryResultSchema,
   packIndexEntrySchema,
   packIndexFileSchema,
   packManifestIssueSchema,
@@ -20,6 +23,7 @@ import {
   PACKS_SCHEMA_VERSION,
   packsConfirmInputSchema,
   packsExportInputSchema,
+  packsGetEntryInputSchema,
   packsRemoveInputSchema,
   stagePackExportSchema,
   stagePackImportSchema,
@@ -42,15 +46,17 @@ import {
 import { expectRejected, expectRoundTrip } from './schema-helpers';
 
 const CHARACTER = { id: 'probe-a', name: '探針甲', height: 110 };
-const STAGE_PACK = {
+/** What an index entry and a stage pack share. */
+const INSTALLED = {
   id: 'sample-pack',
   name: '樣本包',
   version: '1.4.0',
   apiVersion: '1.0',
   characters: [CHARACTER, { id: 'probe-b', name: '探針乙', height: 96.5 }],
 };
+const STAGE_PACK = { ...INSTALLED, compatibility: { compatible: true } };
 const ENTRY = {
-  ...STAGE_PACK,
+  ...INSTALLED,
   servedPaths: [
     'dist/entry.js',
     'img/body.png',
@@ -110,7 +116,11 @@ describe('packIndexEntrySchema', () => {
     ['a pack id that is a device name', { ...ENTRY, id: 'lpt0' }],
     ['a version with a prerelease', { ...ENTRY, version: '1.0.0-beta' }],
     ['a bad apiVersion', { ...ENTRY, apiVersion: '1' }],
-    ['no servedPaths', STAGE_PACK],
+    ['no servedPaths', INSTALLED],
+    [
+      'a compatibility, which only StageView carries',
+      { ...ENTRY, compatibility: { compatible: true } },
+    ],
     ['an extra field', { ...ENTRY, enabled: true }],
   ])('rejects %s', (_label, value) => {
     expectRejected(packIndexEntrySchema, value);
@@ -156,17 +166,100 @@ describe('stagePacksSchema', () => {
     ],
     ['one pack twice', { installed: [STAGE_PACK, STAGE_PACK] }],
     ['served paths, which stay in main', { installed: [ENTRY] }],
+    ['a pack without its compatibility', { installed: [INSTALLED] }],
     ['no installed list', {}],
   ])('rejects %s', (_label, value) => {
     expectRejected(stagePacksSchema, value);
   });
 
-  it('a stage pack is an index entry without servedPaths', () => {
-    expect(Object.keys(stagePackSchema.shape)).toStrictEqual(
-      Object.keys(packIndexEntrySchema.shape).filter(
+  it('a stage pack is an index entry without servedPaths, with its compatibility', () => {
+    expect(Object.keys(stagePackSchema.shape)).toStrictEqual([
+      ...Object.keys(packIndexEntrySchema.shape).filter(
         (key) => key !== 'servedPaths',
       ),
-    );
+      'compatibility',
+    ]);
+  });
+
+  it('round-trips a pack that does not fit this stage, with why and the version it needs', () => {
+    expectRoundTrip(stagePacksSchema, {
+      installed: [
+        {
+          ...STAGE_PACK,
+          apiVersion: '1.7',
+          compatibility: {
+            compatible: false,
+            reason: 'pack-newer',
+            required: '1.7',
+          },
+        },
+      ],
+    });
+  });
+});
+
+describe('packCompatibilitySchema (Story 3.5)', () => {
+  it.each([
+    [{ compatible: true }],
+    [{ compatible: false, reason: 'pack-newer', required: '1.2' }],
+    [{ compatible: false, reason: 'major-mismatch', required: '2.0' }],
+  ])('round-trips %j', (value) => {
+    expectRoundTrip(packCompatibilitySchema, value);
+  });
+
+  it.each([
+    ['why, when it fits', { compatible: true, reason: 'pack-newer' }],
+    ['no reason', { compatible: false, required: '2.0' }],
+    [
+      'an unknown reason',
+      { compatible: false, reason: 'old', required: '2.0' },
+    ],
+    [
+      'a bad version',
+      { compatible: false, reason: 'pack-newer', required: '2' },
+    ],
+    ['no flag', {}],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(packCompatibilitySchema, value);
+  });
+});
+
+describe('packs:get-entry (Story 3.5)', () => {
+  it('takes one pack id', () => {
+    expectRoundTrip(packsGetEntryInputSchema, ['sample-pack']);
+    expectRejected(packsGetEntryInputSchema, []);
+    expectRejected(packsGetEntryInputSchema, ['_stage']);
+    expectRejected(packsGetEntryInputSchema, ['sample-pack', 'x']);
+    expectRejected(packsGetEntryInputSchema, [1]);
+  });
+
+  it('answers the entry source with the id and version, or a failure code', () => {
+    expectRoundTrip(packEntryResultSchema, {
+      ok: true,
+      packId: 'sample-pack',
+      version: '1.4.0',
+      source: '(function (stage) { return {}; });',
+    });
+    for (const code of PACK_ENTRY_FAILURE_CODES) {
+      expectRoundTrip(packEntryResultSchema, { ok: false, code });
+    }
+  });
+
+  it.each([
+    ['an unknown code', { ok: false, code: 'gone' }],
+    ['a source with a failure', { ok: false, code: 'read-failed', source: '' }],
+    ['no version', { ok: true, packId: 'sample-pack', source: '' }],
+    [
+      'a source over the import limit',
+      {
+        ok: true,
+        packId: 'sample-pack',
+        version: '1.0.0',
+        source: 'x'.repeat(PACK_IMPORT_MAX_TOTAL_BYTES + 1),
+      },
+    ],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(packEntryResultSchema, value);
   });
 });
 
@@ -179,6 +272,7 @@ describe('the code lists', () => {
     ['PACK_INSTALL_FAILURE_CODES', PACK_INSTALL_FAILURE_CODES],
     ['PACK_EXPORT_FAILURE_CODES', PACK_EXPORT_FAILURE_CODES],
     ['PACK_REMOVE_FAILURE_CODES', PACK_REMOVE_FAILURE_CODES],
+    ['PACK_ENTRY_FAILURE_CODES', PACK_ENTRY_FAILURE_CODES],
   ])('%s lists each code once, in kebab-case', (_name, codes) => {
     expect(new Set(codes).size).toBe(codes.length);
     for (const code of codes) {

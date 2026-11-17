@@ -400,6 +400,12 @@ body {
   font-size: 12px;
 }
 
+.pack-incompatible {
+  margin: 4px 0 0;
+  color: var(--warning);
+  font-size: 12px;
+}
+
 .pack-list + .pack-import {
   margin-top: 24px;
 }

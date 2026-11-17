@@ -10,13 +10,14 @@
  * type, is answered 404 without reading anything: unknown hosts, `..` or `.`
  * segments (raw or percent-encoded), encoded slashes or backslashes, NUL,
  * folders, missing files, unknown extensions. HTML responses carry the CSP
- * from csp.ts.
+ * from csp.ts: the overlay's own (it may frame `pack:`) for
+ * `app://overlay/`, the panels' for every other host.
  */
 import { protocol, type CustomScheme } from 'electron';
 import nodeFs from 'node:fs/promises';
 import path from 'node:path';
 import { APP_SCHEME, PACK_SCHEME } from '../../shared/constants';
-import { PACKAGED_CSP } from './csp';
+import { OVERLAY_PACKAGED_CSP, PACKAGED_CSP } from './csp';
 
 /**
  * The privileges of each scheme: the smallest sets the prototypes proved
@@ -155,7 +156,10 @@ export function createAppProtocolHandler({
       const body = await fs.readFile(file);
       const headers: Record<string, string> = { 'content-type': contentType };
       if (contentType.startsWith('text/html')) {
-        headers['content-security-policy'] = PACKAGED_CSP;
+        headers['content-security-policy'] =
+          new URL(request.url).hostname === OVERLAY_HOST
+            ? OVERLAY_PACKAGED_CSP
+            : PACKAGED_CSP;
       }
       return new Response(new Uint8Array(body), { status: 200, headers });
     } catch {

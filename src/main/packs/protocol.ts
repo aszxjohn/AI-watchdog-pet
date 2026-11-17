@@ -10,8 +10,15 @@
  * else is 404 without reading anything: a pack or version not installed, a
  * path the manifest did not declare (the URL parser has already resolved
  * `..`; a percent-encoded name never matches, since pack paths have no
- * `%`), a URL with a user, password or port, and `pack://_stage/…`, which
- * Story 3.5 serves. The query and fragment are ignored.
+ * `%`), and a URL with a user, password or port. The query and fragment
+ * are ignored.
+ *
+ * `pack://_stage/sandbox.html` is the sandbox document (Story 3.5): the
+ * file the main build wrote next to main.cjs, served with the CSP the same
+ * build wrote (src/sandbox/csp.ts made it; it carries the hash of the
+ * document's inline script). Both come from an injected provider, read
+ * once; when they cannot be read the document is 404, and so is every
+ * other `pack://_stage/…` path.
  *
  * The content type follows the extension; a pack never gets an HTML type
  * from here, and `nosniff` keeps the browser from guessing one.
@@ -21,13 +28,108 @@
  * with PixiJS, together with letting `pack:` into the overlay's CSP.
  */
 import { protocol } from 'electron';
+import { createHash } from 'node:crypto';
 import nodeFs from 'node:fs/promises';
 import path from 'node:path';
-import { PACK_SCHEME } from '../../shared/constants';
+import {
+  PACK_SCHEME,
+  PACK_STAGE_HOST,
+  SANDBOX_CSP_FILE,
+  SANDBOX_DOCUMENT_FILE,
+} from '../../shared/constants';
+import { z } from '../../shared/zod-setup';
+import { errorCode, logEvent } from '../log/run-log';
 import type { PacksStore } from './store';
 
-/** The host Story 3.5 serves the sandbox from; 404 until then. */
-export const STAGE_HOST = '_stage';
+/** The host the stage serves its own documents from (the sandbox). */
+export const STAGE_HOST = PACK_STAGE_HOST;
+
+/** The one path served under STAGE_HOST. */
+const SANDBOX_DOCUMENT_PATH = `/${SANDBOX_DOCUMENT_FILE}`;
+
+/** The sandbox document and the CSP it is served with. */
+export interface SandboxDocument {
+  readonly html: string;
+  readonly csp: string;
+}
+
+/**
+ * Gives the sandbox document, or undefined when there is none to serve.
+ * Never rejects.
+ */
+export type SandboxDocumentProvider = () => Promise<
+  SandboxDocument | undefined
+>;
+
+/** `sandbox-csp.json` as the build writes it. */
+const sandboxCspFileSchema = z.strictObject({
+  csp: z.string().startsWith("default-src 'none'; "),
+  sha256: z.string().min(1),
+});
+
+/** The parts of node:fs/promises the provider uses; tests may inject them. */
+export interface SandboxDocumentFs {
+  readFile(file: string, encoding: 'utf8'): Promise<string>;
+}
+
+/**
+ * The provider of the sandbox document the build wrote into `buildDir`
+ * (the folder main.cjs runs from): read once, on the first request, and
+ * kept. A file that cannot be read, a CSP file that does not fit, or a
+ * document whose one inline script does not hash to the CSP file's
+ * `sha256` (or whose CSP does not carry it) gives undefined (404) for the
+ * rest of the run, with one error line.
+ */
+export function sandboxDocumentFrom(
+  buildDir: string,
+  fs: SandboxDocumentFs = nodeFs,
+): SandboxDocumentProvider {
+  let loaded: Promise<SandboxDocument | undefined> | undefined;
+  async function load(): Promise<SandboxDocument | undefined> {
+    try {
+      const [html, cspFile] = await Promise.all([
+        fs.readFile(path.join(buildDir, SANDBOX_DOCUMENT_FILE), 'utf8'),
+        fs.readFile(path.join(buildDir, SANDBOX_CSP_FILE), 'utf8'),
+      ]);
+      const parsed = sandboxCspFileSchema.safeParse(JSON.parse(cspFile));
+      if (!parsed.success) {
+        logEvent(
+          'packs',
+          `${SANDBOX_CSP_FILE} does not fit its schema; the sandbox document is not served this run`,
+          'error',
+        );
+        return undefined;
+      }
+      const { csp, sha256 } = parsed.data;
+      const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+      const script = scripts.length === 1 ? scripts[0]?.[1] : undefined;
+      const actual =
+        script === undefined
+          ? undefined
+          : createHash('sha256').update(script, 'utf8').digest('base64');
+      if (actual !== sha256 || !csp.includes(`'sha256-${sha256}'`)) {
+        logEvent(
+          'packs',
+          `the sandbox document's inline script does not match ${SANDBOX_CSP_FILE} (not from one build?); it is not served this run`,
+          'error',
+        );
+        return undefined;
+      }
+      return { html, csp };
+    } catch (error) {
+      logEvent(
+        'packs',
+        `cannot read the sandbox document (${errorCode(error)}); it is not served this run`,
+        'error',
+      );
+      return undefined;
+    }
+  }
+  return () => {
+    loaded ??= load();
+    return loaded;
+  };
+}
 
 /** Content types served, by lower-case extension; others are binary. */
 const CONTENT_TYPES: Readonly<Record<string, string>> = Object.freeze({
@@ -46,6 +148,8 @@ export interface PackProtocolFs {
 
 export interface PackProtocolOptions {
   readonly store: Pick<PacksStore, 'dir' | 'find'>;
+  /** The sandbox document for `pack://_stage/sandbox.html`. */
+  readonly sandbox: SandboxDocumentProvider;
   readonly fs?: PackProtocolFs;
 }
 
@@ -99,12 +203,59 @@ function notFound(): Response {
   });
 }
 
+/**
+ * Whether `url` is `pack://_stage/sandbox.html` (query and fragment
+ * ignored; no user, password or port). Never throws.
+ */
+export function isSandboxDocumentUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.protocol === `${PACK_SCHEME}:` &&
+    parsed.username === '' &&
+    parsed.password === '' &&
+    parsed.port === '' &&
+    parsed.hostname === STAGE_HOST &&
+    parsed.pathname === SANDBOX_DOCUMENT_PATH
+  );
+}
+
+/** The sandbox document's response, or 404 when there is none. */
+async function serveSandboxDocument(
+  sandbox: SandboxDocumentProvider,
+): Promise<Response> {
+  const document = await sandbox();
+  if (document === undefined) {
+    return notFound();
+  }
+  return new Response(document.html, {
+    status: 200,
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'content-security-policy': document.csp,
+      'x-content-type-options': 'nosniff',
+    },
+  });
+}
+
 /** The `pack://` handler. Never throws or rejects. */
 export function createPackProtocolHandler({
   store,
+  sandbox,
   fs = nodeFs,
 }: PackProtocolOptions): PackProtocolHandler {
   return async (request) => {
+    if (isSandboxDocumentUrl(request.url)) {
+      try {
+        return await serveSandboxDocument(sandbox);
+      } catch {
+        return notFound();
+      }
+    }
     const file = resolvePackFile(request.url, store);
     if (file === undefined) {
       return notFound();
@@ -128,7 +279,17 @@ export function createPackProtocolHandler({
   };
 }
 
-/** Serves `pack://` on the default session. Call once, after `ready`. */
-export function handlePackProtocol(store: PacksStore): void {
-  protocol.handle(PACK_SCHEME, createPackProtocolHandler({ store }));
+/**
+ * Serves `pack://` on the default session, with the sandbox document the
+ * build wrote into `buildDir` (the folder main.cjs runs from). Call once,
+ * after `ready`.
+ */
+export function handlePackProtocol(store: PacksStore, buildDir: string): void {
+  protocol.handle(
+    PACK_SCHEME,
+    createPackProtocolHandler({
+      store,
+      sandbox: sandboxDocumentFrom(buildDir),
+    }),
+  );
 }

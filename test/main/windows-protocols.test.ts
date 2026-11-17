@@ -10,7 +10,7 @@ import {
   it,
   vi,
 } from 'vitest';
-import { PACKAGED_CSP } from '../../src/main/windows/csp';
+import { OVERLAY_PACKAGED_CSP, PACKAGED_CSP } from '../../src/main/windows/csp';
 import {
   createAppProtocolHandler,
   overlayRendererDir,
@@ -130,7 +130,7 @@ describe('handleAppProtocol', () => {
     expect(await response.text()).toBe('<!doctype html>');
   });
 
-  it('serves app://overlay/ from .vite/renderer/overlay, with the same CSP', async () => {
+  it("serves app://overlay/ from .vite/renderer/overlay, with the overlay's CSP (it may frame pack:)", async () => {
     const { handleAppProtocol } =
       await import('../../src/main/windows/protocols');
     handleAppProtocol(path.join(tempRoot, '.vite', 'build'));
@@ -139,7 +139,9 @@ describe('handleAppProtocol', () => {
     }) => Promise<Response>;
     const response = await serve({ url: 'app://overlay/index.html' });
     expect(response.status).toBe(200);
-    expect(response.headers.get('content-security-policy')).toBe(PACKAGED_CSP);
+    expect(response.headers.get('content-security-policy')).toBe(
+      OVERLAY_PACKAGED_CSP,
+    );
     expect(await response.text()).toBe('<!doctype overlay>');
     expect(
       (await serve({ url: 'app://overlay/../panels/index.html' })).status,

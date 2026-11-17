@@ -1,8 +1,10 @@
 /**
  * main/packs' `pack://` handler (Story 3.2), registered through fake
  * electron's protocol, serving the contract test pack after a real inspect
- * and install into a temp folder.
+ * and install into a temp folder, and the sandbox document (Story 3.5)
+ * from a stand-in build folder.
  */
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,11 +14,19 @@ import { installPack } from '../../src/main/packs/install';
 import {
   createPackProtocolHandler,
   handlePackProtocol,
+  isSandboxDocumentUrl,
   resolvePackFile,
+  sandboxDocumentFrom,
   STAGE_HOST,
   type PackProtocolFs,
+  type SandboxDocumentFs,
 } from '../../src/main/packs/protocol';
 import { loadPacks, type PacksStore } from '../../src/main/packs/store';
+import { sandboxCsp } from '../../src/sandbox/csp';
+import {
+  SANDBOX_CSP_FILE,
+  SANDBOX_DOCUMENT_FILE,
+} from '../../src/shared/constants';
 import {
   CONTRACT_PACK_ID,
   contractManifest,
@@ -31,8 +41,16 @@ vi.mock('electron', () => import('../helpers/fake-electron'));
 
 const BASE = `pack://${CONTRACT_PACK_ID}/1.0.0`;
 
+/** The stand-in sandbox document and its CSP in the build folder. */
+const SANDBOX_HTML = '<!doctype html>\n<body><script>void 0;</script></body>\n';
+const SANDBOX_SHA256 = createHash('sha256')
+  .update('void 0;', 'utf8')
+  .digest('base64');
+const SANDBOX_CSP = sandboxCsp(SANDBOX_SHA256);
+
 let root: string;
 let dir: string;
+let buildDir: string;
 let store: PacksStore;
 
 /**
@@ -60,6 +78,13 @@ beforeEach(async () => {
   vi.spyOn(console, 'info').mockImplementation(() => {});
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'awp-packs-protocol-'));
   dir = path.join(root, 'packs');
+  buildDir = path.join(root, 'build');
+  fs.mkdirSync(buildDir);
+  fs.writeFileSync(path.join(buildDir, SANDBOX_DOCUMENT_FILE), SANDBOX_HTML);
+  fs.writeFileSync(
+    path.join(buildDir, SANDBOX_CSP_FILE),
+    JSON.stringify({ csp: SANDBOX_CSP, sha256: SANDBOX_SHA256 }),
+  );
   store = loadPacks({ dir });
   await installContract(store, '1.0.0');
 });
@@ -75,7 +100,7 @@ afterEach(() => {
  */
 async function get(url: string) {
   if (!fake.protocolHandlers.has('pack')) {
-    handlePackProtocol(store);
+    handlePackProtocol(store, buildDir);
   }
   const handler = fake.protocolHandlers.get('pack');
   if (handler === undefined) {
@@ -88,6 +113,7 @@ async function get(url: string) {
     status: response.status,
     type: response.headers.get('content-type'),
     nosniff: response.headers.get('x-content-type-options'),
+    csp: response.headers.get('content-security-policy'),
     body: Buffer.from(await response.arrayBuffer()),
   };
 }
@@ -98,7 +124,7 @@ function packFile(name: string): Buffer {
 
 describe('handlePackProtocol', () => {
   it('serves the pack scheme through electron.protocol.handle', () => {
-    handlePackProtocol(store);
+    handlePackProtocol(store, buildDir);
 
     expect([...fake.protocolHandlers.keys()]).toStrictEqual(['pack']);
   });
@@ -124,7 +150,7 @@ describe('I/O matrix', () => {
   );
 
   it('`pack://`: a handler registered before an update serves the new version and 404s the old one', async () => {
-    handlePackProtocol(store);
+    handlePackProtocol(store, buildDir);
     expect((await get(`${BASE}/entry.js`)).status).toBe(200);
 
     await installContract(store, '1.1.0');
@@ -137,7 +163,7 @@ describe('I/O matrix', () => {
 
   it('`pack://`: a pack installed for the first time after the handler was registered is served', async () => {
     const fresh = loadPacks({ dir: path.join(root, 'fresh-packs') });
-    handlePackProtocol(fresh);
+    handlePackProtocol(fresh, buildDir);
     expect((await get(`${BASE}/entry.js`)).status).toBe(404);
 
     await installContract(fresh, '1.0.0');
@@ -179,7 +205,7 @@ describe('I/O matrix', () => {
     ['a folder', `${BASE}/img`],
     ['a trailing slash', `${BASE}/img/`],
     ['the version folder', `${BASE}/`],
-    ['the stage host', `pack://${STAGE_HOST}/sandbox.html`],
+    ['another path of the stage host', `pack://${STAGE_HOST}/other.html`],
     ['the stage host with a pack path', `pack://${STAGE_HOST}/1.0.0/entry.js`],
     ['a user name', `pack://someone@${CONTRACT_PACK_ID}/1.0.0/entry.js`],
     ['a port', `pack://${CONTRACT_PACK_ID}:8080/1.0.0/entry.js`],
@@ -198,7 +224,10 @@ describe('I/O matrix', () => {
   });
 
   it('`pack://` 拒絕: a URL that does not parse is 404', async () => {
-    const handler = createPackProtocolHandler({ store });
+    const handler = createPackProtocolHandler({
+      store,
+      sandbox: async () => undefined,
+    });
 
     expect((await handler({ url: 'not a url' })).status).toBe(404);
   });
@@ -210,6 +239,7 @@ describe('I/O matrix', () => {
     });
     const handler = createPackProtocolHandler({
       store,
+      sandbox: async () => undefined,
       fs: { stat, readFile } as PackProtocolFs,
     });
 
@@ -217,6 +247,140 @@ describe('I/O matrix', () => {
     expect(stat).not.toHaveBeenCalled();
     expect((await handler({ url: `${BASE}/entry.js` })).status).toBe(404);
     expect(readFile).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('I/O matrix', () => {
+  it('沙盒文件: pack://_stage/sandbox.html is the built document, text/html with its CSP header and nosniff', async () => {
+    const response = await get(`pack://${STAGE_HOST}/sandbox.html`);
+
+    expect(response.status).toBe(200);
+    expect(response.type).toBe('text/html; charset=utf-8');
+    expect(response.csp).toBe(SANDBOX_CSP);
+    expect(response.nosniff).toBe('nosniff');
+    expect(response.body.toString('utf8')).toBe(SANDBOX_HTML);
+  });
+
+  it('沙盒文件: the query and the fragment are ignored', async () => {
+    const response = await get(`pack://${STAGE_HOST}/sandbox.html?x=1#y`);
+
+    expect(response.status).toBe(200);
+    expect(response.csp).toBe(SANDBOX_CSP);
+  });
+
+  it.each<[string, string]>([
+    ['the stage root', `pack://${STAGE_HOST}/`],
+    ['the stage host alone', `pack://${STAGE_HOST}`],
+    ['another case', `pack://${STAGE_HOST}/SANDBOX.html`],
+    ['a longer path', `pack://${STAGE_HOST}/sandbox.html/x`],
+    ['a nested path', `pack://${STAGE_HOST}/x/sandbox.html`],
+    ['the CSP file', `pack://${STAGE_HOST}/${SANDBOX_CSP_FILE}`],
+    ['main.cjs', `pack://${STAGE_HOST}/main.cjs`],
+    ['a percent-encoded name', `pack://${STAGE_HOST}/sandbox%2ehtml`],
+    ['a user name', `pack://someone@${STAGE_HOST}/sandbox.html`],
+    ['a port', `pack://${STAGE_HOST}:8080/sandbox.html`],
+    ['the document under a pack id', `pack://${CONTRACT_PACK_ID}/sandbox.html`],
+  ])('沙盒文件: %s is 404', async (_label, url) => {
+    const response = await get(url);
+
+    expect(response.status).toBe(404);
+    expect(response.csp).toBeNull();
+    expect(response.body.toString('utf8')).toBe('not found');
+  });
+
+  it('沙盒文件: the build files are read once and kept', async () => {
+    const readFile = vi.fn(async (file: string) =>
+      fs.readFileSync(file, 'utf8'),
+    );
+    const handler = createPackProtocolHandler({
+      store,
+      sandbox: sandboxDocumentFrom(buildDir, { readFile } as SandboxDocumentFs),
+    });
+    const url = `pack://${STAGE_HOST}/sandbox.html`;
+
+    expect((await handler({ url })).status).toBe(200);
+    expect((await handler({ url })).status).toBe(200);
+    expect(
+      readFile.mock.calls.map(([file]) => path.basename(file)),
+    ).toStrictEqual([SANDBOX_DOCUMENT_FILE, SANDBOX_CSP_FILE]);
+  });
+
+  it.each<[string, () => void]>([
+    [
+      'the document is missing',
+      () => {
+        fs.rmSync(path.join(buildDir, SANDBOX_DOCUMENT_FILE));
+      },
+    ],
+    [
+      'the CSP file is missing',
+      () => {
+        fs.rmSync(path.join(buildDir, SANDBOX_CSP_FILE));
+      },
+    ],
+    [
+      'the CSP file is not JSON',
+      () => {
+        fs.writeFileSync(path.join(buildDir, SANDBOX_CSP_FILE), '{');
+      },
+    ],
+    [
+      'the CSP file does not fit its schema',
+      () => {
+        fs.writeFileSync(
+          path.join(buildDir, SANDBOX_CSP_FILE),
+          JSON.stringify({ csp: "default-src 'self'", sha256: 'x' }),
+        );
+      },
+    ],
+    [
+      "the document's inline script is from another build (its hash differs)",
+      () => {
+        fs.writeFileSync(
+          path.join(buildDir, SANDBOX_DOCUMENT_FILE),
+          SANDBOX_HTML.replace('void 0;', 'void 1;'),
+        );
+      },
+    ],
+    [
+      "the CSP file's sha256 is not the one in its CSP",
+      () => {
+        const other = Buffer.alloc(32, 9).toString('base64');
+        fs.writeFileSync(
+          path.join(buildDir, SANDBOX_CSP_FILE),
+          JSON.stringify({ csp: sandboxCsp(other), sha256: SANDBOX_SHA256 }),
+        );
+      },
+    ],
+    [
+      'the document has two inline scripts',
+      () => {
+        fs.writeFileSync(
+          path.join(buildDir, SANDBOX_DOCUMENT_FILE),
+          `${SANDBOX_HTML}<script>void 0;</script>`,
+        );
+      },
+    ],
+  ])(
+    '沙盒文件: when %s, the document is 404, with one error line',
+    async (_label, spoil) => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      spoil();
+
+      expect((await get(`pack://${STAGE_HOST}/sandbox.html`)).status).toBe(404);
+      expect((await get(`pack://${STAGE_HOST}/sandbox.html`)).status).toBe(404);
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(String(error.mock.calls[0]?.[0])).toMatch(/^\[packs\] /);
+    },
+  );
+});
+
+describe('isSandboxDocumentUrl', () => {
+  it('is true for pack://_stage/sandbox.html only', () => {
+    expect(isSandboxDocumentUrl('pack://_stage/sandbox.html')).toBe(true);
+    expect(isSandboxDocumentUrl('pack://_stage/sandbox.html?a#b')).toBe(true);
+    expect(isSandboxDocumentUrl('app://_stage/sandbox.html')).toBe(false);
+    expect(isSandboxDocumentUrl('not a url')).toBe(false);
   });
 });
 

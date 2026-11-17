@@ -64,6 +64,7 @@ const SAMPLE: StagePack = {
   name: '範例包',
   version: '1.0.0',
   apiVersion: '1.0',
+  compatibility: { compatible: true },
   characters: [
     { id: 'probe-one', name: '探針一', height: 110 },
     { id: 'probe-two', name: '探針二', height: 96 },
@@ -74,6 +75,7 @@ const ANOTHER: StagePack = {
   name: '另一包',
   version: '2.0.0',
   apiVersion: '1.0',
+  compatibility: { compatible: true },
   characters: [{ id: 'probe-three', name: '探針三', height: 110 }],
 };
 const ONE: CharacterKey = 'sample-pack/probe-one';
@@ -483,6 +485,29 @@ function expectValidChanges(
 }
 
 describe('I/O matrix', () => {
+  it('不相容: leaves out a 上場 pack whose apiVersion does not fit this stage, whatever its 加入池子', () => {
+    const newer: StagePack = {
+      ...ANOTHER,
+      apiVersion: '1.9',
+      compatibility: {
+        compatible: false,
+        reason: 'pack-newer',
+        required: '1.9',
+      },
+    };
+
+    expect(poolOf([SAMPLE, newer], values())).toStrictEqual([ONE, TWO]);
+    expect(
+      poolOf(
+        [newer],
+        values({
+          packEnabled: { 'another-pack': true },
+          fixedOverrides: { [THREE]: { inPool: true } },
+        }),
+      ),
+    ).toStrictEqual([]);
+  });
+
   it('新 session: synced, the pool has characters, a new session: it gets a character and a new actorId; its actor and its first state come in one change', () => {
     const { heard, ready, start, cast, detection } = wire();
     ready();

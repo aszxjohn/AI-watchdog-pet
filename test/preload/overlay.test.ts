@@ -124,19 +124,25 @@ function settle(): Promise<void> {
 }
 
 describe('overlay preload', () => {
-  it('exposes only window.awp, frozen: stageView and canvas', async () => {
+  it('exposes only window.awp, frozen: stageView, canvas and packs', async () => {
     const api = await loadApi();
 
     expect([...fake.exposed.keys()]).toStrictEqual(['awp']);
-    expect(Object.keys(api).sort()).toStrictEqual(['canvas', 'stageView']);
+    expect(Object.keys(api).sort()).toStrictEqual([
+      'canvas',
+      'packs',
+      'stageView',
+    ]);
     expect(Object.keys(api.canvas)).toStrictEqual([
       'ready',
       'setHover',
       'contextMenu',
     ]);
+    expect(Object.keys(api.packs)).toStrictEqual(['getEntry', 'log']);
     expect(Object.keys(api.stageView)).toStrictEqual(['subscribe']);
     expect(Object.isFrozen(api)).toBe(true);
     expect(Object.isFrozen(api.canvas)).toBe(true);
+    expect(Object.isFrozen(api.packs)).toBe(true);
     expect(Object.isFrozen(api.stageView)).toBe(true);
   });
 

@@ -101,17 +101,21 @@ function needsEscape(code: number): boolean {
 
 /**
  * `name` as a rejection may quote it: control and bidi characters as
- * `\uXXXX`, cut at PACK_REJECTED_NAME_MAX_LENGTH characters (between
- * characters, never inside an escape) and then ending with `…`.
+ * `\uXXXX`, cut at `max` characters (PACK_REJECTED_NAME_MAX_LENGTH unless
+ * given; between characters, never inside an escape) and then ending with
+ * `…`. A pack's `stage.log` text goes through it too (Story 3.5).
  */
-export function quotedName(name: string): string {
+export function quotedName(
+  name: string,
+  max: number = PACK_REJECTED_NAME_MAX_LENGTH,
+): string {
   let out = '';
   for (const char of name) {
     const code = char.codePointAt(0) ?? 0;
     const piece = needsEscape(code)
       ? `\\u${code.toString(16).padStart(4, '0')}`
       : char;
-    if (out.length + piece.length > PACK_REJECTED_NAME_MAX_LENGTH) {
+    if (out.length + piece.length > max) {
       return `${out}…`;
     }
     out += piece;

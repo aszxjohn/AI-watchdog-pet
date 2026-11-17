@@ -8,7 +8,9 @@
  *
  * - The pool: each 上場 pack, by id, × each of its characters that joins
  *   the pool (加入池子), in manifest order. Both are read only through
- *   isPackEnabled and isInPool (src/shared/settings).
+ *   isPackEnabled and isInPool (src/shared/settings). A pack whose
+ *   `apiVersion` does not fit this stage is left out (Story 3.5): its
+ *   entry is never handed to a sandbox.
  * - Which character: among the pool's characters no actor plays right now,
  *   the one with the fewest appearances this run, the first in pool order
  *   among equals; when every one is on stage already, the same over the
@@ -95,8 +97,9 @@ function compareIds(a: string, b: string): number {
 }
 
 /**
- * The pool, in order: each pack of `installed` that is 上場, by id, ×
- * each of its characters that joins the pool, in manifest order.
+ * The pool, in order: each pack of `installed` that is 上場 and fits this
+ * stage's API, by id, × each of its characters that joins the pool, in
+ * manifest order.
  */
 export function poolOf(
   installed: readonly StagePack[],
@@ -104,7 +107,9 @@ export function poolOf(
 ): CharacterKey[] {
   return [...installed]
     .sort((a, b) => compareIds(a.id, b.id))
-    .filter((pack) => isPackEnabled(values, pack.id))
+    .filter(
+      (pack) => pack.compatibility.compatible && isPackEnabled(values, pack.id),
+    )
     .flatMap((pack) =>
       pack.characters
         .filter((character) => isInPool(values, pack.id, character.id))

@@ -209,6 +209,7 @@ const PACK = {
   name: '範例包',
   version: '1.0.0',
   apiVersion: '1.0',
+  compatibility: { compatible: true },
   characters: [{ id: 'probe-a', name: '探針甲', height: 110 }],
 };
 const DEMO_SESSION = {

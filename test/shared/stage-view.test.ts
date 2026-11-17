@@ -68,6 +68,7 @@ const PACK = {
   name: '範例包',
   version: '1.2.0',
   apiVersion: '1.0',
+  compatibility: { compatible: true } as const,
   characters: [
     { id: 'probe-a', name: '探針甲', height: 110 },
     { id: 'probe-b', name: '探針乙', height: 96.5 },

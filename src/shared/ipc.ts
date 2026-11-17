@@ -1,11 +1,14 @@
 import { sessionKeySchema } from './detection-events';
 import {
+  packEntryResultSchema,
   packRemoveResultSchema,
   packsConfirmInputSchema,
   packsExportInputSchema,
+  packsGetEntryInputSchema,
   packsRemoveInputSchema,
 } from './packs';
 import { poolSetReleasedInputSchema } from './pool';
+import { packsLogInputSchema } from './sandbox';
 import {
   settingsPatchResultSchema,
   settingsPatchSchema,
@@ -205,6 +208,29 @@ export const packsRemove = {
   channel: 'packs:remove',
   input: packsRemoveInputSchema,
   output: packRemoveResultSchema,
+} as const satisfies IpcContract;
+
+/**
+ * `packs:get-entry` (overlay only, Story 3.5): the entry source of the
+ * installed pack, for its sandbox. main checks again that the pack is
+ * installed and that its `apiVersion` fits this stage before reading the
+ * file; otherwise, or when the file cannot be read, it answers why.
+ */
+export const packsGetEntry = {
+  channel: 'packs:get-entry',
+  input: packsGetEntryInputSchema,
+  output: packEntryResultSchema,
+} as const satisfies IpcContract;
+
+/**
+ * `packs:log` (overlay only, Story 3.5): one run log line about a pack's
+ * sandbox, or one `stage.log` call of the pack (the overlay has already
+ * rate-limited and cut it). Answers null.
+ */
+export const packsLog = {
+  channel: 'packs:log',
+  input: packsLogInputSchema,
+  output: z.null(),
 } as const satisfies IpcContract;
 
 /**

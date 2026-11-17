@@ -266,24 +266,24 @@ describe('devCspHeaders', () => {
     ).toStrictEqual({
       'Content-Type': ['text/html'],
       'Cache-Control': ['no-cache'],
-      'Content-Security-Policy': [devServerCsp(DEV_ORIGIN)],
+      'Content-Security-Policy': [devServerCsp(DEV_ORIGIN, 'panels')],
     });
   });
 
-  it("adds the overlay dev server's own CSP to its responses", () => {
+  it("adds the overlay dev server's own CSP (it may frame pack:) to its responses", () => {
     expect(
       devCspHeaders(
         { url: `${OVERLAY_DEV_ORIGIN}/`, responseHeaders: {} },
         DEV,
       ),
     ).toStrictEqual({
-      'Content-Security-Policy': [devServerCsp(OVERLAY_DEV_ORIGIN)],
+      'Content-Security-Policy': [devServerCsp(OVERLAY_DEV_ORIGIN, 'overlay')],
     });
   });
 
   it('handles a response with no headers', () => {
     expect(devCspHeaders({ url: `${DEV_ORIGIN}/x.js` }, DEV)).toStrictEqual({
-      'Content-Security-Policy': [devServerCsp(DEV_ORIGIN)],
+      'Content-Security-Policy': [devServerCsp(DEV_ORIGIN, 'panels')],
     });
   });
 
@@ -401,7 +401,7 @@ describe('installSessionGuards', () => {
       [
         {
           responseHeaders: {
-            'Content-Security-Policy': [devServerCsp(DEV_ORIGIN)],
+            'Content-Security-Policy': [devServerCsp(DEV_ORIGIN, 'panels')],
           },
         },
       ],

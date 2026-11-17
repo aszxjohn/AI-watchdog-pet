@@ -396,6 +396,7 @@ describe('I/O matrix', () => {
         name: '另一包',
         version: '2.0.0',
         apiVersion: '1.0',
+        compatibility: { compatible: true },
         characters: [{ id: 'probe-one', name: '別包的探針一', height: 110 }],
       },
       {
@@ -403,6 +404,7 @@ describe('I/O matrix', () => {
         name: '範例包',
         version: '1.0.0',
         apiVersion: '1.0',
+        compatibility: { compatible: true },
         characters: [
           { id: 'probe-one', name: '探針一', height: 110 },
           { id: 'probe-two', name: '探針二', height: 96 },

@@ -13,11 +13,14 @@ import type {
   packsChoose,
   packsConfirm,
   packsExport,
+  packsGetEntry,
+  packsLog,
   packsRemove,
   poolSetReleased,
   settingsGet,
   settingsPatch,
 } from './ipc';
+import type { PackLogEntry } from './sandbox';
 import type { SettingsPatch } from './settings';
 import type { StageViewSnapshot } from './stage-view';
 
@@ -116,6 +119,15 @@ export interface OverlayApi {
     contextMenu(
       sessionKey: SessionKey,
     ): Promise<IpcResult<IpcData<typeof canvasContextMenu>>>;
+  };
+  readonly packs: {
+    /**
+     * The installed pack's entry source, for its sandbox (Story 3.5), or
+     * why main does not hand it over.
+     */
+    getEntry(packId: string): Promise<IpcResult<IpcData<typeof packsGetEntry>>>;
+    /** Writes one line about a pack's sandbox to the run log. */
+    log(entry: PackLogEntry): Promise<IpcResult<IpcData<typeof packsLog>>>;
   };
 }
 

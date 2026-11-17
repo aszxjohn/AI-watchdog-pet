@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type Listener = (...args: unknown[]) => void;
@@ -66,6 +67,15 @@ const state = vi.hoisted(() => {
     exporterOptions: undefined as ExporterOptions | undefined,
     /** The `packs:remove` callback main.ts passed to registerPackHandlers. */
     removeHandler: undefined as ((packId: string) => unknown) | undefined,
+    /** What main.ts passed to registerPackSandboxHandlers. */
+    sandboxHandlers: undefined as
+      | {
+          readEntry(packId: string): unknown;
+          log(entry: unknown): void;
+        }
+      | undefined,
+    /** The build folder main.ts passed to handlePackProtocol. */
+    packProtocolBuildDir: undefined as unknown,
     /** What dialog.showSaveDialog was called with, and what it answers. */
     saveDialogCalls: [] as unknown[][],
     saveDialogResult: { canceled: true, filePath: '' } as {
@@ -127,6 +137,8 @@ const state = vi.hoisted(() => {
       s.importerOptions = undefined;
       s.exporterOptions = undefined;
       s.removeHandler = undefined;
+      s.sandboxHandlers = undefined;
+      s.packProtocolBuildDir = undefined;
       s.saveDialogCalls = [];
       s.saveDialogResult = { canceled: true, filePath: '' };
       s.dialogCalls = [];
@@ -344,11 +356,32 @@ vi.mock('../../src/main/packs/ipc', () => ({
     state.order.push(`registerPackHandlers ${importer.fake} ${exporter.fake}`);
     state.removeHandler = remove;
   },
+  registerPackSandboxHandlers: (
+    readEntry: (packId: string) => unknown,
+    log: (entry: unknown) => void,
+  ) => {
+    state.order.push('registerPackSandboxHandlers');
+    state.sandboxHandlers = { readEntry, log };
+  },
+}));
+
+vi.mock('../../src/main/packs/entry', () => ({
+  readPackEntry: (store: { fake: string }, packId: string) => {
+    state.order.push(`readPackEntry ${store.fake} ${packId}`);
+    return Promise.resolve({ ok: false, code: 'not-installed' });
+  },
+}));
+
+vi.mock('../../src/main/packs/sandbox-log', () => ({
+  logPackEntry: (entry: unknown) => {
+    state.order.push(`logPackEntry ${JSON.stringify(entry)}`);
+  },
 }));
 
 vi.mock('../../src/main/packs/protocol', () => ({
-  handlePackProtocol: (store: { fake: string }) => {
+  handlePackProtocol: (store: { fake: string }, buildDir: unknown) => {
     state.order.push(`handlePackProtocol ${store.fake}`);
+    state.packProtocolBuildDir = buildDir;
     state.maybeFail('handlePackProtocol');
   },
 }));
@@ -701,6 +734,7 @@ describe('the primary instance', () => {
       'registerSettingsHandlers',
       'registerPoolHandlers pool',
       'registerPackHandlers importer exporter',
+      'registerPackSandboxHandlers',
       'registerStageViewHandlers',
       'registerCanvasReadyHandler',
       'flushOnQuit settings',
@@ -1109,6 +1143,39 @@ describe('the pack export and removal (Story 3.3)', () => {
 
     expect(state.removeHandler?.('sample-pack')).toStrictEqual({ ok: true });
     expect(state.order).toStrictEqual(['removePack packs sample-pack']);
+  });
+});
+
+describe('the packs sandboxes (Story 3.5)', () => {
+  it("packs:get-entry reads from main/packs' store; packs:log writes with logPackEntry", async () => {
+    await startMain();
+    state.order = [];
+
+    expect(await state.sandboxHandlers?.readEntry('sample-pack')).toStrictEqual(
+      { ok: false, code: 'not-installed' },
+    );
+    state.sandboxHandlers?.log({
+      kind: 'sandbox-destroyed',
+      packId: 'x',
+      reason: 'idle',
+    });
+    expect(state.order).toStrictEqual([
+      'readPackEntry packs sample-pack',
+      'logPackEntry {"kind":"sandbox-destroyed","packId":"x","reason":"idle"}',
+    ]);
+  });
+
+  it('the pack:// handler serves the sandbox document from the folder main runs from', async () => {
+    await startMain();
+    await becomeReady();
+
+    // main.ts's own folder: next to main.cjs once built.
+    expect(state.packProtocolBuildDir).toBe(
+      path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        '../../src/main',
+      ),
+    );
   });
 });
 

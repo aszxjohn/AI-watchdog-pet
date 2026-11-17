@@ -23,6 +23,7 @@ import {
 } from '../shared/constants';
 import type { IpcError, IpcResult } from '../shared/ipc';
 import {
+  type ApiIncompatibilityReason,
   formatApiVersion,
   PACK_API_VERSION,
   type PackApiIssueRule,
@@ -152,6 +153,20 @@ function imageLimitText(limit: PackImageLimit, path: string | undefined) {
     : `所有圖片加起來超過 ${PACK_IMPORT_MAX_TOTAL_PIXELS / 10_000} 萬像素`;
 }
 
+/**
+ * Why a pack's `apiVersion` does not fit this stage, with the version it
+ * declares: what an `api-incompatible` refusal says, and what the 角色包
+ * list says of an installed pack that does not fit (Story 3.5).
+ */
+export function apiIncompatibleText(
+  reason: ApiIncompatibilityReason,
+  required: string,
+): string {
+  return reason === 'pack-newer'
+    ? `需要舞台 API ≥ ${required}（目前是 ${STAGE_API}），請先更新 app`
+    : `這個角色包的 API 版本不相容（角色包是 ${required}，舞台是 ${STAGE_API}）`;
+}
+
 /** One sentence for why a pack is refused, with what the code carries. */
 export function rejectionText(rejection: PackRejection): string {
   switch (rejection.code) {
@@ -174,9 +189,7 @@ export function rejectionText(rejection: PackRejection): string {
     case 'manifest-not-json':
       return 'manifest.json 不是有效的 JSON';
     case 'api-incompatible':
-      return rejection.reason === 'pack-newer'
-        ? `需要舞台 API ≥ ${rejection.required}（目前是 ${STAGE_API}），請先更新 app`
-        : `這個角色包的 API 版本不相容（角色包是 ${rejection.required}，舞台是 ${STAGE_API}）`;
+      return apiIncompatibleText(rejection.reason, rejection.required);
     case 'invalid-manifest':
       return 'manifest.json 的內容不符合規格';
     case 'root-folder-mismatch':

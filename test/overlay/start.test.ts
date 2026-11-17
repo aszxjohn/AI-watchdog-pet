@@ -75,6 +75,16 @@ function fakeApi(
         return { ok: true, data: null };
       },
     },
+    packs: {
+      async getEntry() {
+        order.push('getEntry');
+        return { ok: true, data: { ok: false, code: 'not-installed' } };
+      },
+      async log() {
+        order.push('log');
+        return { ok: true, data: null };
+      },
+    },
   };
   return {
     api,

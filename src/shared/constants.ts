@@ -173,3 +173,88 @@ export const FIRST_LINE_MAX_BYTES = 1024 * 1024;
  * read later again.
  */
 export const TRAILING_READ_MS = 100;
+
+/**
+ * The `pack://` host the stage serves its own documents from (Story 3.5):
+ * `pack://_stage/…`. Never a pack id, since an id cannot start with `_`.
+ */
+export const PACK_STAGE_HOST = '_stage';
+
+/**
+ * The sandbox document (Story 3.5, AD-7): its file name next to main.cjs in
+ * the build (the main build writes it there, with SES and the Worker
+ * bootstrap inlined) and its path under `pack://_stage/`.
+ */
+export const SANDBOX_DOCUMENT_FILE = 'sandbox.html';
+
+/**
+ * The file the same build writes next to SANDBOX_DOCUMENT_FILE: the
+ * document's Content-Security-Policy, which carries the hash of its inline
+ * script, as `{ "csp": …, "sha256": … }`.
+ */
+export const SANDBOX_CSP_FILE = 'sandbox-csp.json';
+
+/**
+ * How long a pack's sandbox stays after its last actor left the stage
+ * (Story 3.5): an actor of the pack coming back within it keeps the
+ * sandbox; otherwise the overlay removes the sandbox's iframe.
+ */
+export const SANDBOX_IDLE_MS = 30_000;
+
+/**
+ * Most messages one pack's sandbox may send the stage in each
+ * PACK_MESSAGE_RATE_WINDOW_MS (Story 3.5); the overlay drops the rest.
+ */
+export const PACK_MESSAGE_RATE_LIMIT = 120;
+
+/** The window PACK_MESSAGE_RATE_LIMIT counts in. */
+export const PACK_MESSAGE_RATE_WINDOW_MS = 1_000;
+
+/**
+ * Largest message one pack's sandbox may send the stage, in bytes of its
+ * JSON form (Story 3.5); the overlay drops a larger one whole.
+ */
+export const PACK_MESSAGE_MAX_BYTES = 64 * 1024;
+
+/**
+ * Most `stage.log` lines one pack may write in each
+ * STAGE_LOG_RATE_WINDOW_MS (Story 3.5); the overlay drops the rest.
+ */
+export const STAGE_LOG_RATE_LIMIT = 20;
+
+/** The window STAGE_LOG_RATE_LIMIT counts in. */
+export const STAGE_LOG_RATE_WINDOW_MS = 10_000;
+
+/**
+ * Longest `stage.log` text, in UTF-16 code units: the sandbox and the
+ * overlay cut a longer one (ending it with `…`) before it reaches the run
+ * log.
+ */
+export const STAGE_LOG_MAX_LENGTH = 1_000;
+
+/**
+ * The overlay logs dropped pack messages at most once per pack and reason
+ * in this long (Story 3.5); the next line counts the ones dropped since.
+ */
+export const PACK_DROP_LOG_INTERVAL_MS = 10_000;
+
+/**
+ * Most entries the Worker bootstrap's removal report may list (Story 3.5):
+ * the API list and the intrinsics list together, with room to grow.
+ */
+export const SANDBOX_REMOVALS_MAX = 32;
+
+/**
+ * Most `stage.*` calls a pack Worker keeps while the overlay's port has not
+ * arrived yet (Story 3.5); later ones are dropped there. The bootstrap's
+ * own reports are always kept.
+ */
+export const SANDBOX_OUTBOX_MAX = 256;
+
+/**
+ * Longest a pack's sandbox may take, from adding its iframe, to report
+ * `sandbox.ready` or `sandbox.failed` (Story 3.5); then the overlay
+ * removes the iframe as failed (`boot-timeout`): a document that did not
+ * load or run, or a factory that never returns.
+ */
+export const SANDBOX_BOOT_TIMEOUT_MS = 10_000;

@@ -4,7 +4,9 @@
  * once, with one version), and each one's files are in
  * `packs/<packId>/<version>/`. The store offers StageView its `packs`
  * section the way main/pool offers `pool` (get() and onChange()); it
- * depends on neither main/detection nor main/pool.
+ * depends on neither main/detection nor main/pool. Each pack in the section
+ * says whether its `apiVersion` fits this stage (Story 3.5): one installed
+ * before the app changed its API version may not.
  *
  * Loading follows main/pool's rules and never loses the user's file:
  * - no index.json: no packs installed; nothing is created;
@@ -41,7 +43,11 @@
  */
 import nodeFs from 'node:fs';
 import path from 'node:path';
-import { packIdSchema, packVersionSchema } from '../../shared/pack-api';
+import {
+  checkApiCompatibility,
+  packIdSchema,
+  packVersionSchema,
+} from '../../shared/pack-api';
 import {
   PACKS_SCHEMA_VERSION,
   packIndexFileSchema,
@@ -204,7 +210,10 @@ function sortedById(
   );
 }
 
-/** An installed pack as StageView carries it. */
+/**
+ * An installed pack as StageView carries it, with whether its `apiVersion`
+ * fits this stage (Story 3.5).
+ */
 function stagePackOf({
   id,
   name,
@@ -218,6 +227,7 @@ function stagePackOf({
     version,
     apiVersion,
     characters: characters.map((character) => ({ ...character })),
+    compatibility: checkApiCompatibility(apiVersion),
   };
 }
 

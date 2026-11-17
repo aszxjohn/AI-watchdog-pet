@@ -13,6 +13,7 @@ import {
   exportRequestErrorText,
   heightHintText,
   IDLE_PACK_LIST_ACTIONS,
+  incompatibleText,
   IDLE_PACK_ROW_ACTIONS,
   IN_POOL_LABEL,
   inPoolOp,
@@ -39,6 +40,10 @@ import {
   type PackRowButton,
   type PackRowPress,
 } from '../../src/panels/pack-list';
+import {
+  apiIncompatibleText,
+  rejectionText,
+} from '../../src/panels/pack-import';
 import type { IpcResult } from '../../src/shared/ipc';
 import {
   PACK_EXPORT_FAILURE_CODES,
@@ -62,6 +67,7 @@ const ALPHA = {
   name: '甲包',
   version: '1.2.0',
   apiVersion: '1.0',
+  compatibility: { compatible: true } as const,
   characters: [
     { id: 'zeta', name: '角色Ｚ', height: 110 },
     { id: 'beta', name: '角色Ｂ', height: 82 },
@@ -72,6 +78,7 @@ const BRAVO = {
   name: '乙包',
   version: '0.9.1',
   apiVersion: '1.0',
+  compatibility: { compatible: true } as const,
   characters: [{ id: 'zeta', name: '另一個Ｚ', height: 138 }],
 };
 
@@ -212,6 +219,41 @@ describe('I/O matrix', () => {
     expect(packListView({ installed: [] }, settings())).toStrictEqual([]);
   });
 
+  it('不相容: a pack whose apiVersion does not fit this stage says why, in the words of an api-incompatible refusal (Story 3.5)', () => {
+    const newer = {
+      ...ALPHA,
+      apiVersion: '1.9',
+      compatibility: {
+        compatible: false,
+        reason: 'pack-newer',
+        required: '1.9',
+      },
+    } as const;
+    const other = {
+      ...BRAVO,
+      apiVersion: '2.0',
+      compatibility: {
+        compatible: false,
+        reason: 'major-mismatch',
+        required: '2.0',
+      },
+    } as const;
+
+    const view = packListView({ installed: [newer, other] }, settings());
+
+    expect(view.map((pack) => pack.incompatible)).toStrictEqual([
+      `無法上場：${rejectionText({ code: 'api-incompatible', reason: 'pack-newer', required: '1.9' })}`,
+      `無法上場：${rejectionText({ code: 'api-incompatible', reason: 'major-mismatch', required: '2.0' })}`,
+    ]);
+    expect(view[0]?.incompatible).toBe(
+      '無法上場：需要舞台 API ≥ 1.9（目前是 1.0），請先更新 app',
+    );
+    expect(incompatibleText({ compatible: true })).toBeNull();
+    expect(apiIncompatibleText('major-mismatch', '2.0')).toBe(
+      '這個角色包的 API 版本不相容（角色包是 2.0，舞台是 1.0）',
+    );
+  });
+
   it('列出: each pack by id with its name, version and characters in manifest order, all checked', () => {
     const view = packListView(PACKS, settings());
 
@@ -223,6 +265,7 @@ describe('I/O matrix', () => {
       id: 'alpha-pack',
       name: '甲包',
       version: '版本 1.2.0',
+      incompatible: null,
       enabled: {
         id: 'enabled:alpha-pack',
         checked: true,

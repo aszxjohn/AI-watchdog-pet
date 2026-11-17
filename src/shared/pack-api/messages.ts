@@ -8,7 +8,8 @@ import { paramValuesSchema } from './params';
  * only by `actorId`; `characterId` only picks a character's look and
  * parameters, and one character may have several actors at once. A pack
  * never sees session keys, sources, confidence or another pack's identity.
- * `stage.fire`, `hold`, `face` and `log` are not messages here (3.5, Epic 4).
+ * What a pack sends the stage is `draw` (draw.ts) and the `stage.*` calls
+ * (stage.ts).
  */
 
 /** Longest actor id, in UTF-16 units. */

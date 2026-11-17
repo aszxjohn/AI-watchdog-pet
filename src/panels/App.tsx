@@ -661,6 +661,11 @@ function PackList({
                     ))}
                   </span>
                 </div>
+                {pack.incompatible === null ? null : (
+                  <p className="pack-incompatible" role="note">
+                    {pack.incompatible}
+                  </p>
+                )}
                 {controls.confirm === null ? null : (
                   <div
                     className="pack-remove-confirm"

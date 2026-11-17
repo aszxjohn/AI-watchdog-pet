@@ -20,13 +20,15 @@
  *    panel), StageView (settings, main/windows' displays, canvas and power
  *    sections, main/pool's assigner's sessions, adapters, pool and actors,
  *    main/packs' packs, packImport and packExport) and the IPC handlers
- *    (removing a pack among them), and guards every window
+ *    (removing a pack among them; the overlay's packs' entries and
+ *    sandbox log lines), and guards every window
  *    webContents. The canvas's hover and right-click handlers come
  *    once the canvas windows exist; a right-click on the demo session's
  *    square opens the demo menu, which calls detection.setDemo as the
  *    tray's 示範模式 does.
  * 3. Once ready: the session guards, the application menu, the `app://`
- *    handler, the `pack://` handler, the Dock icon hidden, the tray icon
+ *    handler, the `pack://` handler (with the sandbox document the build
+ *    wrote next to main.cjs), the Dock icon hidden, the tray icon
  *    (its 示範模式 check mark follows detection, whichever menu changed
  *    it), then the stage: the canvas on the chosen display (following
  *    display and settings changes) and the sleep / lock watch (sleep also
@@ -89,7 +91,8 @@ import { createPackExporter } from './packs/exporter';
 import { createPackImporter } from './packs/importer';
 import { inspectPack } from './packs/inspect';
 import { installPack } from './packs/install';
-import { registerPackHandlers } from './packs/ipc';
+import { readPackEntry } from './packs/entry';
+import { registerPackHandlers, registerPackSandboxHandlers } from './packs/ipc';
 import {
   createLaunchFileQueue,
   isPackFile,
@@ -98,6 +101,7 @@ import {
 } from './packs/launch-files';
 import { handlePackProtocol } from './packs/protocol';
 import { removePack } from './packs/remove';
+import { logPackEntry } from './packs/sandbox-log';
 import { loadPacks } from './packs/store';
 import { flushOnQuit } from './persist/quit';
 import { createAssigner } from './pool/assign';
@@ -338,6 +342,12 @@ function startPrimaryInstance(): void {
   registerPackHandlers(importer, exporter, (packId) =>
     removePack(packs, packId),
   );
+  // The overlay's: each pack's entry for its sandbox, and the run log
+  // lines about the sandboxes (Story 3.5).
+  registerPackSandboxHandlers(
+    (packId) => readPackEntry(packs, packId),
+    logPackEntry,
+  );
   registerStageViewHandlers(stageView);
   registerCanvasReadyHandler();
 
@@ -503,9 +513,10 @@ function startPrimaryInstance(): void {
       startupStep('app-protocol', () => {
         handleAppProtocol(__dirname);
       });
-      // Only the files the installed packs declared, as `app://` above.
+      // Only the files the installed packs declared, as `app://` above,
+      // and the sandbox document the build wrote next to main.cjs.
       startupStep('pack-protocol', () => {
-        handlePackProtocol(packs);
+        handlePackProtocol(packs, __dirname);
       });
       startupStep('dock', () => {
         dock.hideAtStartup();

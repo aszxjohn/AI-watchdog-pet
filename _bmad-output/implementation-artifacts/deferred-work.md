@@ -253,3 +253,12 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-4-pool-assignment.md`
   summary: 3.9 換角色之前，StageView 的 `actors` 可能指向已移除、已停用（沒上場）或新版本已不存在的角色；3.5 建沙盒、3.6 畫角色時要能處理找不到包或角色的 actor（例如改演佔位、記一行），不能因此出錯
   evidence: Story 3.4 審查 B12（low）。3.4 決定池子在執行中變小時已分配的不動，換角色留給 3.9；`session-rows.ts` 找不到角色名時退回顯示 key。這是給 3.5、3.6 的交接條件。
+- source_spec: none
+  summary: Story 3.5 下半段：Electron 請求限制（`webRequest` 只放行 `app://`、`pack://`；開發時 Vite dev server 只放行 overlay、panels 頂層框架發出的請求，`pack://` 與沙盒發出的一律 cancel，Epic 1 回顧 A8）、Playwright `_electron` 沙盒安全測試（`@playwright/test` 1.64.1；fetch、XHR、WebSocket、EventSource、importScripts、巢狀 Worker、parent／top、indexedDB、`Date.now`、`Math.random`、OffscreenCanvas webgl 全部失敗，加上正向對照、lockdown 期間 console 0 行、清單每條已移除；CI 的 macOS 與 Windows 都要過），以及移除清單與作者文件 `docs/pack-api-v1.md` 第 10 節一致的測試
+  evidence: 使用者 2026-11-17 選擇把 3.5 拆兩段，先做沙盒載入鏈（上半段，單元測試驗證）；安全測試要有載入鏈才測得到逃逸，新增依賴與 Windows CI 可能要來回修，和請求限制一起作為安全把關的下半段。下半段完成前不匯入第三方角色包。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-5-sandbox-chain.md`
+  summary: 3.5 下半段一併決定：沙盒文件的 CSP 是否加 `sandbox allow-scripts`（不靠嵌入端 iframe 屬性也強制 opaque origin）與 `frame-ancestors`（只讓 overlay 嵌入）
+  evidence: Story 3.5 上半段審查 B9（low）。目前沒有途徑在沒有 `sandbox` 屬性的框架載入 `pack://_stage/sandbox.html`，但 `will-frame-navigate` 放行任何 `pack://`；上半段凍結的 CSP 內容是「沿用原型」，要改需使用者同意，放在安全把關的下半段一起決定。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-5-sandbox-chain.md`
+  summary: 3.5 下半段的 Playwright 測試要斷言實際組出來的那條鏈：`sandbox.html` 的 inline script（`startIframe`）、組好的 Worker 字串（`workerSource` 的拼接、`countConsole` → `run()` 的接線、`structuredClone`），在真 Electron 裡跑到 `sandbox.ready`
+  evidence: Story 3.5 上半段審查 B10（medium）。上半段的正向對照在 Node 主 context 分別載入 bootstrap 與 SES 再呼叫 `boot()`，組好的字串只有字串比對與假物件的單元測試；開發代理在 `npm start` 與打包版實際看到 sandbox ready，但沒有自動測試鎖住。

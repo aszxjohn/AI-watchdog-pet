@@ -19,4 +19,5 @@ export * from './fixed-params';
 export * from './manifest';
 export * from './messages';
 export * from './params';
+export * from './stage';
 export * from './version';
