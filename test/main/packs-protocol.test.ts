@@ -334,6 +334,84 @@ describe('I/O matrix', () => {
       },
     ],
     [
+      'the CSP does not sandbox the document (no sandbox allow-scripts)',
+      () => {
+        fs.writeFileSync(
+          path.join(buildDir, SANDBOX_CSP_FILE),
+          JSON.stringify({
+            csp: SANDBOX_CSP.replace('; sandbox allow-scripts', ''),
+            sha256: SANDBOX_SHA256,
+          }),
+        );
+      },
+    ],
+    [
+      'the CSP sandboxes the document with more than scripts',
+      () => {
+        fs.writeFileSync(
+          path.join(buildDir, SANDBOX_CSP_FILE),
+          JSON.stringify({
+            csp: SANDBOX_CSP.replace(
+              'sandbox allow-scripts',
+              'sandbox allow-scripts allow-same-origin',
+            ),
+            sha256: SANDBOX_SHA256,
+          }),
+        );
+      },
+    ],
+    [
+      'the CSP has frame-ancestors (the overlay could not frame it)',
+      () => {
+        fs.writeFileSync(
+          path.join(buildDir, SANDBOX_CSP_FILE),
+          JSON.stringify({
+            csp: `${SANDBOX_CSP}; frame-ancestors 'none'`,
+            sha256: SANDBOX_SHA256,
+          }),
+        );
+      },
+    ],
+    [
+      'an upper-case Sandbox directive with more than scripts comes first (the one a browser uses)',
+      () => {
+        fs.writeFileSync(
+          path.join(buildDir, SANDBOX_CSP_FILE),
+          JSON.stringify({
+            csp: SANDBOX_CSP.replace(
+              "default-src 'none'; ",
+              "default-src 'none'; Sandbox allow-scripts allow-same-origin; ",
+            ),
+            sha256: SANDBOX_SHA256,
+          }),
+        );
+      },
+    ],
+    [
+      'the CSP has sandbox allow-scripts twice',
+      () => {
+        fs.writeFileSync(
+          path.join(buildDir, SANDBOX_CSP_FILE),
+          JSON.stringify({
+            csp: `${SANDBOX_CSP}; sandbox allow-scripts`,
+            sha256: SANDBOX_SHA256,
+          }),
+        );
+      },
+    ],
+    [
+      'the CSP has an upper-case Frame-Ancestors',
+      () => {
+        fs.writeFileSync(
+          path.join(buildDir, SANDBOX_CSP_FILE),
+          JSON.stringify({
+            csp: `${SANDBOX_CSP}; Frame-Ancestors 'none'`,
+            sha256: SANDBOX_SHA256,
+          }),
+        );
+      },
+    ],
+    [
       "the document's inline script is from another build (its hash differs)",
       () => {
         fs.writeFileSync(

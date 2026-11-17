@@ -12,6 +12,7 @@
     "scripts/**/*",
     "test/**/*",
     "prototypes/**/*",
-    "*.mts"
+    "*.mts",
+    "playwright.config.ts"
   ]
 }

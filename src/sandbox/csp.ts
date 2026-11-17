@@ -10,7 +10,11 @@
  * - `worker-src blob:`: the Worker is made from a blob of the bootstrap
  *   and the entry (the blob Worker inherits this policy);
  * - `connect-src 'none'`: no fetch, XHR, WebSocket or EventSource, even
- *   if one were left.
+ *   if one were left;
+ * - `sandbox allow-scripts` (decision of 2026-11-17): the document is
+ *   sandboxed with an opaque origin and scripts only, even if it were ever
+ *   loaded without the iframe's `sandbox` attribute. No `frame-ancestors`:
+ *   the overlay must be able to frame it.
  */
 
 /** A SHA-256 digest in base64: 43 characters and one `=`. */
@@ -29,5 +33,6 @@ export function sandboxCsp(sha256: string): string {
     `script-src 'sha256-${sha256}' 'unsafe-eval'`,
     'worker-src blob:',
     "connect-src 'none'",
+    'sandbox allow-scripts',
   ].join('; ');
 }

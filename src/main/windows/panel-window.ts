@@ -26,7 +26,7 @@ import { APP_SCHEME, PRODUCT_NAME } from '../../shared/constants';
 import { panelPageHash, type PanelPageId } from '../../shared/panels';
 import { logEvent } from '../log/run-log';
 import type { DockController } from './dock';
-import type { WindowsEnvironment } from './environment';
+import { isDevelopment, type WindowsEnvironment } from './environment';
 import { PANELS_HOST } from './protocols';
 import { secureWebPreferences } from './security';
 
@@ -224,7 +224,9 @@ export function createPanelWindows({
     });
 
     load(win, page);
-    if (!env.packaged) {
+    // Only in development: without a dev server DevTools may not load
+    // (environment.ts isAllowedRequestUrl).
+    if (isDevelopment(env)) {
       win.webContents.openDevTools({ mode: 'detach' });
     }
   }

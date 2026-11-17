@@ -8,12 +8,15 @@
 import { Buffer } from 'node:buffer';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { ZipFile } from 'yazl';
 
-/** The unpacked contract pack: one `contract-pack/` folder. */
+/**
+ * The unpacked contract pack: one `contract-pack/` folder. Found from
+ * `__dirname`, not `import.meta`: Playwright (test/e2e) loads this file as
+ * CommonJS, vitest provides `__dirname` too.
+ */
 const CONTRACT_PACK_DIR = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
+  __dirname,
   '..',
   'packs',
   'contract-pack',

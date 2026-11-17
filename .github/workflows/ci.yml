@@ -41,3 +41,48 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run depcruise
+
+  # The sandbox security test (Story 3.5) in real Electron, and the start of
+  # end-to-end testing (Epic 2 retro B8): npm run e2e builds the production
+  # .vite/ through Forge (packaged into a temp folder, then deleted) and
+  # runs Playwright's _electron on it, with a temp HOME and userData.
+  e2e:
+    name: e2e (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # This job runs Electron, so npm ci downloads its binary.
+      - run: npm ci
+
+      - run: npm run e2e
+
+      # The positive control's Electron block (Electron's Node mode), which
+      # the check job skips because it installs without Electron. Runs even
+      # when the e2e step failed.
+      - run: npm test -- test/sandbox/build.test.ts
+        if: ${{ !cancelled() }}
+
+      # always(): also when the job timed out and was cancelled.
+      - name: Upload the run log and the Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.os }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14

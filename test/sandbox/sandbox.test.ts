@@ -73,10 +73,14 @@ describe('the removal lists', () => {
 });
 
 describe('sandboxCsp', () => {
-  it("is the prototype's policy around the script's hash, exactly", () => {
+  it("is the prototype's policy around the script's hash, sandboxed with scripts only, exactly", () => {
     expect(sandboxCsp(SHA)).toBe(
-      `default-src 'none'; script-src 'sha256-${SHA}' 'unsafe-eval'; worker-src blob:; connect-src 'none'`,
+      `default-src 'none'; script-src 'sha256-${SHA}' 'unsafe-eval'; worker-src blob:; connect-src 'none'; sandbox allow-scripts`,
     );
+  });
+
+  it('has no frame-ancestors: the overlay frames the document', () => {
+    expect(sandboxCsp(SHA)).not.toContain('frame-ancestors');
   });
 
   it.each([

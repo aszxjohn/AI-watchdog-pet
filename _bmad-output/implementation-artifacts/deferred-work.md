@@ -262,3 +262,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-5-sandbox-chain.md`
   summary: 3.5 下半段的 Playwright 測試要斷言實際組出來的那條鏈：`sandbox.html` 的 inline script（`startIframe`）、組好的 Worker 字串（`workerSource` 的拼接、`countConsole` → `run()` 的接線、`structuredClone`），在真 Electron 裡跑到 `sandbox.ready`
   evidence: Story 3.5 上半段審查 B10（medium）。上半段的正向對照在 Node 主 context 分別載入 bootstrap 與 SES 再呼叫 `boot()`，組好的字串只有字串比對與假物件的單元測試；開發代理在 `npm start` 與打包版實際看到 sandbox ready，但沒有自動測試鎖住。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-5-sandbox-security.md`
+  summary: 開發時 dev server（含 HMR）只放行 overlay、panels 頂層框架的規則，沒有任何自動測試在真 Electron 裡跑過；要的話在 e2e 加一個啟動 Forge Vite dev server 的模式，斷言 renderer 正常載入、HMR 連得上、沒有 `request blocked`
+  evidence: Story 3.5 下半段審查 VG2（medium）。目前只有單元測試的手寫 details 與一次手動 `npm start`；壞了會在下次 `npm start` 立刻看到 renderer 載不出來，並有 `request blocked` 的 log。

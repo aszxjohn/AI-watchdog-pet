@@ -242,6 +242,15 @@ describe('opening the panel', () => {
     expect(packaged.win().devTools).toStrictEqual([]);
   });
 
+  it('opens no DevTools unpackaged without a dev server (DevTools could not load)', () => {
+    const noDevServer = setup({
+      packaged: false,
+      devServers: { panels: undefined, overlay: undefined },
+    });
+    noDevServer.panels.open('sessions');
+    expect(noDevServer.win().devTools).toStrictEqual([]);
+  });
+
   it('switches the open panel to another page and brings it to the front', () => {
     const { panels, dock, win } = setup();
     panels.open('sessions');

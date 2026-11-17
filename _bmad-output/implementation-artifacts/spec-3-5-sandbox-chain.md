@@ -188,6 +188,8 @@ context:
 
 - 2026-11-17 審查修補後驗證（主流程重跑）：四項檢查全過（96 檔通過、1 檔跳過；4804 個測試通過、2 個跳過；depcruise 0 違規）；被改寫的既有 `expect(` 仍是那 3 行；Code Map 的入口說明已更正（審查 VG1）。
 
+- CI：commit `fcc3136`（2026-11-17）後，GitHub Actions 的 macOS、Windows 都通過（run 44022789976）。
+
 ## Spec Change Log
 
 ## Review Triage Log

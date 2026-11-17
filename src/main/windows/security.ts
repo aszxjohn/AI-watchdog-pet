@@ -9,10 +9,12 @@
  *   denied, a frame may only navigate where environment.ts allows, and no
  *   `<webview>` may attach.
  * - The default session: every permission request and permission check is
- *   denied, and so is every device (HID, serial, USB) permission; every request
- *   to a URL environment.ts does not allow is cancelled, and each such
- *   origin is logged once; while not packaged, each dev server's (panels,
- *   overlay) responses get the dev CSP header for that origin (csp.ts).
+ *   denied, and so is every device (HID, serial, USB) permission; every
+ *   request environment.ts does not allow (by its URL and by who made it:
+ *   nothing from a pack sandbox, the dev servers only from the renderers'
+ *   top frames) is cancelled, and each such origin is logged once; while
+ *   not packaged, each dev server's (panels, overlay) responses get the dev
+ *   CSP header for that origin (csp.ts).
  *
  * The decisions are pure functions over a WindowsEnvironment; the install
  * functions only wire them to Electron.
@@ -24,8 +26,9 @@ import {
   describeUrlOrigin,
   devServersOf,
   isAllowedNavigationUrl,
-  isAllowedRequestUrl,
   rendererOfUrl,
+  requestDecision,
+  type RequestDetails,
   type WindowsEnvironment,
 } from './environment';
 
@@ -105,23 +108,31 @@ export function installWebContentsGuards(
 }
 
 /**
- * The webRequest decision: allowed URLs go through; any other is
- * cancelled, and the first cancelled request to each origin is logged.
+ * The webRequest decision (environment.ts requestDecision, from Electron's
+ * details: the URL, the requesting frame, the initiator, the resource
+ * type): allowed requests go through; any other is cancelled. The first
+ * cancelled request to each origin is logged, once for a pack sandbox
+ * (the line says so) and once for anyone else, so a sandbox reaching for
+ * an origin already blocked for a page still leaves its line.
  */
 export function createRequestFilter(
   env: WindowsEnvironment,
-): (details: { url: string }) => { cancel: boolean } {
+): (details: RequestDetails) => { cancel: boolean } {
   const reported = new Set<string>();
-  return ({ url }) => {
-    if (isAllowedRequestUrl(url, env)) {
+  return (details) => {
+    const { allowed, requester } = requestDecision(details, env);
+    if (allowed) {
       return { cancel: false };
     }
-    const origin = describeUrlOrigin(url);
-    if (!reported.has(origin)) {
-      reported.add(origin);
+    const origin = describeUrlOrigin(details.url);
+    const bySandbox = requester === 'sandbox';
+    const key = `${bySandbox ? 'sandbox' : 'other'} ${origin}`;
+    if (!reported.has(key)) {
+      reported.add(key);
+      const by = bySandbox ? ', made by a sandbox' : '';
       logEvent(
         'windows',
-        `request blocked: ${origin} (later requests to it are blocked without a log line)`,
+        `request blocked: ${origin}${by} (later requests to it are blocked without a log line)`,
         'warn',
       );
     }

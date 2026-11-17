@@ -16,9 +16,12 @@
  * `pack://_stage/sandbox.html` is the sandbox document (Story 3.5): the
  * file the main build wrote next to main.cjs, served with the CSP the same
  * build wrote (src/sandbox/csp.ts made it; it carries the hash of the
- * document's inline script). Both come from an injected provider, read
- * once; when they cannot be read the document is 404, and so is every
- * other `pack://_stage/…` path.
+ * document's inline script and `sandbox allow-scripts`). Both come from an
+ * injected provider, read once. The document is 404 when they cannot be
+ * read, when the CSP does not start with `default-src 'none'`, does not
+ * have exactly one `sandbox` directive that is `sandbox allow-scripts`, or
+ * has a `frame-ancestors` (directive names in any case), or when the hash
+ * does not match; so is every other `pack://_stage/…` path.
  *
  * The content type follows the extension; a pack never gets an HTML type
  * from here, and `nosniff` keeps the browser from guessing one.
@@ -61,9 +64,51 @@ export type SandboxDocumentProvider = () => Promise<
   SandboxDocument | undefined
 >;
 
-/** `sandbox-csp.json` as the build writes it. */
+/** The directives of a CSP, each trimmed, empty ones left out. */
+function cspDirectives(csp: string): string[] {
+  return csp
+    .split(';')
+    .map((directive) => directive.trim())
+    .filter((directive) => directive !== '');
+}
+
+/** A directive's name, lower-cased (names are case-insensitive). */
+function directiveName(directive: string): string {
+  return (directive.split(/\s+/)[0] ?? '').toLowerCase();
+}
+
+/**
+ * Whether `csp` sandboxes the document with scripts only, and nothing else
+ * can undo it: exactly one directive is named `sandbox` (in any case; a
+ * browser would use the first of several), and it is `sandbox
+ * allow-scripts` (case and spacing aside); and no directive is named
+ * `frame-ancestors`, in any case (the overlay frames the document).
+ */
+function isSandboxedScriptsOnly(csp: string): boolean {
+  const directives = cspDirectives(csp);
+  const sandboxes = directives.filter(
+    (directive) => directiveName(directive) === 'sandbox',
+  );
+  return (
+    sandboxes.length === 1 &&
+    (sandboxes[0] ?? '').toLowerCase().split(/\s+/).join(' ') ===
+      'sandbox allow-scripts' &&
+    !directives.some(
+      (directive) => directiveName(directive) === 'frame-ancestors',
+    )
+  );
+}
+
+/**
+ * `sandbox-csp.json` as the build writes it (src/sandbox/csp.ts): a CSP
+ * that starts with `default-src 'none'; ` and passes isSandboxedScriptsOnly,
+ * and the SHA-256 of the document's inline script.
+ */
 const sandboxCspFileSchema = z.strictObject({
-  csp: z.string().startsWith("default-src 'none'; "),
+  csp: z
+    .string()
+    .startsWith("default-src 'none'; ")
+    .refine(isSandboxedScriptsOnly),
   sha256: z.string().min(1),
 });
 

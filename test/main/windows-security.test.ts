@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { WindowsEnvironment } from '../../src/main/windows/environment';
+import type {
+  RequestDetails,
+  RequestFrame,
+  WindowsEnvironment,
+} from '../../src/main/windows/environment';
 import { devServerCsp } from '../../src/main/windows/csp';
 import {
   createRequestFilter,
@@ -11,6 +15,7 @@ import {
   type GuardedContents,
   type GuardedSession,
 } from '../../src/main/windows/security';
+import { SANDBOX_DOCUMENT_URL } from '../../src/shared/sandbox';
 
 vi.mock('electron', () => import('../helpers/fake-electron'));
 
@@ -213,11 +218,46 @@ describe('installWebContentsGuards', () => {
   );
 });
 
+/** The overlay's top frame in each environment. */
+const OVERLAY_TOP: RequestFrame = {
+  url: 'app://overlay/index.html',
+  parent: null,
+};
+const DEV_OVERLAY_TOP: RequestFrame = {
+  url: `${OVERLAY_DEV_ORIGIN}/`,
+  parent: null,
+};
+
+/** A request the top frame `top` makes. */
+function fromTop(top: RequestFrame, url: string): RequestDetails {
+  return {
+    url,
+    resourceType: 'script',
+    frame: top,
+    webContentsId: 1,
+    initiatorOrigin:
+      new URL(top.url).protocol === 'app:'
+        ? 'app://overlay'
+        : OVERLAY_DEV_ORIGIN,
+  };
+}
+
+/** A request the sandbox in `top` (its iframe or a Worker of it) makes. */
+function fromSandbox(top: RequestFrame, url: string): RequestDetails {
+  return {
+    url,
+    resourceType: 'xhr',
+    frame: { url: SANDBOX_DOCUMENT_URL, parent: top },
+    webContentsId: 1,
+    initiatorOrigin: 'null',
+  };
+}
+
 describe('createRequestFilter', () => {
   it.each([
     ['app://panels/assets/index.js', false, false],
     ['pack://some-pack/1.0.0/a.png', false, false],
-    ['devtools://devtools/bundled/inspector.html', false, false],
+    ['devtools://devtools/bundled/inspector.html', true, false],
     [`${DEV_ORIGIN}/@vite/client`, true, false],
     ['ws://localhost:5173/?token=1', true, false],
     [`${OVERLAY_DEV_ORIGIN}/main.ts`, true, false],
@@ -226,12 +266,21 @@ describe('createRequestFilter', () => {
     ['https://example.com/x.js', true, true],
     ['wss://example.com/socket', true, true],
     ['http://127.0.0.1:5173/', true, true],
-  ])('%s: cancelled when packaged %s, in dev %s', (url, packaged, dev) => {
-    expect(createRequestFilter(PACKAGED)({ url })).toStrictEqual({
-      cancel: packaged,
-    });
-    expect(createRequestFilter(DEV)({ url })).toStrictEqual({ cancel: dev });
-  });
+  ])(
+    '%s from the overlay: cancelled when packaged %s, in dev %s',
+    (url, packaged, dev) => {
+      expect(
+        createRequestFilter(PACKAGED)(fromTop(OVERLAY_TOP, url)),
+      ).toStrictEqual({
+        cancel: packaged,
+      });
+      expect(
+        createRequestFilter(DEV)(fromTop(DEV_OVERLAY_TOP, url)),
+      ).toStrictEqual({
+        cancel: dev,
+      });
+    },
+  );
 
   it('logs each blocked origin once', () => {
     const filter = createRequestFilter(PACKAGED);
@@ -246,6 +295,133 @@ describe('createRequestFilter', () => {
       '[windows] request blocked: wss://example.com (later requests to it are blocked without a log line)',
       '[windows] request blocked: https://other.example (later requests to it are blocked without a log line)',
     ]);
+  });
+});
+
+describe('I/O matrix', () => {
+  it('沙盒發出: whatever a sandbox asks for is cancelled, and each origin is logged once, saying a sandbox made it', () => {
+    const filter = createRequestFilter(DEV);
+    const urls = [
+      `${OVERLAY_DEV_ORIGIN}/@vite/client`,
+      'ws://localhost:5174/?token=1',
+      'pack://some-pack/1.0.0/a.png',
+      'pack://some-pack/1.0.0/b.png',
+      'app://overlay/index.html',
+      `${OVERLAY_DEV_ORIGIN}/main.ts`,
+    ];
+    for (const url of urls) {
+      expect(filter(fromSandbox(DEV_OVERLAY_TOP, url))).toStrictEqual({
+        cancel: true,
+      });
+    }
+    expect(warnings()).toStrictEqual([
+      `[windows] request blocked: ${OVERLAY_DEV_ORIGIN}, made by a sandbox (later requests to it are blocked without a log line)`,
+      '[windows] request blocked: ws://localhost:5174, made by a sandbox (later requests to it are blocked without a log line)',
+      '[windows] request blocked: pack://some-pack, made by a sandbox (later requests to it are blocked without a log line)',
+      '[windows] request blocked: app://overlay, made by a sandbox (later requests to it are blocked without a log line)',
+    ]);
+  });
+
+  it('沙盒發出: the overlay still reaches what the sandbox could not', () => {
+    const filter = createRequestFilter(PACKAGED);
+    expect(
+      filter(fromSandbox(OVERLAY_TOP, 'pack://some-pack/1.0.0/a.png')),
+    ).toStrictEqual({
+      cancel: true,
+    });
+    expect(
+      filter(fromTop(OVERLAY_TOP, 'pack://some-pack/1.0.0/a.png')),
+    ).toStrictEqual({
+      cancel: false,
+    });
+  });
+
+  it('沙盒發出: a sandbox reaching for an origin already blocked for a page still leaves its own line', () => {
+    const filter = createRequestFilter(PACKAGED);
+    filter(fromTop(OVERLAY_TOP, 'https://example.com/a.js'));
+    filter(fromSandbox(OVERLAY_TOP, 'https://example.com/b.js'));
+    filter(fromSandbox(OVERLAY_TOP, 'https://example.com/c.js'));
+    filter(fromTop(OVERLAY_TOP, 'https://example.com/d.js'));
+    expect(warnings()).toStrictEqual([
+      '[windows] request blocked: https://example.com (later requests to it are blocked without a log line)',
+      '[windows] request blocked: https://example.com, made by a sandbox (later requests to it are blocked without a log line)',
+    ]);
+  });
+
+  it('沙盒發出: who made the request is read once, so a frame gone right after still counts as the sandbox', () => {
+    let reads = 0;
+    // Readable once (the decision), gone after: a second read would make
+    // the request look unknown.
+    const frame = {
+      get url(): string {
+        reads += 1;
+        if (reads > 1) {
+          throw new Error('Render frame was disposed');
+        }
+        return SANDBOX_DOCUMENT_URL;
+      },
+      parent: OVERLAY_TOP,
+    } as RequestFrame;
+    const filter = createRequestFilter(PACKAGED);
+    expect(
+      filter({
+        url: 'pack://some-pack/1.0.0/a.png',
+        resourceType: 'xhr',
+        frame,
+      }),
+    ).toStrictEqual({ cancel: true });
+    expect(warnings()).toStrictEqual([
+      '[windows] request blocked: pack://some-pack, made by a sandbox (later requests to it are blocked without a log line)',
+    ]);
+  });
+
+  it('沙盒文件: the overlay loading the sandbox document goes through, with no log line', () => {
+    const filter = createRequestFilter(PACKAGED);
+    expect(
+      filter({
+        url: SANDBOX_DOCUMENT_URL,
+        resourceType: 'subFrame',
+        frame: { url: '', parent: OVERLAY_TOP },
+        webContentsId: 1,
+        initiatorOrigin: 'app://overlay',
+      }),
+    ).toStrictEqual({ cancel: false });
+    expect(warnings()).toStrictEqual([]);
+  });
+
+  it('不明發起者: a dev server request with no requester is cancelled and logged once; app:// and pack:// go through', () => {
+    const filter = createRequestFilter(DEV);
+    expect(filter({ url: `${DEV_ORIGIN}/@vite/client` })).toStrictEqual({
+      cancel: true,
+    });
+    expect(filter({ url: 'ws://localhost:5173/' })).toStrictEqual({
+      cancel: true,
+    });
+    expect(filter({ url: `${DEV_ORIGIN}/src/main.tsx` })).toStrictEqual({
+      cancel: true,
+    });
+    expect(filter({ url: 'app://panels/index.html' })).toStrictEqual({
+      cancel: false,
+    });
+    expect(filter({ url: 'pack://some-pack/1.0.0/a.png' })).toStrictEqual({
+      cancel: false,
+    });
+    expect(warnings()).toStrictEqual([
+      `[windows] request blocked: ${DEV_ORIGIN} (later requests to it are blocked without a log line)`,
+      '[windows] request blocked: ws://localhost:5173 (later requests to it are blocked without a log line)',
+    ]);
+  });
+
+  it('正式版放行: devtools: is cancelled once packaged, like any other scheme', () => {
+    const filter = createRequestFilter(PACKAGED);
+    expect(
+      filter({ url: 'devtools://devtools/bundled/inspector.html' }),
+    ).toStrictEqual({
+      cancel: true,
+    });
+    expect(filter({ url: 'file:///etc/passwd' })).toStrictEqual({
+      cancel: true,
+    });
   });
 });
 
@@ -380,6 +556,30 @@ describe('installSessionGuards', () => {
     expect(callback.mock.calls).toStrictEqual([
       [{ cancel: true }],
       [{ cancel: false }],
+    ]);
+  });
+
+  it("hands webRequest's details on whole: who made the request counts", () => {
+    const session = fakeSession();
+    installSessionGuards(session as unknown as GuardedSession, DEV);
+    const listener = session.webRequest.onBeforeRequest.mock.calls[0]?.[0] as (
+      details: RequestDetails,
+      callback: (response: { cancel: boolean }) => void,
+    ) => void;
+    const callback = vi.fn();
+    listener(
+      fromTop(DEV_OVERLAY_TOP, `${OVERLAY_DEV_ORIGIN}/main.ts`),
+      callback,
+    );
+    listener(
+      fromSandbox(DEV_OVERLAY_TOP, `${OVERLAY_DEV_ORIGIN}/main.ts`),
+      callback,
+    );
+    listener({ url: `${OVERLAY_DEV_ORIGIN}/main.ts` }, callback);
+    expect(callback.mock.calls).toStrictEqual([
+      [{ cancel: false }],
+      [{ cancel: true }],
+      [{ cancel: true }],
     ]);
   });
 
