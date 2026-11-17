@@ -48,3 +48,23 @@
 - 驗完以 SIGTERM 結束測試 app，run log 最後一行是 `quit`；整份 run log 91 行，沒有任何 error 或 fail。
 - 審查時已知、沒有修的小問題，這次也看到了：移除後狀態行仍顯示前一次「已匯出」（3.3 下半段審查 B4，駁回）。
 - **結果**：3.2、3.3 共 13 項全部通過，沒有發現 app 的缺陷。
+
+## Story 3.4（2026-11-17）
+
+- **對象**：`870f1f7`（Story 3.4），macOS，`npm start` 開發版。
+- **環境**：新的隔離 `--user-data-dir`（Claude 的 scratchpad），使用者的打包版與真實 userData 都沒碰。session 用本機現有的 Claude Code session（隔離實例自己的轉接器讀到 12 個、顯示 7 個），加上示範模式；沒有另外產生新的 AI session。讀頁面時只讀「來源、狀態、角色」三欄，`assignments.json` 只印統計，不印 session 名稱或 key。
+
+| # | 做什麼 | 應該看到 | 結果 |
+|---|---|---|---|
+| P1 | 第二實例匯入契約測試包（2 個角色），7 個 session 顯示中 | 7 個 session 交替分到「探針一」「探針二」；前兩個不同，之後依出場次數最少的重複；`assignments.json` 是 v2，7 筆、7 個不同的 `actorId` | ✅ log：`assignments: 7 new … (7 actors, 2 characters in the pool)` |
+| P2 | 釋放第一列，再改回顯示 | 釋放後顯示「沒有角色」並標「已釋放」，其他列不變；改回顯示後分到「探針二」（本次出場次數較少），`actorId` 是新的 | ✅ |
+| P3 | 「角色包」頁取消上場 | 現有 7 個角色都不變，沒有新的分配 | ✅ |
+| P4 | 池子空時釋放再顯示一列，然後勾回上場 | 池子空時那列「沒有角色」（未釋放）；勾回上場後立刻補上「探針一」；log 先記 `changed packEnabled` 再記分配 | ✅ |
+| P5 | 選單列打開示範模式（思考中），再切到工作中 | 示範 session 分到「探針二」；切狀態後角色不變，沒有新的分配 | ✅ 選單列用輔助使用 API 操作 |
+| P6 | 結束 app 再啟動 | `start-up sync: kept 7 saved assignments, dropped 1 (1 not reported …)`；7 個 session 的角色與 `actorId` 都和結束前相同；示範模式重啟後是關的，那筆被丟掉；面板角色欄與結束前一致 | ✅ |
+
+### 過程紀錄
+
+- 2026-11-17，Claude 依使用者要求自行驗收：面板用本機除錯埠讀取與點擊，選單列的示範模式用 AppleScript 對選單項目發出按下動作（關選單時送過一次 Esc，當時選單在前景），沒有截圖。
+- 驗完以 SIGTERM 結束測試 app，run log 最後一行是 `quit`；整份 run log 78 行，沒有任何 error、fail 或 warn。
+- **結果**：3.4 共 6 項全部通過，沒有發現 app 的缺陷。

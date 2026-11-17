@@ -158,6 +158,8 @@ context:
 
 - 2026-11-16 審查修補後驗證（主流程重跑）：四項檢查全過（89 檔通過、1 檔跳過；4516 個測試通過、2 個跳過；depcruise 0 違規）；I/O 矩陣 18 列都有測試且都跑過；被改寫的既有 `expect(` 仍是那 12 行 v2 改寫。
 
+- CI：commit `870f1f7`（2026-11-17）後，GitHub Actions 的 macOS、Windows 都通過（run 44007739380）。
+
 ## Spec Change Log
 
 ## Review Triage Log
