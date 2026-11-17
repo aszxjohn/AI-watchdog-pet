@@ -68,8 +68,8 @@
   summary: 開發模式放行 dev server 時只看目標 URL，不看發起者；違反 AD-24「沙盒 iframe 與 pack:// 在任何環境都沒有例外」（R4）
   evidence: `src/main/windows/environment.ts:158-182`。現在還沒有沙盒，所以沒有實際暴露。Story 3.5 的驗收條件必須加上：只放行 overlay 或 panels 頂層框架發出的 dev server 請求，`pack://` 發出的一律 cancel，並附測試。
 - source_spec: `_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md`
-  summary: 一次 settings:patch 產生兩個 StageView 增量（先 settings、後 canvas），中間有不一致的狀態；settings → StageView → watchDisplays → canvas 這條鏈沒有整合測試（R10）
-  evidence: `src/main/stage-view/stage-view.ts:96-101`、`src/main/windows/stage-sources.ts:187`。Story 3.6 讓 overlay 同時讀 settings 與 canvas 之前，要先合併同一次變更的增量；整合測試可以提早到 Story 2.3。
+  summary: 一次 settings:patch 產生兩個 StageView 增量（先 settings、後 canvas），中間有不一致的狀態；settings → StageView → watchDisplays → canvas 這條鏈沒有整合測試（R10）（已解決）
+  evidence: `src/main/stage-view/stage-view.ts:96-101`、`src/main/windows/stage-sources.ts:187`。Story 3.6 讓 overlay 同時讀 settings 與 canvas 之前，要先合併同一次變更的增量；整合測試可以提早到 Story 2.3。 已由 `spec-3-6-effective-params.md` 完成：StageView 新增 `batch`，`settings:patch` 在批次裡執行，並補上 settings → watchDisplays → canvas 的整合測試。
 - source_spec: `_bmad-output/implementation-artifacts/epic-1-retro-2026-11-06.md`
   summary: Windows 關機或登出不觸發 will-quit，500 ms 內的設定變更會遺失，紀錄也沒有結束行（R11，重提 1.4 E3）
   evidence: `src/` 沒有 `session-end`。1.4 當時拒絕的理由「視窗由 1.5 重寫」已經不成立。在 Windows 實機驗證時，於畫布視窗掛 `session-end`，同步寫設定、停止畫布並記一行。
@@ -265,3 +265,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-5-sandbox-security.md`
   summary: 開發時 dev server（含 HMR）只放行 overlay、panels 頂層框架的規則，沒有任何自動測試在真 Electron 裡跑過；要的話在 e2e 加一個啟動 Forge Vite dev server 的模式，斷言 renderer 正常載入、HMR 連得上、沒有 `request blocked`
   evidence: Story 3.5 下半段審查 VG2（medium）。目前只有單元測試的手寫 details 與一次手動 `npm start`；壞了會在下次 `npm start` 立刻看到 renderer 載不出來，並有 `request blocked` 的 log。
+- source_spec: none
+  summary: Story 3.6 中段：節拍與繪圖核心——`overlay/world` 以 `tickHz` 推進、舞台→包的 `init`／`spawn`／`despawn`／`params`／`meta`／`frame`（每包最多一則在途、沒回就跳過、睡眠或鎖定暫停）、PixiJS 依 `draw` 畫 sprite（`pack://` 素材載入與快取、畫面底部排列、固定參數「大小」、依 y 排序、`bounds` 裁切）、`draw` 執行時的上限檢查與 spritesheet 支援欄位、actor 指向找不到的包或角色時的處理（3.4 交接條件）、換螢幕時依 `canvas.scaleFactor` 調 resolution、真角色上畫布後移除示範方塊空殼
+  evidence: 使用者 2026-11-17 選擇把 3.6 拆三段：上段先做 `main/settings` 的有效參數（中段的 `spawn` 要帶完整有效參數），中段是角色第一次出現在畫布上的核心，下段是特殊繪圖指令與 GPU 穩定性。
+- source_spec: none
+  summary: Story 3.6 下段：特殊繪圖與穩定性——`particles`（同一個 `emitterId` 跨 frame 持續發射、下一則沒出現就停、每包 emitter 數上限、收斂 preset 清單）、advancedBitmap（`stage.canvas` 只給宣告的角色、只允許 2d、ImageBitmap 以 transfer 傳送、尺寸與每秒張數上限）、WebGL context lost／GPU 行程當掉／renderer 無回應的處理、macOS 整個 app 被隱藏時畫布被藏起來的做法（角色上台前要決定，需在實機確認）
+  evidence: 使用者 2026-11-17 選擇把 3.6 拆三段；中段交付時，用到粒子或 bitmap 的 `draw` 指令會被丟棄並記錄，下段才畫得出來；GPU 失效的處理要有真的繪圖才測得出來。

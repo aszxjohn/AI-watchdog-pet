@@ -451,6 +451,7 @@ describe('the StageView status line', () => {
           packs: { installed: [] },
           packImport: { phase: 'idle' },
           packExport: { phase: 'idle' },
+          characters: {},
         },
       }),
     ).toBe('StageView rev 9｜畫布螢幕：主螢幕（暫用主螢幕）');

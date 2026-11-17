@@ -15,6 +15,7 @@ import {
   PACK_API_ISSUE_RULES,
   type PackApiIssueRule,
   packIdSchema,
+  type PackManifest,
   packPathSchema,
   packVersionSchema,
 } from './pack-api';
@@ -656,3 +657,34 @@ export const packEntryResultSchema = z.discriminatedUnion('ok', [
 ]);
 
 export type PackEntryResult = z.infer<typeof packEntryResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Reading an installed pack's manifest (Story 3.6).
+
+/**
+ * Why an installed version's own `manifest.json` could not be used
+ * (main/packs reads it, main/settings works the characters out from it):
+ * - `unreadable`: the file is missing or cannot be read;
+ * - `not-json`: it is not JSON;
+ * - `invalid-manifest`: it fails manifestSchema;
+ * - `mismatch`: its `id` or `version` is not the folder's.
+ */
+export const INSTALLED_MANIFEST_FAILURES = [
+  'unreadable',
+  'not-json',
+  'invalid-manifest',
+  'mismatch',
+] as const;
+
+export type InstalledManifestFailure =
+  (typeof INSTALLED_MANIFEST_FAILURES)[number];
+
+/** An installed manifest, checked, or why not. */
+export type InstalledManifestResult =
+  | { readonly ok: true; readonly manifest: PackManifest }
+  | {
+      readonly ok: false;
+      readonly code: InstalledManifestFailure;
+      /** The error code, for `unreadable`. Never a path or file content. */
+      readonly detail?: string;
+    };

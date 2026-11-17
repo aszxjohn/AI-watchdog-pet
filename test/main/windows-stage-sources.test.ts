@@ -76,6 +76,7 @@ describe('createWindowsStageSource', () => {
         packs: { installed: [] },
         packImport: { phase: 'idle' },
         packExport: { phase: 'idle' },
+        characters: {},
       }).success,
     ).toBe(true);
   });

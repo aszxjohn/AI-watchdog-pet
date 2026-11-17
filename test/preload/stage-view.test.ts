@@ -30,6 +30,7 @@ function snapshot(rev: number, id: number | null = null): StageViewSnapshot {
       packs: { installed: [] },
       packImport: { phase: 'idle' },
       packExport: { phase: 'idle' },
+      characters: {},
     },
   };
 }

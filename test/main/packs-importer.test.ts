@@ -738,6 +738,10 @@ describe('with the real check and install (the contract test pack)', () => {
         get: () => ({ packExport: { phase: 'idle' } }),
         onChange: () => () => {},
       },
+      characters: {
+        get: () => ({ characters: {} }),
+        onChange: () => () => {},
+      },
     });
     const subscriber = fake.createFakeWebContents(
       1,

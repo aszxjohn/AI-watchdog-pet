@@ -12,6 +12,7 @@ import {
   stageAdapterSchema,
   stageAdaptersSchema,
   stageCanvasSchema,
+  stageCharactersSchema,
   stageDisplaySchema,
   stageDisplaysSchema,
   stagePowerSchema,
@@ -87,6 +88,7 @@ const VIEW: StageView = {
   packs: { installed: [PACK] },
   packImport: { phase: 'idle' },
   packExport: { phase: 'idle' },
+  characters: {},
 };
 /** An actor of CODEX_SESSION, playing PACK's first character. */
 const ACTOR = {
@@ -100,6 +102,29 @@ const ACTOR = {
 const NEXT_SETTINGS = {
   rev: 4,
   values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 69733632 },
+};
+/** The stage's fixed parameter defaults, as plain values. */
+const FIXED = {
+  scale: 1,
+  inPool: true,
+  badges: true,
+  wander: {
+    enabled: true,
+    areas: [6, 7, 8],
+    activity: 'medium',
+    speed: 'medium',
+  },
+} as const;
+/** PACK's two characters with their effective values (Story 3.6). */
+const CHARACTERS = {
+  'sample-pack/probe-a': {
+    params: { glow: true, 'blink-every': 3, mood: 'calm' },
+    fixed: FIXED,
+  },
+  'sample-pack/probe-b': {
+    params: {},
+    fixed: { ...FIXED, scale: 0.9, wander: { ...FIXED.wander, speed: 'slow' } },
+  },
 };
 
 describe('displayIdSchema', () => {
@@ -314,9 +339,97 @@ describe('stageAdaptersSchema', () => {
   });
 });
 
+describe('stageCharactersSchema (Story 3.6)', () => {
+  it.each([
+    ['two characters', CHARACTERS],
+    ['no character', {}],
+    [
+      'a declared parameter keyed like a fixed one',
+      {
+        'sample-pack/probe-a': {
+          params: { scale: 7, inpool: 'x' },
+          fixed: FIXED,
+        },
+      },
+    ],
+    [
+      'characters of two packs, sorted by key',
+      {
+        'another-pack/probe-z': CHARACTERS['sample-pack/probe-b'],
+        ...CHARACTERS,
+      },
+    ],
+  ])('round-trips %s', (_label, value) => {
+    expectRoundTrip(stageCharactersSchema, value);
+  });
+
+  it.each([
+    [
+      'keys out of order',
+      {
+        'sample-pack/probe-b': CHARACTERS['sample-pack/probe-b'],
+        'sample-pack/probe-a': CHARACTERS['sample-pack/probe-a'],
+      },
+    ],
+    [
+      'a key that is not <packId>/<characterId>',
+      { 'sample-pack': CHARACTERS['sample-pack/probe-a'] },
+    ],
+    [
+      'an own __proto__ key',
+      JSON.parse('{"__proto__": {"params": {}, "fixed": {}}}') as unknown,
+    ],
+    ['no fixed parameters', { 'sample-pack/probe-a': { params: {} } }],
+    [
+      'a fixed parameter missing',
+      {
+        'sample-pack/probe-a': {
+          params: {},
+          fixed: { scale: 1, inPool: true, wander: FIXED.wander },
+        },
+      },
+    ],
+    [
+      'a scale off its grid',
+      {
+        'sample-pack/probe-a': { params: {}, fixed: { ...FIXED, scale: 1.05 } },
+      },
+    ],
+    [
+      'a wander missing a field',
+      {
+        'sample-pack/probe-a': {
+          params: {},
+          fixed: { ...FIXED, wander: { enabled: true, areas: [6] } },
+        },
+      },
+    ],
+    [
+      'an extra field',
+      { 'sample-pack/probe-a': { ...CHARACTERS['sample-pack/probe-a'], x: 1 } },
+    ],
+    [
+      'a parameter key that is not an id',
+      { 'sample-pack/probe-a': { params: { Glow: true }, fixed: FIXED } },
+    ],
+    [
+      'a parameter value that is not a bool, number or string',
+      { 'sample-pack/probe-a': { params: { glow: null }, fixed: FIXED } },
+    ],
+    ['a list', []],
+    ['null', null],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(stageCharactersSchema, value);
+  });
+});
+
 describe('stageViewSchema', () => {
   it('round-trips a view', () => {
     expectRoundTrip(stageViewSchema, VIEW);
+  });
+
+  it("round-trips a view with its characters' effective values (Story 3.6)", () => {
+    expectRoundTrip(stageViewSchema, { ...VIEW, characters: CHARACTERS });
   });
 
   it('round-trips the view before ready: no displays, no canvas, no session, no adapter, nothing released', () => {
@@ -384,8 +497,9 @@ describe('stageViewSchema', () => {
       'an adapter with an unknown health',
       { ...VIEW, adapters: [{ ...ADAPTER, health: 'x' }] },
     ],
-    ['an unknown section', { ...VIEW, characters: [] }],
+    ['an unknown section', { ...VIEW, world: [] }],
     ['no actors section', { ...VIEW, actors: undefined }],
+    ['no characters section', { ...VIEW, characters: undefined }],
     [
       'an actor of a bad character key',
       { ...VIEW, actors: [{ ...ACTOR, characterKey: 'sample-pack' }] },
@@ -484,6 +598,18 @@ describe('stageViewDeltaSchema', () => {
         },
       },
     ],
+    ['characters (Story 3.6)', { characters: CHARACTERS }],
+    ['no characters any more', { characters: {} }],
+    [
+      'what one settings patch did, together (Story 3.6)',
+      {
+        settings: NEXT_SETTINGS,
+        canvas: { ...CANVAS, displayId: SECOND.id },
+        sessions: [CODEX_SESSION],
+        actors: [ACTOR],
+        characters: CHARACTERS,
+      },
+    ],
   ])('round-trips a delta with %s', (_label, sections) => {
     expectRoundTrip(stageViewDeltaSchema, { rev: 8, sections });
   });
@@ -492,8 +618,21 @@ describe('stageViewDeltaSchema', () => {
     ['no sections', { rev: 1, sections: {} }],
     ['an undefined section', { rev: 1, sections: { settings: undefined } }],
     ['an undefined canvas', { rev: 1, sections: { canvas: undefined } }],
-    ['an unknown section', { rev: 1, sections: { characters: [] } }],
+    ['an unknown section', { rev: 1, sections: { world: [] } }],
     ['undefined actors', { rev: 1, sections: { actors: undefined } }],
+    ['undefined characters', { rev: 1, sections: { characters: undefined } }],
+    [
+      'characters out of order',
+      {
+        rev: 1,
+        sections: {
+          characters: {
+            'sample-pack/probe-b': CHARACTERS['sample-pack/probe-b'],
+            'sample-pack/probe-a': CHARACTERS['sample-pack/probe-a'],
+          },
+        },
+      },
+    ],
     [
       'two actors with one actor id',
       {
@@ -601,6 +740,7 @@ describe('applyStageViewDelta', () => {
       packs: VIEW.packs,
       packImport: VIEW.packImport,
       packExport: VIEW.packExport,
+      characters: VIEW.characters,
     });
   });
 });

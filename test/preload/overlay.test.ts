@@ -8,9 +8,11 @@ import { createPackExporter } from '../../src/main/packs/exporter';
 import { createPackImporter } from '../../src/main/packs/importer';
 import { inspectPack } from '../../src/main/packs/inspect';
 import { installPack } from '../../src/main/packs/install';
+import { readInstalledManifest } from '../../src/main/packs/manifest';
 import { loadPacks } from '../../src/main/packs/store';
 import { createAssigner } from '../../src/main/pool/assign';
 import { loadPool } from '../../src/main/pool/store';
+import { createCharacters } from '../../src/main/settings/characters';
 import { registerSettingsHandlers } from '../../src/main/settings/ipc';
 import {
   loadSettings,
@@ -85,7 +87,6 @@ async function loadApi(): Promise<OverlayApi> {
 function startMain() {
   settings = loadSettings({ file: path.join(dir, 'settings.json') });
   const windows = createWindowsStageSource();
-  registerSettingsHandlers(settings);
   const detection = createDetection({ settings });
   const pool = loadPool({ file: path.join(dir, 'assignments.json') });
   const packs = loadPacks({ dir: path.join(dir, 'packs') });
@@ -104,16 +105,24 @@ function startMain() {
     exportPack,
     chooseTarget: async () => null,
   });
-  registerStageViewHandlers(
-    createStageView({
-      settings,
-      windows,
-      assigner,
-      packs,
-      packImport,
-      packExport,
-    }),
-  );
+  const characters = createCharacters({
+    settings,
+    packs,
+    readManifest: (packId, version) =>
+      readInstalledManifest(packs.dir, packId, version),
+  });
+  const hub = createStageView({
+    settings,
+    windows,
+    assigner,
+    packs,
+    packImport,
+    packExport,
+    characters,
+  });
+  registerSettingsHandlers(settings, hub);
+  registerStageViewHandlers(hub);
+  characters.watch();
   assigner.watchPool();
   registerCanvasReadyHandler();
   return { settings, windows };
@@ -167,6 +176,7 @@ describe('overlay preload', () => {
         packs: { installed: [] },
         packImport: { phase: 'idle' },
         packExport: { phase: 'idle' },
+        characters: {},
       },
     });
 

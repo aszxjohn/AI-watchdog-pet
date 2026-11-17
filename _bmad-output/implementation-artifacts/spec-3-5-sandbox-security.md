@@ -149,6 +149,8 @@ context:
 
 - 2026-11-17 審查修補後驗證（主流程重跑，macOS arm64）：五項檢查全過（97 檔通過、1 檔跳過；4893 個測試通過、2 個跳過；depcruise 0 違規；`npm run e2e` 8 個全過，31.9 秒）；`out/` 沒有被動到；被改寫的既有 `expect(` 仍是那 2 行；「CI」列待 push 後的實際 CI。
 
+- CI：commit `1a6c492`（2026-11-17）後，GitHub Actions 的 unit（check）與 e2e 兩個 job 在 macOS、Windows 都通過（run 44031335014），I/O 矩陣「CI」列成立；Windows 第一次在 CI 啟動 Electron 就通過。
+
 ## Spec Change Log
 
 ## Review Triage Log

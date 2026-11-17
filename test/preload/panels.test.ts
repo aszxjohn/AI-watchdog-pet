@@ -9,12 +9,14 @@ import { createPackExporter } from '../../src/main/packs/exporter';
 import { createPackImporter } from '../../src/main/packs/importer';
 import { inspectPack } from '../../src/main/packs/inspect';
 import { installPack } from '../../src/main/packs/install';
+import { readInstalledManifest } from '../../src/main/packs/manifest';
 import { registerPackHandlers } from '../../src/main/packs/ipc';
 import { removePack } from '../../src/main/packs/remove';
 import { loadPacks } from '../../src/main/packs/store';
 import { createAssigner } from '../../src/main/pool/assign';
 import { registerPoolHandlers } from '../../src/main/pool/ipc';
 import { loadPool, type PoolStore } from '../../src/main/pool/store';
+import { createCharacters } from '../../src/main/settings/characters';
 import { registerSettingsHandlers } from '../../src/main/settings/ipc';
 import {
   loadSettings,
@@ -93,21 +95,28 @@ function startMain(
     exportPack,
     chooseTarget,
   });
-  registerSettingsHandlers(settings);
+  const characters = createCharacters({
+    settings,
+    packs,
+    readManifest: (packId, version) =>
+      readInstalledManifest(packs.dir, packId, version),
+  });
+  const hub = createStageView({
+    settings,
+    windows: createWindowsStageSource(),
+    assigner,
+    packs,
+    packImport,
+    packExport,
+    characters,
+  });
+  registerSettingsHandlers(settings, hub);
   registerPoolHandlers(pool);
   registerPackHandlers(packImport, packExport, (packId) =>
     removePack(packs, packId),
   );
-  registerStageViewHandlers(
-    createStageView({
-      settings,
-      windows: createWindowsStageSource(),
-      assigner,
-      packs,
-      packImport,
-      packExport,
-    }),
-  );
+  registerStageViewHandlers(hub);
+  characters.watch();
   assigner.watchPool();
   return settings;
 }
@@ -182,6 +191,7 @@ describe('panels preload', () => {
         packs: { installed: [] },
         packImport: { phase: 'idle' },
         packExport: { phase: 'idle' },
+        characters: {},
       },
     });
 

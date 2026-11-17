@@ -49,6 +49,9 @@ const CUSTOM_VALUES = {
   fixedOverrides: { 'pack-a/char-a': { inPool: false } },
 } as const;
 
+/** A StageView batch that only runs the patch, for the IPC tests. */
+const NO_BATCH = { batch: <T>(run: () => T): T => run() };
+
 let dir: string;
 let file: string;
 let consoleSpies: ReturnType<typeof vi.spyOn>[];
@@ -986,7 +989,7 @@ describe('settings IPC', () => {
 
   it('answers settings:get and settings:patch', async () => {
     const store = load();
-    registerSettingsHandlers(store);
+    registerSettingsHandlers(store, NO_BATCH);
 
     expect(await fake.ipcRenderer.invoke(settingsGet.channel)).toStrictEqual({
       ok: true,
@@ -1002,6 +1005,39 @@ describe('settings IPC', () => {
       data: { rev: 1, merged: false, saved: true },
     });
     expect(store.get().values.canvasDisplayId).toBe(DISPLAY_ID);
+  });
+
+  it('runs a settings:patch inside one StageView batch (Story 3.6): the change is heard while the batch is open', async () => {
+    const store = load();
+    const events: string[] = [];
+    store.onChange(() => {
+      events.push('changed');
+    });
+    registerSettingsHandlers(store, {
+      batch<T>(run: () => T): T {
+        events.push('batch opens');
+        try {
+          return run();
+        } finally {
+          events.push('batch ends');
+        }
+      },
+    });
+
+    const reply = await fake.ipcRenderer.invoke(
+      settingsPatch.channel,
+      setDisplay(0, DISPLAY_ID),
+    );
+
+    expect(reply).toStrictEqual({
+      ok: true,
+      data: { rev: 1, merged: false, saved: true },
+    });
+    expect(events).toStrictEqual(['batch opens', 'changed', 'batch ends']);
+    expect(await fake.ipcRenderer.invoke(settingsGet.channel)).toMatchObject({
+      ok: true,
+    });
+    expect(events).toHaveLength(3);
   });
 
   it.each([
@@ -1032,7 +1068,7 @@ describe('settings IPC', () => {
       const store = load();
       const onChange = vi.fn();
       store.onChange(onChange);
-      registerSettingsHandlers(store);
+      registerSettingsHandlers(store, NO_BATCH);
 
       const reply = await fake.ipcRenderer.invoke(settingsPatch.channel, patch);
 
@@ -1587,7 +1623,7 @@ describe('I/O matrix', () => {
       const store = load();
       const onChange = vi.fn();
       store.onChange(onChange);
-      registerSettingsHandlers(store);
+      registerSettingsHandlers(store, NO_BATCH);
 
       const reply = await fake.ipcRenderer.invoke(settingsPatch.channel, patch);
 
@@ -1650,7 +1686,7 @@ describe('I/O matrix', () => {
     fake.resetFakeElectron();
     writeFile(fullFile());
     const store = load();
-    registerSettingsHandlers(store);
+    registerSettingsHandlers(store, NO_BATCH);
 
     const reply = await fake.ipcRenderer.invoke(
       settingsPatch.channel,

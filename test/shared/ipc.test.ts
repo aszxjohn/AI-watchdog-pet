@@ -208,6 +208,7 @@ describe('settings and StageView contracts', () => {
       packs: { installed: [] },
       packImport: { phase: 'idle' },
       packExport: { phase: 'idle' },
+      characters: {},
     },
   };
   const DELTA = { rev: 6, sections: { settings: STATE } };

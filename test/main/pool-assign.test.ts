@@ -1485,6 +1485,10 @@ describe('with StageView, as main.ts wires them', () => {
         get: () => ({ packExport: { phase: 'idle' } }),
         onChange: () => () => {},
       },
+      characters: {
+        get: () => ({ characters: {} }),
+        onChange: () => () => {},
+      },
     });
     assigner.watchPool();
     const subscriber = fake.createFakeWebContents(

@@ -17,10 +17,13 @@
  *    once detection's start-up sync is over), the pack import flow
  *    (main/packs' importer: the 角色包 page's file dialog, on the panel)
  *    and export flow (main/packs' exporter: the save dialog, on the
- *    panel), StageView (settings, main/windows' displays, canvas and power
+ *    panel), main/settings' characters (each installed character's
+ *    effective parameters, from its pack's installed manifest), StageView
+ *    (settings and characters, main/windows' displays, canvas and power
  *    sections, main/pool's assigner's sessions, adapters, pool and actors,
  *    main/packs' packs, packImport and packExport) and the IPC handlers
- *    (removing a pack among them; the overlay's packs' entries and
+ *    (a settings patch, an install and a removal each run in one StageView
+ *    batch; removing a pack among them; the overlay's packs' entries and
  *    sandbox log lines), and guards every window
  *    webContents. The canvas's hover and right-click handlers come
  *    once the canvas windows exist; a right-click on the demo session's
@@ -99,6 +102,7 @@ import {
   PACK_FILE_EXTENSION,
   packFileFromArgv,
 } from './packs/launch-files';
+import { readInstalledManifest } from './packs/manifest';
 import { handlePackProtocol } from './packs/protocol';
 import { removePack } from './packs/remove';
 import { logPackEntry } from './packs/sandbox-log';
@@ -107,6 +111,7 @@ import { flushOnQuit } from './persist/quit';
 import { createAssigner } from './pool/assign';
 import { registerPoolHandlers } from './pool/ipc';
 import { loadPool } from './pool/store';
+import { createCharacters } from './settings/characters';
 import { registerSettingsHandlers } from './settings/ipc';
 import { loadSettings } from './settings/store';
 import {
@@ -242,9 +247,9 @@ function startupStep(name: string, run: () => void): void {
 
 function startPrimaryInstance(): void {
   // Startup order: run log, settings, detection, pool, packs, the pool's
-  // assigner, the packs' importer and exporter, StageView, IPC handlers,
-  // window guards; the tray and windows once ready. userData is the same
-  // folder for `npm start` and the packaged app.
+  // assigner, the packs' importer and exporter, the characters, StageView,
+  // IPC handlers, window guards; the tray and windows once ready. userData
+  // is the same folder for `npm start` and the packaged app.
   const userData = app.getPath('userData');
   initRunLog(path.join(userData, 'logs'));
   logEvent(
@@ -311,10 +316,13 @@ function startPrimaryInstance(): void {
       ? undefined
       : panelWindow;
   }
+  // An install runs in one StageView batch (created below; an install
+  // comes only later, from the panel or a .awpet from outside), so the
+  // packs section, the characters and the actors it changes are one delta.
   const importer = createPackImporter({
     store: packs,
     inspect: inspectPack,
-    install: installPack,
+    install: (store, plan) => stageView.batch(() => installPack(store, plan)),
     chooseFile: () => choosePackFile(openPanelWindow()),
   });
   const exporter = createPackExporter({
@@ -323,6 +331,15 @@ function startPrimaryInstance(): void {
     chooseTarget: (defaultName) =>
       choosePackTarget(openPanelWindow(), defaultName),
   });
+  // main/settings works out each installed character's effective
+  // parameters and fixed parameters (the characters section), from the
+  // pack's installed manifest, which main/packs reads for it.
+  const characters = createCharacters({
+    settings,
+    packs,
+    readManifest: (packId, version) =>
+      readInstalledManifest(packs.dir, packId, version),
+  });
   const stageView = createStageView({
     settings,
     windows: stageSources,
@@ -330,17 +347,23 @@ function startPrimaryInstance(): void {
     packs,
     packImport: importer,
     packExport: exporter,
+    characters,
   });
-  // Only now does the assigner follow settings and the installed packs:
-  // StageView hears a settings or packs change first, so the actors that
-  // change brings never reach a renderer ahead of it.
+  // Only now do the characters and the assigner follow settings and the
+  // installed packs: StageView hears a settings or packs change first, so
+  // what that change brings never reaches a renderer ahead of it. The
+  // characters first, so a new character's values come before an actor
+  // that plays it.
+  characters.watch();
   assigner.watchPool();
 
   registerIpcHandler(appGetVersion, ['panels'], () => app.getVersion());
-  registerSettingsHandlers(settings);
+  registerSettingsHandlers(settings, stageView);
   registerPoolHandlers(pool);
+  // A removal runs in one StageView batch too: its characters never leave
+  // in a delta of their own.
   registerPackHandlers(importer, exporter, (packId) =>
-    removePack(packs, packId),
+    stageView.batch(() => removePack(packs, packId)),
   );
   // The overlay's: each pack's entry for its sandbox, and the run log
   // lines about the sandboxes (Story 3.5).

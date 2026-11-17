@@ -390,6 +390,7 @@ describe('registerIpcHandler', () => {
           packs: { installed: [] },
           packImport: { phase: 'idle' },
           packExport: { phase: 'idle' },
+          characters: {},
         },
       };
       const PATCH = {
@@ -402,15 +403,18 @@ describe('registerIpcHandler', () => {
         get: ReturnType<typeof vi.fn>;
         patch: ReturnType<typeof vi.fn>;
       };
-      let hub: { subscribe: ReturnType<typeof vi.fn> };
+      let hub: {
+        subscribe: ReturnType<typeof vi.fn>;
+        batch: <T>(run: () => T) => T;
+      };
 
       beforeEach(() => {
         store = {
           get: vi.fn(() => SETTINGS_STATE),
           patch: vi.fn(() => ({ rev: 1, merged: false, saved: true })),
         };
-        hub = { subscribe: vi.fn(() => SNAPSHOT) };
-        registerSettingsHandlers(store as never);
+        hub = { subscribe: vi.fn(() => SNAPSHOT), batch: (run) => run() };
+        registerSettingsHandlers(store as never, hub);
         registerStageViewHandlers(hub as never);
         registerCanvasReadyHandler();
       });

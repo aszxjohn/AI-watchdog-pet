@@ -35,6 +35,7 @@ const SNAPSHOT: StageViewSnapshot = {
     packs: { installed: [] },
     packImport: { phase: 'idle' },
     packExport: { phase: 'idle' },
+    characters: {},
   },
 };
 

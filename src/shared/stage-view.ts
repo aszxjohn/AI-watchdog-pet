@@ -4,6 +4,13 @@ import {
   sessionKeySchema,
 } from './detection-events';
 import {
+  fixedParamsSchema,
+  paramValuesSchema,
+  wanderAreasSchema,
+  wanderSchema,
+} from './pack-api';
+import {
+  characterKeySchema,
   stagePackExportSchema,
   stagePackImportSchema,
   stagePacksSchema,
@@ -35,7 +42,15 @@ import { z } from './zod-setup';
  * - `packImport`: main/packs (Story 3.2), where the one import at a time
  *   is (reading, waiting for the user to confirm a replace, or its result);
  * - `packExport`: main/packs (Story 3.3), where the one export at a time
- *   is (saving, or its result).
+ *   is (saving, or its result);
+ * - `characters`: main/settings (Story 3.6), each character's effective
+ *   parameters and fixed parameters (AD-23), for every character of every
+ *   installed pack that fits this stage, 上場 or not, in the pool or not.
+ *
+ * main/stage-view may publish what one change did to several sections as
+ * one delta (its batch(); a `settings:patch` runs in one), so a renderer
+ * never sees, say, new settings with the canvas they moved still in its
+ * old place.
  */
 
 /**
@@ -164,6 +179,54 @@ export const stageAdaptersSchema = z
     { message: 'adapter sources are unique' },
   );
 
+/**
+ * A character's fixed parameters as StageView carries them: FixedParams,
+ * its `areas` list read-only (main/settings hands out frozen values).
+ */
+export const stageFixedParamsSchema = fixedParamsSchema.extend({
+  wander: wanderSchema.extend({ areas: wanderAreasSchema.readonly() }),
+});
+
+export type StageFixedParams = z.infer<typeof stageFixedParamsSchema>;
+
+/**
+ * One character's effective values (AD-23): `params`, what the pack gets
+ * (each declared key once), and `fixed`, what the stage applies (never
+ * handed to the pack). A declared parameter named like a fixed one stays in
+ * `params`.
+ */
+export const stageCharacterSchema = z.strictObject({
+  params: paramValuesSchema,
+  fixed: stageFixedParamsSchema,
+});
+
+export type StageCharacter = z.infer<typeof stageCharacterSchema>;
+
+/**
+ * `characters`: character key → its effective values, keys sorted (in
+ * code-unit order). An own `__proto__` key is refused: zod would drop it
+ * from a record's output without an issue.
+ */
+export const stageCharactersSchema = z
+  .unknown()
+  .refine(
+    (record) =>
+      typeof record !== 'object' ||
+      record === null ||
+      !Object.hasOwn(record, '__proto__'),
+    { message: '__proto__ is not a key' },
+  )
+  .pipe(z.record(characterKeySchema, stageCharacterSchema))
+  .refine(
+    (characters) =>
+      Object.keys(characters).every(
+        (key, i, keys) => i === 0 || (keys[i - 1] as string) < key,
+      ),
+    { message: 'character keys are sorted' },
+  );
+
+export type StageCharacters = z.infer<typeof stageCharactersSchema>;
+
 export const stageViewSchema = z.strictObject({
   settings: settingsStateSchema,
   displays: stageDisplaysSchema,
@@ -176,6 +239,7 @@ export const stageViewSchema = z.strictObject({
   packs: stagePacksSchema,
   packImport: stagePackImportSchema,
   packExport: stagePackExportSchema,
+  characters: stageCharactersSchema,
 });
 
 export type StageView = z.infer<typeof stageViewSchema>;
@@ -217,6 +281,9 @@ export type StageViewPackImportSections = Pick<StageView, 'packImport'>;
 /** The section main/packs' exporter owns. */
 export type StageViewPackExportSections = Pick<StageView, 'packExport'>;
 
+/** The section main/settings' characters source owns (Story 3.6). */
+export type StageViewCharactersSections = Pick<StageView, 'characters'>;
+
 /** The answer to `stage-view:subscribe`: the whole view at `rev`. */
 export const stageViewSnapshotSchema = z.strictObject({
   rev: stageViewRevSchema,
@@ -243,6 +310,7 @@ export const stageViewSectionsSchema = z
     packs: stagePacksSchema.exactOptional(),
     packImport: stagePackImportSchema.exactOptional(),
     packExport: stagePackExportSchema.exactOptional(),
+    characters: stageCharactersSchema.exactOptional(),
   })
   .refine((sections) => Object.keys(sections).length > 0, {
     message: 'a delta carries at least one section',

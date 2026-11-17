@@ -16,7 +16,7 @@ type Listener = (...args: unknown[]) => void;
 interface ImporterOptions {
   readonly store: { fake: string };
   readonly inspect: unknown;
-  readonly install: unknown;
+  install(store: unknown, plan: unknown): unknown;
   chooseFile(): Promise<string | null>;
 }
 
@@ -76,6 +76,10 @@ const state = vi.hoisted(() => {
       | undefined,
     /** The build folder main.ts passed to handlePackProtocol. */
     packProtocolBuildDir: undefined as unknown,
+    /** The manifest reader main.ts passed to createCharacters. */
+    readManifest: undefined as
+      | ((packId: string, version: string) => unknown)
+      | undefined,
     /** What dialog.showSaveDialog was called with, and what it answers. */
     saveDialogCalls: [] as unknown[][],
     saveDialogResult: { canceled: true, filePath: '' } as {
@@ -139,6 +143,7 @@ const state = vi.hoisted(() => {
       s.removeHandler = undefined;
       s.sandboxHandlers = undefined;
       s.packProtocolBuildDir = undefined;
+      s.readManifest = undefined;
       s.saveDialogCalls = [];
       s.saveDialogResult = { canceled: true, filePath: '' };
       s.dialogCalls = [];
@@ -314,7 +319,44 @@ vi.mock('../../src/main/pool/assign', () => ({
 vi.mock('../../src/main/packs/store', () => ({
   loadPacks: (options: { dir: string }) => {
     state.order.push(`loadPacks ${options.dir.replaceAll('\\', '/')}`);
-    return { fake: 'packs' };
+    // `dir` is not enumerable, so the recorded sources stay as they were.
+    return Object.defineProperty({ fake: 'packs' }, 'dir', {
+      value: options.dir.replaceAll('\\', '/'),
+      enumerable: false,
+    });
+  },
+}));
+
+vi.mock('../../src/main/packs/install', () => ({
+  installPack: (store: { fake: string }, plan: { packId: string }) => {
+    state.order.push(`installPack ${store.fake} ${plan.packId}`);
+    return { ok: true, packId: plan.packId, version: '1.0.0' };
+  },
+}));
+
+vi.mock('../../src/main/packs/manifest', () => ({
+  readInstalledManifest: (dir: string, packId: string, version: string) => {
+    state.order.push(`readInstalledManifest ${dir} ${packId} ${version}`);
+    return { ok: false, code: 'unreadable', detail: 'ENOENT' };
+  },
+}));
+
+vi.mock('../../src/main/settings/characters', () => ({
+  createCharacters: (options: {
+    settings: { fake: string };
+    packs: { fake: string };
+    readManifest(packId: string, version: string): unknown;
+  }) => {
+    state.order.push(
+      `createCharacters settings=${options.settings.fake} packs=${options.packs.fake}`,
+    );
+    state.readManifest = options.readManifest;
+    return {
+      fake: 'characters',
+      watch: () => {
+        state.order.push('characters.watch');
+      },
+    };
   },
 }));
 
@@ -393,7 +435,14 @@ vi.mock('../../src/main/pool/ipc', () => ({
 }));
 
 vi.mock('../../src/main/settings/ipc', () => ({
-  registerSettingsHandlers: record('registerSettingsHandlers'),
+  registerSettingsHandlers: (
+    store: { fake: string },
+    stageView: { fake: string },
+  ) => {
+    state.order.push(
+      `registerSettingsHandlers ${store.fake} ${stageView.fake}`,
+    );
+  },
 }));
 
 vi.mock('../../src/main/stage-view/stage-view', () => ({
@@ -403,7 +452,17 @@ vi.mock('../../src/main/stage-view/stage-view', () => ({
         .map(([name, source]) => `${name}=${JSON.stringify(source)}`)
         .join(' ')}`,
     );
-    return { fake: 'stage-view' };
+    return {
+      fake: 'stage-view',
+      batch<T>(run: () => T): T {
+        state.order.push('stageView.batch begins');
+        try {
+          return run();
+        } finally {
+          state.order.push('stageView.batch ends');
+        }
+      },
+    };
   },
   registerStageViewHandlers: record('registerStageViewHandlers'),
 }));
@@ -728,10 +787,12 @@ describe('the primary instance', () => {
       'detection.onSynced',
       'createPackImporter packs',
       'createPackExporter packs',
-      'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} assigner={"fake":"assigner"} packs={"fake":"packs"} packImport={"fake":"importer"} packExport={"fake":"exporter"}',
+      'createCharacters settings=settings packs=packs',
+      'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} assigner={"fake":"assigner"} packs={"fake":"packs"} packImport={"fake":"importer"} packExport={"fake":"exporter"} characters={"fake":"characters"}',
+      'characters.watch',
       'assigner.watchPool',
       'registerIpcHandler app:get-version ["panels"]',
-      'registerSettingsHandlers',
+      'registerSettingsHandlers settings stage-view',
       'registerPoolHandlers pool',
       'registerPackHandlers importer exporter',
       'registerPackSandboxHandlers',
@@ -1137,12 +1198,17 @@ describe('the pack export and removal (Story 3.3)', () => {
     },
   );
 
-  it("移除: packs:remove removes from main/packs' store with removePack", async () => {
+  it("移除: packs:remove removes from main/packs' store with removePack, in one StageView batch", async () => {
     await startMain();
     state.order = [];
 
     expect(state.removeHandler?.('sample-pack')).toStrictEqual({ ok: true });
-    expect(state.order).toStrictEqual(['removePack packs sample-pack']);
+    // In one StageView batch (Story 3.6): packs and characters, one delta.
+    expect(state.order).toStrictEqual([
+      'stageView.batch begins',
+      'removePack packs sample-pack',
+      'stageView.batch ends',
+    ]);
   });
 });
 
@@ -1162,6 +1228,20 @@ describe('the packs sandboxes (Story 3.5)', () => {
     expect(state.order).toStrictEqual([
       'readPackEntry packs sample-pack',
       'logPackEntry {"kind":"sandbox-destroyed","packId":"x","reason":"idle"}',
+    ]);
+  });
+
+  it("main/settings' characters read each installed manifest with main/packs' readInstalledManifest, from the packs folder (Story 3.6)", async () => {
+    await startMain();
+    state.order = [];
+
+    expect(state.readManifest?.('sample-pack', '1.2.0')).toStrictEqual({
+      ok: false,
+      code: 'unreadable',
+      detail: 'ENOENT',
+    });
+    expect(state.order).toStrictEqual([
+      'readInstalledManifest /fake/userData/packs sample-pack 1.2.0',
     ]);
   });
 
@@ -1211,14 +1291,25 @@ describe('the pack import entry points (Story 3.2)', () => {
   }
 
   describe('the importer', () => {
-    it('checks and installs with main/packs, in its store', async () => {
+    it('checks and installs with main/packs, in its store; an install runs in one StageView batch (Story 3.6)', async () => {
       await startMain();
-      // The copies main.ts imported (startMain reset the module registry).
+      // The copy main.ts imported (startMain reset the module registry).
       const { inspectPack } = await import('../../src/main/packs/inspect');
-      const { installPack } = await import('../../src/main/packs/install');
       expect(state.importerOptions?.store).toStrictEqual({ fake: 'packs' });
       expect(state.importerOptions?.inspect).toBe(inspectPack);
-      expect(state.importerOptions?.install).toBe(installPack);
+      state.order = [];
+
+      expect(
+        state.importerOptions?.install(
+          { fake: 'packs' },
+          { packId: 'sample-pack' },
+        ),
+      ).toStrictEqual({ ok: true, packId: 'sample-pack', version: '1.0.0' });
+      expect(state.order).toStrictEqual([
+        'stageView.batch begins',
+        'installPack packs sample-pack',
+        'stageView.batch ends',
+      ]);
     });
 
     it('選檔: the file dialog lists only .awpet files, one file, as a sheet on the panel window', async () => {

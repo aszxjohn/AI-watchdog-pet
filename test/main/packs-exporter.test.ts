@@ -431,6 +431,10 @@ describe('with the real store, export and removal (the contract test pack)', () 
       packs,
       packImport: importer,
       packExport: real,
+      characters: {
+        get: () => ({ characters: {} }),
+        onChange: () => () => {},
+      },
     });
     const subscriber = fake.createFakeWebContents(
       1,

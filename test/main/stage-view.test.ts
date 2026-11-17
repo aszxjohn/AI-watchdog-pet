@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { registerSettingsHandlers } from '../../src/main/settings/ipc';
 import {
   loadSettings,
   type SettingsStore,
@@ -16,12 +17,13 @@ import {
   type WindowsStageSource,
 } from '../../src/main/windows/stage-sources';
 import type { SessionKey } from '../../src/shared/detection-events';
-import { stageViewSubscribe } from '../../src/shared/ipc';
+import { settingsPatch, stageViewSubscribe } from '../../src/shared/ipc';
 import { SETTINGS_DEFAULTS } from '../../src/shared/settings';
 import {
   stageViewDeltaSchema,
   stageViewSnapshotSchema,
   type StageViewAssignerSections,
+  type StageViewCharactersSections,
   type StageViewPackExportSections,
   type StageViewPackImportSections,
   type StageViewPacksSections,
@@ -39,6 +41,7 @@ let pool: ReturnType<typeof fakePool>;
 let packs: ReturnType<typeof fakePacks>;
 let packImport: ReturnType<typeof fakePackImport>;
 let packExport: ReturnType<typeof fakePackExport>;
+let characters: ReturnType<typeof fakeCharacters>;
 let hub: StageViewHub;
 
 /**
@@ -186,6 +189,33 @@ function fakePackExport() {
   };
 }
 
+/**
+ * A stand-in for main/settings' characters source (Story 3.6): update()
+ * replaces its section and tells the listeners, as the source does (any
+ * value, so a test can hand StageView one that fails the schema).
+ */
+function fakeCharacters() {
+  let sections: StageViewCharactersSections = { characters: {} };
+  const listeners = new Set<(changed: StageViewCharactersSections) => void>();
+  return {
+    get: () => sections,
+    onChange(listener: (changed: StageViewCharactersSections) => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    update(next: unknown) {
+      sections = {
+        characters: next as StageViewCharactersSections['characters'],
+      };
+      for (const listener of listeners) {
+        listener(sections);
+      }
+    },
+  };
+}
+
 /** main/windows' sections before ready. */
 const WINDOWS_BEFORE_READY = {
   displays: [],
@@ -204,6 +234,8 @@ const NO_PACKS = { packs: { installed: [] } };
 const NO_PACK_IMPORT = { packImport: { phase: 'idle' } };
 /** main/packs' exporter before any export. */
 const NO_PACK_EXPORT = { packExport: { phase: 'idle' } };
+/** main/settings' characters with no pack installed. */
+const NO_CHARACTERS = { characters: {} };
 const PACK = {
   id: 'sample-pack',
   name: '範例包',
@@ -248,6 +280,7 @@ beforeEach(() => {
   packs = fakePacks();
   packImport = fakePackImport();
   packExport = fakePackExport();
+  characters = fakeCharacters();
   hub = createStageView({
     settings,
     windows,
@@ -255,6 +288,7 @@ beforeEach(() => {
     packs,
     packImport,
     packExport,
+    characters,
   });
 });
 
@@ -290,6 +324,7 @@ describe('StageView composition', () => {
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
+        ...NO_CHARACTERS,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(snapshot).success).toBe(true);
@@ -346,6 +381,7 @@ describe('StageView composition', () => {
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
+        ...NO_CHARACTERS,
       },
     });
   });
@@ -361,6 +397,7 @@ describe('StageView composition', () => {
       packs,
       packImport,
       packExport,
+      characters,
     });
 
     expect(later.snapshot().rev).toBe(0);
@@ -404,6 +441,7 @@ describe("main/windows' sections", () => {
       packs,
       packImport,
       packExport,
+      characters,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -419,6 +457,7 @@ describe("main/windows' sections", () => {
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
+        ...NO_CHARACTERS,
       },
     });
   });
@@ -453,6 +492,7 @@ describe("main/windows' sections", () => {
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
+        ...NO_CHARACTERS,
       },
     });
   });
@@ -511,6 +551,7 @@ describe("main/detection's sections", () => {
       packs,
       packImport,
       packExport,
+      characters,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -525,6 +566,7 @@ describe("main/detection's sections", () => {
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
+        ...NO_CHARACTERS,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -576,6 +618,7 @@ describe("main/pool's section", () => {
       packs,
       packImport,
       packExport,
+      characters,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -589,6 +632,7 @@ describe("main/pool's section", () => {
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
+        ...NO_CHARACTERS,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -673,6 +717,7 @@ describe("main/pool's assigner: the actors section (Story 3.4)", () => {
       packs,
       packImport,
       packExport,
+      characters,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -687,6 +732,7 @@ describe("main/pool's assigner: the actors section (Story 3.4)", () => {
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
+        ...NO_CHARACTERS,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -775,6 +821,7 @@ describe("main/packs' section", () => {
       packs,
       packImport,
       packExport,
+      characters,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -788,6 +835,7 @@ describe("main/packs' section", () => {
         packs: { installed: [PACK] },
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
+        ...NO_CHARACTERS,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -852,6 +900,7 @@ describe("main/packs' importer section", () => {
       packs,
       packImport,
       packExport,
+      characters,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -865,6 +914,7 @@ describe("main/packs' importer section", () => {
         ...NO_PACKS,
         packImport: CONFIRM,
         ...NO_PACK_EXPORT,
+        ...NO_CHARACTERS,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -946,6 +996,7 @@ describe("main/packs' exporter section", () => {
       packs,
       packImport,
       packExport,
+      characters,
     });
 
     expect(later.snapshot()).toStrictEqual({
@@ -959,6 +1010,7 @@ describe("main/packs' exporter section", () => {
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         packExport: SAVING,
+        ...NO_CHARACTERS,
       },
     });
     expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
@@ -1022,6 +1074,355 @@ describe("main/packs' exporter section", () => {
       ]);
     },
   );
+});
+
+describe("main/settings' characters section (Story 3.6)", () => {
+  const CHARACTERS = {
+    'sample-pack/probe-a': {
+      params: { glow: true },
+      fixed: {
+        scale: 1,
+        inPool: true,
+        badges: true,
+        wander: {
+          enabled: true,
+          areas: [6, 7, 8],
+          activity: 'medium',
+          speed: 'medium',
+        },
+      },
+    },
+  };
+
+  it('starts from what the characters source has', () => {
+    characters.update(CHARACTERS);
+
+    const later = createStageView({
+      settings,
+      windows,
+      assigner,
+      packs,
+      packImport,
+      packExport,
+      characters,
+    });
+
+    expect(later.snapshot().view.characters).toStrictEqual(CHARACTERS);
+    expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
+      true,
+    );
+  });
+
+  it('pushes one delta per change, carrying the characters section only, on the shared rev', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    setDisplay(2);
+    characters.update(CHARACTERS);
+
+    expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
+      expect.objectContaining({ rev: 1 }),
+      { rev: 2, sections: { characters: CHARACTERS } },
+    ]);
+    expect(hub.snapshot().view.characters).toStrictEqual(CHARACTERS);
+  });
+
+  it('drops a characters section that fails the schema before moving rev: keys out of order', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+    const one = CHARACTERS['sample-pack/probe-a'];
+
+    characters.update({
+      'sample-pack/probe-b': one,
+      'sample-pack/probe-a': one,
+    });
+
+    expect(subscriber.sent).toStrictEqual([]);
+    expect(hub.snapshot().rev).toBe(0);
+    expect(
+      vi
+        .mocked(console.error)
+        .mock.calls.map((call: unknown[]) => String(call[0])),
+    ).toStrictEqual([
+      '[stage-view] dropped a delta that fails the schema (sections: characters; fields: characters); rev stays 0',
+    ]);
+  });
+});
+
+describe('batch (Story 3.6, Epic 1 retro R10)', () => {
+  it('sends what the sources report during a batch as one delta, rev + 1, when it ends; the snapshot is the old view until then', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    const answer = hub.batch(() => {
+      setDisplay(DISPLAY.id);
+      windows.update({ displays: [DISPLAY], canvas: CANVAS });
+      detection.update({ sessions: [DEMO_SESSION] });
+      expect(subscriber.sent).toStrictEqual([]);
+      expect(hub.snapshot().rev).toBe(0);
+      expect(hub.snapshot().view.canvas).toBeNull();
+      return 'done';
+    });
+
+    expect(answer).toBe('done');
+    expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
+      {
+        rev: 1,
+        sections: {
+          settings: settings.get(),
+          displays: [DISPLAY],
+          canvas: CANVAS,
+          sessions: [DEMO_SESSION],
+        },
+      },
+    ]);
+    expect(
+      stageViewDeltaSchema.safeParse(subscriber.sent[0]?.args[0]).success,
+    ).toBe(true);
+    expect(hub.snapshot()).toStrictEqual({
+      rev: 1,
+      view: {
+        settings: settings.get(),
+        displays: [DISPLAY],
+        canvas: CANVAS,
+        power: WINDOWS_BEFORE_READY.power,
+        sessions: [DEMO_SESSION],
+        adapters: [],
+        ...NO_POOL,
+        ...NO_ACTORS,
+        ...NO_PACKS,
+        ...NO_PACK_IMPORT,
+        ...NO_PACK_EXPORT,
+        ...NO_CHARACTERS,
+      },
+    });
+  });
+
+  it('keeps the latest report of a section reported twice in one batch', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+    const moved = { ...CANVAS, fallback: true };
+
+    hub.batch(() => {
+      windows.update({ canvas: CANVAS });
+      windows.update({ canvas: moved });
+      setDisplay(1);
+      setDisplay(2);
+    });
+
+    expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
+      {
+        rev: 1,
+        sections: {
+          canvas: moved,
+          settings: {
+            rev: 2,
+            values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 2 },
+          },
+        },
+      },
+    ]);
+  });
+
+  it('joins a batch inside a batch to the outer one: one delta when the outer one ends', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    hub.batch(() => {
+      setDisplay(1);
+      hub.batch(() => {
+        windows.update({ canvas: CANVAS });
+      });
+      expect(subscriber.sent).toStrictEqual([]);
+      packs.update([PACK]);
+    });
+
+    expect(
+      subscriber.sent.map(({ args }) =>
+        Object.keys((args[0] as { sections: object }).sections).sort(),
+      ),
+    ).toStrictEqual([['canvas', 'packs', 'settings']]);
+    expect(hub.snapshot().rev).toBe(1);
+  });
+
+  it('sends nothing for a batch in which nothing changed', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    hub.batch(() => {
+      setDisplay(null);
+      windows.update({ canvas: null });
+    });
+    hub.batch(() => undefined);
+
+    expect(subscriber.sent).toStrictEqual([]);
+    expect(hub.snapshot().rev).toBe(0);
+  });
+
+  it('ends a batch whose run throws: what was reported is published as one delta, the error goes on, and later changes go out on their own', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    expect(() =>
+      hub.batch(() => {
+        setDisplay(1);
+        windows.update({ canvas: CANVAS });
+        throw new Error('patch bug');
+      }),
+    ).toThrow('patch bug');
+    setDisplay(2);
+
+    expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
+      {
+        rev: 1,
+        sections: {
+          settings: {
+            rev: 1,
+            values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 1 },
+          },
+          canvas: CANVAS,
+        },
+      },
+      {
+        rev: 2,
+        sections: {
+          settings: {
+            rev: 2,
+            values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 2 },
+          },
+        },
+      },
+    ]);
+  });
+
+  it('ends an inner batch that throws without ending the outer one', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    hub.batch(() => {
+      expect(() =>
+        hub.batch(() => {
+          setDisplay(1);
+          throw new Error('inner');
+        }),
+      ).toThrow('inner');
+      expect(subscriber.sent).toStrictEqual([]);
+      windows.update({ canvas: CANVAS });
+    });
+
+    expect(subscriber.sent).toHaveLength(1);
+    expect(hub.snapshot().rev).toBe(1);
+  });
+
+  it('checks the whole batch once; when it fails, sends each section on its own: the good ones go out, the bad one is dropped with one error line', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    hub.batch(() => {
+      setDisplay(1);
+      windows.update({ canvas: CANVAS });
+      detection.update({ sessions: [{ ...DEMO_SESSION, state: 'sleeping' }] });
+    });
+
+    expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
+      {
+        rev: 1,
+        sections: {
+          settings: {
+            rev: 1,
+            values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 1 },
+          },
+        },
+      },
+      { rev: 2, sections: { canvas: CANVAS } },
+    ]);
+    expect(hub.snapshot().rev).toBe(2);
+    expect(hub.snapshot().view.canvas).toStrictEqual(CANVAS);
+    expect(hub.snapshot().view.sessions).toStrictEqual([]);
+    expect(
+      vi
+        .mocked(console.error)
+        .mock.calls.map((call: unknown[]) => String(call[0])),
+    ).toStrictEqual([
+      '[stage-view] dropped a delta that fails the schema (sections: sessions; fields: sessions.0.state); rev stays 2',
+    ]);
+  });
+
+  it('logs and throws when run answers a promise; what it did before answering still goes out as one delta', async () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    expect(() =>
+      hub.batch(async () => {
+        setDisplay(1);
+        await Promise.resolve();
+        windows.update({ canvas: CANVAS });
+      }),
+    ).toThrow(TypeError);
+    expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
+      {
+        rev: 1,
+        sections: {
+          settings: {
+            rev: 1,
+            values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 1 },
+          },
+        },
+      },
+    ]);
+    expect(
+      vi
+        .mocked(console.error)
+        .mock.calls.map((call: unknown[]) => String(call[0])),
+    ).toStrictEqual([
+      '[stage-view] a batch was handed a run that answered a promise; only what it did before answering is in the batch',
+    ]);
+
+    // The rest of the run, after the batch, goes out on its own.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(subscriber.sent.map(({ args }) => args[0])).toHaveLength(2);
+    expect(hub.snapshot().view.canvas).toStrictEqual(CANVAS);
+  });
+
+  it('a settings:patch that throws inside its batch (at the IPC level): the reply is handler-failed, and the sections gathered so far go out as one delta, rev + 1', async () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+    registerSettingsHandlers(
+      {
+        get: () => settings.get(),
+        patch(patch) {
+          settings.patch(patch);
+          windows.update({ canvas: CANVAS });
+          throw new Error('patch bug');
+        },
+      },
+      hub,
+    );
+
+    const reply = await fake.ipcRenderer.invoke(settingsPatch.channel, {
+      baseRev: 0,
+      ops: [{ op: 'set', field: 'canvasDisplayId', value: 1 }],
+    });
+
+    expect(reply).toMatchObject({
+      ok: false,
+      error: { code: 'handler-failed' },
+    });
+    expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
+      {
+        rev: 1,
+        sections: {
+          settings: {
+            rev: 1,
+            values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 1 },
+          },
+          canvas: CANVAS,
+        },
+      },
+    ]);
+    expect(hub.snapshot().rev).toBe(1);
+  });
 });
 
 describe('a delta that fails the schema (I/O matrix: 壞增量)', () => {
@@ -1139,6 +1540,7 @@ describe('subscribers', () => {
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
+        ...NO_CHARACTERS,
       },
     });
     expect(hub.subscriberCount()).toBe(1);
