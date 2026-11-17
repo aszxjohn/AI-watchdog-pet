@@ -333,7 +333,7 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
 
 畫面上的每一隻是一個 **actor**，代表「一個 session 配上一個角色」：
 
-- `actorId` 是不透明字串（1～64 字元），本次執行期間不重複使用。
+- `actorId` 是不透明字串（1～64 字元），本次執行期間不重複使用，也一定不是 `__proto__`。舞台重新啟動後，同一個 session 可能沿用原本的 `actorId`，這時 `stage.random(actorId)` 也可能沿用同一個種子。
 - 同一個角色可以同時有好幾個 actor，所以包的內部狀態要以 `actorId` 為 key；`characterId` 只用來挑外觀與參數。
 - 換角色時，舊 actor 結束、新 actor 產生。
 

@@ -204,6 +204,7 @@ describe('settings and StageView contracts', () => {
       sessions: [],
       adapters: [],
       pool: { released: [] },
+      actors: [],
       packs: { installed: [] },
       packImport: { phase: 'idle' },
       packExport: { phase: 'idle' },

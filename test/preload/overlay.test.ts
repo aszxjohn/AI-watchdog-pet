@@ -9,6 +9,7 @@ import { createPackImporter } from '../../src/main/packs/importer';
 import { inspectPack } from '../../src/main/packs/inspect';
 import { installPack } from '../../src/main/packs/install';
 import { loadPacks } from '../../src/main/packs/store';
+import { createAssigner } from '../../src/main/pool/assign';
 import { loadPool } from '../../src/main/pool/store';
 import { registerSettingsHandlers } from '../../src/main/settings/ipc';
 import {
@@ -88,6 +89,10 @@ function startMain() {
   const detection = createDetection({ settings });
   const pool = loadPool({ file: path.join(dir, 'assignments.json') });
   const packs = loadPacks({ dir: path.join(dir, 'packs') });
+  const assigner = createAssigner({ detection, store: pool, settings, packs });
+  detection.onSynced((reported, unconfirmed) => {
+    assigner.sync(reported, unconfirmed);
+  });
   const packImport = createPackImporter({
     store: packs,
     inspect: inspectPack,
@@ -103,13 +108,13 @@ function startMain() {
     createStageView({
       settings,
       windows,
-      detection,
-      pool,
+      assigner,
       packs,
       packImport,
       packExport,
     }),
   );
+  assigner.watchPool();
   registerCanvasReadyHandler();
   return { settings, windows };
 }
@@ -152,6 +157,7 @@ describe('overlay preload', () => {
         sessions: [],
         adapters: [],
         pool: { released: [] },
+        actors: [],
         packs: { installed: [] },
         packImport: { phase: 'idle' },
         packExport: { phase: 'idle' },

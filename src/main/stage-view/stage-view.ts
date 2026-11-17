@@ -1,10 +1,11 @@
 /**
  * main/stage-view (AD-20): composes StageView from the modules that own the
  * data (main/settings: `settings`; main/windows: `displays`, `canvas`,
- * `power`; main/detection: `sessions`, `adapters`; main/pool: `pool`;
- * main/packs: `packs` from its store, `packImport` from its importer,
- * `packExport` from its exporter) and owns nothing but its own rev and the
- * subscriber list.
+ * `power`; main/pool's assigner: `pool` and `actors`, with main/detection's
+ * `sessions` and `adapters` passed on through it, Story 3.4; main/packs:
+ * `packs` from its store, `packImport` from its importer, `packExport`
+ * from its exporter) and owns nothing but its own rev and the subscriber
+ * list.
  *
  * - Every change of a source becomes one delta, `rev` + 1, pushed to every
  *   subscriber through pushToRenderer. A delta replaces whole sections and
@@ -25,11 +26,10 @@ import {
   applyStageViewDelta,
   stageViewSectionsSchema,
   type StageView,
-  type StageViewDetectionSections,
+  type StageViewAssignerSections,
   type StageViewPackExportSections,
   type StageViewPackImportSections,
   type StageViewPacksSections,
-  type StageViewPoolSections,
   type StageViewSections,
   type StageViewSnapshot,
   type StageViewWindowsSections,
@@ -60,19 +60,16 @@ export interface StageViewSources {
     ): () => void;
   };
   /**
-   * main/detection. `onChange` hears only the sections that changed (never
-   * an empty object).
+   * main/pool's assigner: its `pool` and `actors`, and main/detection's
+   * `sessions` and `adapters` passed on, so a change of a session and the
+   * change of `actors` it causes are one delta. `onChange` hears only the
+   * sections that changed (never an empty object).
    */
-  readonly detection: {
-    get(): StageViewDetectionSections;
+  readonly assigner: {
+    get(): StageViewAssignerSections;
     onChange(
-      listener: (sections: Partial<StageViewDetectionSections>) => void,
+      listener: (sections: Partial<StageViewAssignerSections>) => void,
     ): () => void;
-  };
-  /** main/pool. `onChange` hears its one section after each change. */
-  readonly pool: {
-    get(): StageViewPoolSections;
-    onChange(listener: (sections: StageViewPoolSections) => void): () => void;
   };
   /** main/packs' store. `onChange` hears its one section after each change. */
   readonly packs: {
@@ -140,8 +137,7 @@ export function createStageView(sources: StageViewSources): StageViewHub {
   let view: StageView = {
     settings: sources.settings.get(),
     ...sources.windows.get(),
-    ...sources.detection.get(),
-    ...sources.pool.get(),
+    ...sources.assigner.get(),
     ...sources.packs.get(),
     ...sources.packImport.get(),
     ...sources.packExport.get(),
@@ -188,10 +184,7 @@ export function createStageView(sources: StageViewSources): StageViewHub {
   sources.windows.onChange((sections) => {
     publish(sections);
   });
-  sources.detection.onChange((sections) => {
-    publish(sections);
-  });
-  sources.pool.onChange((sections) => {
+  sources.assigner.onChange((sections) => {
     publish(sections);
   });
   sources.packs.onChange((sections) => {

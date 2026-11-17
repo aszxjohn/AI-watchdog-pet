@@ -131,7 +131,11 @@ describe('loading assignments.json', () => {
   });
 
   it('I/O matrix 啟動恢復: the released keys of a valid file are released from the start, sorted; the file is left as it was', () => {
-    const text = writeFile({ schemaVersion: 1, released: [B, A] });
+    const text = writeFile({
+      schemaVersion: 2,
+      released: [B, A],
+      assignments: [],
+    });
 
     const store = load();
 
@@ -141,12 +145,12 @@ describe('loading assignments.json', () => {
     expect(files()).toStrictEqual(['assignments.json']);
     expect(fs.readFileSync(file, 'utf8')).toBe(text);
     expect(poolLines()).toStrictEqual([
-      '[pool] loaded assignments.json: 2 released',
+      '[pool] loaded assignments.json: 2 released, 0 assignments',
     ]);
   });
 
   it('reads a key listed twice once', () => {
-    writeFile({ schemaVersion: 1, released: [A, A, DEMO] });
+    writeFile({ schemaVersion: 2, released: [A, A, DEMO], assignments: [] });
 
     expect(releasedOf(load())).toStrictEqual([A, DEMO]);
   });
@@ -154,7 +158,7 @@ describe('loading assignments.json', () => {
   it('reads a file saved with a UTF-8 BOM', () => {
     writeFile(
       String.fromCharCode(0xfeff) +
-        JSON.stringify({ schemaVersion: 1, released: [A] }),
+        JSON.stringify({ schemaVersion: 2, released: [A], assignments: [] }),
     );
 
     const store = load();
@@ -182,8 +186,8 @@ describe('loading assignments.json', () => {
       ],
       [
         'a newer schemaVersion',
-        '{"schemaVersion": 2, "released": []}',
-        'schemaVersion 2 is newer than this build supports (1)',
+        '{"schemaVersion": 3, "released": [], "assignments": []}',
+        'schemaVersion 3 is newer than this build supports (2)',
       ],
       [
         'no released list',
@@ -191,9 +195,19 @@ describe('loading assignments.json', () => {
         'does not match the schema (fields: released)',
       ],
       [
-        'a key of an unknown source',
-        '{"schemaVersion": 1, "released": ["demo:1", "vim:1"]}',
-        'does not match the schema (fields: released.1)',
+        'no assignments list (Story 3.4)',
+        '{"schemaVersion": 2, "released": []}',
+        'does not match the schema (fields: assignments)',
+      ],
+      [
+        'assignments that are not a list (Story 3.4)',
+        '{"schemaVersion": 2, "released": [], "assignments": {}}',
+        'does not match the schema (fields: assignments)',
+      ],
+      [
+        'released keys that are not a list',
+        '{"schemaVersion": 2, "released": "demo:1", "assignments": []}',
+        'does not match the schema (fields: released)',
       ],
       [
         'an unknown field',
@@ -245,7 +259,11 @@ describe('loading assignments.json', () => {
       vi.advanceTimersByTime(POOL_FLUSH_DEBOUNCE_MS);
 
       expect(files()).toStrictEqual(['assignments.json', BACKUP]);
-      expect(readFile()).toStrictEqual({ schemaVersion: 1, released: [A] });
+      expect(readFile()).toStrictEqual({
+        schemaVersion: 2,
+        released: [A],
+        assignments: [],
+      });
     });
 
     it('is left alone, and never written this run, when it cannot be renamed', () => {
@@ -269,7 +287,11 @@ describe('loading assignments.json', () => {
   });
 
   it('starts with nothing released, and never writes this run, when the file cannot be read', () => {
-    const text = writeFile({ schemaVersion: 1, released: [A] });
+    const text = writeFile({
+      schemaVersion: 2,
+      released: [A],
+      assignments: [],
+    });
     const store = load({ fs: fsWith({ readFileSync: failWith('EACCES') }) });
 
     expect(store.get()).toStrictEqual({ pool: { released: [] } });
@@ -287,24 +309,27 @@ describe('loading assignments.json', () => {
   });
 
   describe('migrations', () => {
-    it('has none while the file is at version 1', () => {
-      expect(POOL_MIGRATIONS).toStrictEqual({});
+    it('has one step, 1 → 2 (Story 3.4): the released keys stay, with no assignment', () => {
+      expect(Object.keys(POOL_MIGRATIONS)).toStrictEqual(['1']);
       expect(Object.isFrozen(POOL_MIGRATIONS)).toBe(true);
+      expect(
+        POOL_MIGRATIONS[1]?.({ schemaVersion: 1, released: [A] }),
+      ).toStrictEqual({ schemaVersion: 1, released: [A], assignments: [] });
     });
 
     it('runs each step up to the current version, then reads the result', () => {
-      writeFile({ schemaVersion: 1, hidden: [B, A] });
+      writeFile({ schemaVersion: 2, hidden: [B, A], assignments: [] });
 
       const store = load({
-        schemaVersion: 2,
+        schemaVersion: 3,
         migrations: {
-          1: ({ hidden, ...rest }) => ({ ...rest, released: hidden }),
+          2: ({ hidden, ...rest }) => ({ ...rest, released: hidden }),
         },
       });
 
       expect(releasedOf(store)).toStrictEqual([A, B]);
       expect(poolLines('info')).toContain(
-        '[pool] migrated assignments.json from schemaVersion 1 to 2',
+        '[pool] migrated assignments.json from schemaVersion 2 to 3',
       );
       expect(files()).toStrictEqual(['assignments.json']);
     });
@@ -345,7 +370,7 @@ describe('releasing and showing again', () => {
   });
 
   it('I/O matrix 改回顯示: the key leaves the pool section', () => {
-    writeFile({ schemaVersion: 1, released: [A, B] });
+    writeFile({ schemaVersion: 2, released: [A, B], assignments: [] });
     const store = load();
     const onChange = vi.fn();
     store.onChange(onChange);
@@ -362,7 +387,7 @@ describe('releasing and showing again', () => {
   });
 
   it('I/O matrix 沒有變化: releasing a released key, or showing a shown one, changes nothing: no change heard, nothing written', () => {
-    writeFile({ schemaVersion: 1, released: [A] });
+    writeFile({ schemaVersion: 2, released: [A], assignments: [] });
     const counting = countingFs();
     const store = load({ fs: counting.fs });
     const onChange = vi.fn();
@@ -385,7 +410,11 @@ describe('releasing and showing again', () => {
     store.setReleased(DEMO, true);
     store.flushSync();
 
-    expect(readFile()).toStrictEqual({ schemaVersion: 1, released: [DEMO] });
+    expect(readFile()).toStrictEqual({
+      schemaVersion: 2,
+      released: [DEMO],
+      assignments: [],
+    });
   });
 
   it('I/O matrix 壞輸入: throws on a key that fails the shared schema, changing nothing', () => {
@@ -450,7 +479,11 @@ describe('writing assignments.json', () => {
       file,
     );
     const written = readFile();
-    expect(written).toStrictEqual({ schemaVersion: 1, released: [B, DEMO] });
+    expect(written).toStrictEqual({
+      schemaVersion: 2,
+      released: [B, DEMO],
+      assignments: [],
+    });
     expect(poolFileSchema.safeParse(written).success).toBe(true);
     expect(files()).toStrictEqual(['assignments.json']);
 
@@ -468,7 +501,11 @@ describe('writing assignments.json', () => {
     vi.advanceTimersByTime(POOL_FLUSH_DEBOUNCE_MS);
 
     expect(counting.writeFileSync).toHaveBeenCalledTimes(2);
-    expect(readFile()).toStrictEqual({ schemaVersion: 1, released: [] });
+    expect(readFile()).toStrictEqual({
+      schemaVersion: 2,
+      released: [],
+      assignments: [],
+    });
   });
 
   it('I/O matrix 寫入失敗: a failed rename is logged, its temp file removed, the keys kept in memory; the next flush writes them', () => {
@@ -497,7 +534,11 @@ describe('writing assignments.json', () => {
     store.flushSync();
 
     expect(files()).toStrictEqual(['assignments.json']);
-    expect(readFile()).toStrictEqual({ schemaVersion: 1, released: [A] });
+    expect(readFile()).toStrictEqual({
+      schemaVersion: 2,
+      released: [A],
+      assignments: [],
+    });
   });
 
   it('flushSync only logs when the write fails', () => {
@@ -530,7 +571,11 @@ describe('writing assignments.json', () => {
 
     app.emit('will-quit');
 
-    expect(readFile()).toStrictEqual({ schemaVersion: 1, released: [A] });
+    expect(readFile()).toStrictEqual({
+      schemaVersion: 2,
+      released: [A],
+      assignments: [],
+    });
     vi.runAllTimers();
     expect(files()).toStrictEqual(['assignments.json']);
   });
@@ -538,7 +583,7 @@ describe('writing assignments.json', () => {
 
 describe('the start-up sweep', () => {
   it('I/O matrix 啟動清理: keeps the released keys reported since start, drops the rest from memory and the file; logged by count', () => {
-    writeFile({ schemaVersion: 1, released: [A, B] });
+    writeFile({ schemaVersion: 2, released: [A, B], assignments: [] });
     const store = load();
     const onChange = vi.fn();
     store.onChange(onChange);
@@ -553,11 +598,15 @@ describe('the start-up sweep', () => {
       '[pool] start-up sweep: kept 1, dropped 1 (2 sessions reported)',
     );
     vi.advanceTimersByTime(POOL_FLUSH_DEBOUNCE_MS);
-    expect(readFile()).toStrictEqual({ schemaVersion: 1, released: [A] });
+    expect(readFile()).toStrictEqual({
+      schemaVersion: 2,
+      released: [A],
+      assignments: [],
+    });
   });
 
   it('changes nothing, and writes nothing, when every released key was reported', () => {
-    writeFile({ schemaVersion: 1, released: [A] });
+    writeFile({ schemaVersion: 2, released: [A], assignments: [] });
     const counting = countingFs();
     const store = load({ fs: counting.fs });
     const onChange = vi.fn();
@@ -572,7 +621,7 @@ describe('the start-up sweep', () => {
   });
 
   it('runs once: a later sweep does nothing', () => {
-    writeFile({ schemaVersion: 1, released: [A, B] });
+    writeFile({ schemaVersion: 2, released: [A, B], assignments: [] });
     const store = load();
 
     store.sweep(new Set([A, B]), new Set());
@@ -582,19 +631,27 @@ describe('the start-up sweep', () => {
   });
 
   it('a demo session released last run is dropped: demo mode is off at start, so it is not reported', () => {
-    writeFile({ schemaVersion: 1, released: [A, DEMO] });
+    writeFile({ schemaVersion: 2, released: [A, DEMO], assignments: [] });
     const store = load();
 
     store.sweep(new Set([A]), new Set());
     store.flushSync();
 
-    expect(readFile()).toStrictEqual({ schemaVersion: 1, released: [A] });
+    expect(readFile()).toStrictEqual({
+      schemaVersion: 2,
+      released: [A],
+      assignments: [],
+    });
   });
 
   it('keeps every released key of an unconfirmed source, reported or not; logs counts and source codes only', () => {
     const C: SessionKey = 'cursor:00000000-0000-4000-8000-00000000000c';
     const D: SessionKey = 'cursor:00000000-0000-4000-8000-00000000000d';
-    writeFile({ schemaVersion: 1, released: [A, B, C, D, DEMO] });
+    writeFile({
+      schemaVersion: 2,
+      released: [A, B, C, D, DEMO],
+      assignments: [],
+    });
     const store = load();
 
     store.sweep(new Set([A, C]), new Set(['cursor']));
@@ -607,7 +664,7 @@ describe('the start-up sweep', () => {
   });
 
   it('with no unconfirmed source the log line reads as before', () => {
-    writeFile({ schemaVersion: 1, released: [A] });
+    writeFile({ schemaVersion: 2, released: [A], assignments: [] });
     const store = load();
 
     store.sweep(new Set(), new Set());
@@ -675,7 +732,7 @@ describe('with main/detection, as main.ts wires them', () => {
   it('I/O matrix 啟動恢復 + 啟動清理: A, replayed at start, is released as soon as it shows; B, not reported, is swept at sync', () => {
     const a = 'codex:a' as const;
     const b = 'codex:b' as const;
-    writeFile({ schemaVersion: 1, released: [a, b] });
+    writeFile({ schemaVersion: 2, released: [a, b], assignments: [] });
     const { clock, detection, store, emit } = wire();
 
     emit([codexEvent('a', 'session.start', clock.wall() - MINUTE, true)]);
@@ -688,11 +745,19 @@ describe('with main/detection, as main.ts wires them', () => {
     ]);
     expect(releasedOf(store)).toStrictEqual([a]);
     store.flushSync();
-    expect(readFile()).toStrictEqual({ schemaVersion: 1, released: [a] });
+    expect(readFile()).toStrictEqual({
+      schemaVersion: 2,
+      released: [a],
+      assignments: [],
+    });
   });
 
   it(`I/O matrix 同步逾時: an adapter that never sends sync.ready gets the sweep at syncTimeoutMs (${SETTINGS_DEFAULTS.syncTimeoutMs} ms), which keeps its source's releases (Epic 2 close-out B1)`, () => {
-    writeFile({ schemaVersion: 1, released: ['codex:a', 'codex:b'] });
+    writeFile({
+      schemaVersion: 2,
+      released: ['codex:a', 'codex:b'],
+      assignments: [],
+    });
     const { clock, store, emit } = wire();
     emit([codexEvent('b', 'session.start', clock.wall(), true)], 'ok');
 
@@ -768,8 +833,9 @@ describe('I/O matrix', () => {
    */
   function wire({ cursorFails = false } = {}) {
     writeFile({
-      schemaVersion: 1,
+      schemaVersion: 2,
       released: [CLAUDE_A, CLAUDE_B, CURSOR_C, CURSOR_D],
+      assignments: [],
     });
     const clock = fakeClock();
     const contexts = new Map<SourceCode, AdapterContext>();
@@ -856,5 +922,253 @@ describe('I/O matrix', () => {
       detection.get().adapters.find((adapter) => adapter.source === 'cursor')
         ?.health,
     ).toBe('degraded');
+  });
+});
+
+describe('I/O matrix', () => {
+  const ASSIGNED_A = {
+    sessionKey: A,
+    actorId: 'actor-a',
+    characterKey: 'sample-pack/probe-one',
+  };
+  const ASSIGNED_DEMO = {
+    sessionKey: DEMO,
+    actorId: 'actor-demo',
+    characterKey: 'sample-pack/probe-two',
+  };
+
+  it('舊檔: a version-1 file is migrated to 2: its released keys kept, no assignment; the next write is version 2', () => {
+    const text = writeFile({ schemaVersion: 1, released: [B, A] });
+
+    const store = load();
+
+    expect(releasedOf(store)).toStrictEqual([A, B]);
+    expect(store.assignments()).toStrictEqual([]);
+    expect(poolLines('info')).toStrictEqual([
+      '[pool] migrated assignments.json from schemaVersion 1 to 2',
+      '[pool] loaded assignments.json: 2 released, 0 assignments',
+    ]);
+    vi.runAllTimers();
+    // Migrating alone writes nothing, and nothing is backed up.
+    expect(files()).toStrictEqual(['assignments.json']);
+    expect(fs.readFileSync(file, 'utf8')).toBe(text);
+
+    store.setReleased(DEMO, true);
+    store.flushSync();
+
+    const written = readFile();
+    expect(written).toStrictEqual({
+      schemaVersion: 2,
+      released: [A, B, DEMO],
+      assignments: [],
+    });
+    expect(poolFileSchema.safeParse(written).success).toBe(true);
+  });
+
+  it('壞資料: a bad released key is dropped, the rest kept; the original is copied to .broken-, the corrected file written back at once; counts only in the log', () => {
+    const text = writeFile(
+      `{"schemaVersion": 2, "released": ["${A}", "vim:secret", 7], "assignments": [${JSON.stringify(ASSIGNED_DEMO)}]}`,
+    );
+
+    const store = load();
+
+    expect(releasedOf(store)).toStrictEqual([A]);
+    expect(store.assignments()).toStrictEqual([ASSIGNED_DEMO]);
+    expect(store.canWrite).toBe(true);
+    expect(files()).toStrictEqual(['assignments.json', BACKUP]);
+    expect(fs.readFileSync(path.join(dir, BACKUP), 'utf8')).toBe(text);
+    expect(readFile()).toStrictEqual({
+      schemaVersion: 2,
+      released: [A],
+      assignments: [ASSIGNED_DEMO],
+    });
+    expect(poolLines('warn')).toStrictEqual([
+      `[pool] assignments.json has bad entries (2 released, 0 assignments); copied it to ${BACKUP} and dropping them: 1 released, 1 assignment kept`,
+    ]);
+    const lines = poolLines().join('\n');
+    expect(lines).not.toContain('secret');
+    expect(lines).not.toContain(A);
+  });
+
+  it.each<[string, unknown]>([
+    ['an unknown source', { ...ASSIGNED_DEMO, sessionKey: 'vim:1' }],
+    ['the actor id __proto__', { ...ASSIGNED_DEMO, actorId: '__proto__' }],
+    ['an empty actor id', { ...ASSIGNED_DEMO, actorId: '' }],
+    ['a character key with no pack', { ...ASSIGNED_DEMO, characterKey: 'x' }],
+    ['no character key', { sessionKey: DEMO, actorId: 'actor-demo' }],
+    ['an extra field', { ...ASSIGNED_DEMO, state: 'idle' }],
+    ['a session key named before', { ...ASSIGNED_A, actorId: 'actor-2' }],
+    ['an actor id named before', { ...ASSIGNED_DEMO, actorId: 'actor-a' }],
+    ['not an object', 'actor-a'],
+  ])(
+    '壞資料: an assignment with %s is dropped, the others kept (the first of a repeat wins)',
+    (_label, bad) => {
+      writeFile({
+        schemaVersion: 2,
+        released: [B],
+        assignments: [ASSIGNED_A, bad],
+      });
+
+      const store = load();
+
+      expect(releasedOf(store)).toStrictEqual([B]);
+      expect(store.assignments()).toStrictEqual([ASSIGNED_A]);
+      expect(files()).toStrictEqual(['assignments.json', BACKUP]);
+      expect(readFile()).toStrictEqual({
+        schemaVersion: 2,
+        released: [B],
+        assignments: [ASSIGNED_A],
+      });
+      expect(poolLines('warn')).toStrictEqual([
+        `[pool] assignments.json has bad entries (0 released, 1 assignment); copied it to ${BACKUP} and dropping them: 1 released, 1 assignment kept`,
+      ]);
+    },
+  );
+
+  it('壞資料: when the original cannot be backed up, the good entries are kept and nothing is written this run', () => {
+    const text = writeFile({
+      schemaVersion: 2,
+      released: [A, 'vim:1'],
+      assignments: [ASSIGNED_DEMO],
+    });
+    const store = load({ fs: fsWith({ copyFileSync: failWith('EACCES') }) });
+
+    expect(store.canWrite).toBe(false);
+    expect(releasedOf(store)).toStrictEqual([A]);
+    expect(store.assignments()).toStrictEqual([ASSIGNED_DEMO]);
+    expect(poolLines('error')).toStrictEqual([
+      '[pool] assignments.json has bad entries (1 released, 0 assignments) and could not be backed up (EACCES); dropping them and not writing assignments.json this run',
+    ]);
+
+    store.setReleased(B, true);
+    vi.runAllTimers();
+    store.flushSync();
+
+    expect(files()).toStrictEqual(['assignments.json']);
+    expect(fs.readFileSync(file, 'utf8')).toBe(text);
+  });
+});
+
+describe('the saved assignments (Story 3.4)', () => {
+  const ONE = {
+    sessionKey: 'codex:b',
+    actorId: 'actor-1',
+    characterKey: 'sample-pack/probe-one',
+  } as const;
+  const TWO = {
+    sessionKey: 'claude-code:a',
+    actorId: 'actor-2',
+    characterKey: 'sample-pack/probe-one',
+  } as const;
+
+  it('reads them from the file, sorted by session key, with the released keys', () => {
+    writeFile({ schemaVersion: 2, released: [DEMO], assignments: [ONE, TWO] });
+
+    const store = load();
+
+    expect(store.assignments()).toStrictEqual([TWO, ONE]);
+    expect(releasedOf(store)).toStrictEqual([DEMO]);
+    expect(poolLines()).toStrictEqual([
+      '[pool] loaded assignments.json: 1 released, 2 assignments',
+    ]);
+  });
+
+  it('starts with none when there is no file', () => {
+    expect(load().assignments()).toStrictEqual([]);
+  });
+
+  it('setAssignments takes them sorted and writes them with the released keys after the debounce; nobody is told', () => {
+    const counting = countingFs();
+    const store = load({ fs: counting.fs });
+    const onChange = vi.fn();
+    store.onChange(onChange);
+    store.setReleased(DEMO, true);
+    onChange.mockClear();
+
+    expect(store.setAssignments([ONE, TWO])).toBe(true);
+
+    expect(store.assignments()).toStrictEqual([TWO, ONE]);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(files()).toStrictEqual([]);
+    vi.advanceTimersByTime(POOL_FLUSH_DEBOUNCE_MS);
+    expect(counting.writeFileSync).toHaveBeenCalledOnce();
+    const written = readFile();
+    expect(written).toStrictEqual({
+      schemaVersion: 2,
+      released: [DEMO],
+      assignments: [TWO, ONE],
+    });
+    expect(poolFileSchema.safeParse(written).success).toBe(true);
+  });
+
+  it('setAssignments with the same assignments, in any order, changes nothing and writes nothing', () => {
+    writeFile({ schemaVersion: 2, released: [], assignments: [ONE, TWO] });
+    const counting = countingFs();
+    const store = load({ fs: counting.fs });
+    const before = store.assignments();
+
+    expect(store.setAssignments([ONE, TWO])).toBe(false);
+    vi.runAllTimers();
+    store.flushSync();
+
+    expect(store.assignments()).toBe(before);
+    expect(counting.writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it('setAssignments throws, changing nothing, on assignments that fail the file schema', () => {
+    const store = load();
+    store.setAssignments([ONE]);
+
+    for (const bad of [
+      [ONE, { ...TWO, sessionKey: ONE.sessionKey }],
+      [ONE, { ...TWO, actorId: ONE.actorId }],
+      [{ ...ONE, actorId: '__proto__' }],
+      [{ ...ONE, characterKey: 'probe-one' }],
+    ]) {
+      expect(() =>
+        store.setAssignments(bad as unknown as (typeof ONE)[]),
+      ).toThrow();
+    }
+
+    expect(store.assignments()).toStrictEqual([ONE]);
+  });
+
+  it('the assignments handed it are frozen copies: a later change to the list given does not reach them', () => {
+    const store = load();
+    const given = [{ ...ONE }];
+
+    store.setAssignments(given);
+    (given[0] as { actorId: string }).actorId = 'changed';
+
+    expect(store.assignments()).toStrictEqual([ONE]);
+    expect(Object.isFrozen(store.assignments())).toBe(true);
+    expect(Object.isFrozen(store.assignments()[0])).toBe(true);
+  });
+
+  it('a failed write keeps them in memory; the next flush writes them', () => {
+    let failures = 1;
+    const store = load({
+      fs: fsWith({
+        renameSync: (from: string, to: string) => {
+          if (failures > 0) {
+            failures -= 1;
+            throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+          }
+          fs.renameSync(from, to);
+        },
+      }),
+    });
+
+    store.setAssignments([ONE]);
+    vi.advanceTimersByTime(POOL_FLUSH_DEBOUNCE_MS);
+    expect(files()).toStrictEqual([]);
+
+    store.flushSync();
+
+    expect(readFile()).toStrictEqual({
+      schemaVersion: 2,
+      released: [],
+      assignments: [ONE],
+    });
   });
 });

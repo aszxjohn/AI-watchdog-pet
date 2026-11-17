@@ -1,8 +1,9 @@
 /**
  * The 管理 session page's text and order, built from StageView alone
  * (AD-20): the `sessions` and `adapters` sections main/detection
- * publishes, and the `pool` section main/pool publishes. No React and no
- * DOM types, so it is unit-tested under Node.
+ * publishes, the `pool` and `actors` sections main/pool publishes, and the
+ * `packs` section main/packs publishes (for character names). No React and
+ * no DOM types, so it is unit-tested under Node.
  *
  * - A session row: its source's display name, its name (the display name,
  *   or the native id while it has none) and its state's Chinese name, with
@@ -16,6 +17,11 @@
  *   state; the page fades the row and marks 已釋放 beside its name. Each
  *   row has one button: 釋放, or 改回顯示 on a released row. What pressing
  *   it does is createReleaseToggle.
+ * - Each row names the character the session plays (Story 3.4): its actor
+ *   in `actors`, by session key, gives the character key, and the
+ *   installed packs give its name (the key itself when no installed pack
+ *   has it any more). A session with no actor (released, an empty pool,
+ *   before the start-up sync) reads 沒有角色.
  * - An adapter row: its source's display name and its health's Chinese
  *   name, in SOURCE_CODES order.
  * - With no session, the page says so and points at 示範模式 on the menu
@@ -23,6 +29,7 @@
  */
 import { type SessionKey, splitSessionKey } from '../shared/detection-events';
 import type { IpcError, IpcResult } from '../shared/ipc';
+import { type CharacterKey, characterKey } from '../shared/packs';
 import type { StageView } from '../shared/stage-view';
 import {
   ADAPTER_HEALTH_DISPLAY_NAMES,
@@ -38,7 +45,16 @@ import { STATE_DISPLAY_NAMES, type StateCode } from '../shared/states';
 export const SESSIONS_HEADING = '偵測到的 session';
 
 /** Column headings of the session list, in column order. */
-export const SESSION_COLUMNS = ['來源', '名稱', '狀態', '操作'] as const;
+export const SESSION_COLUMNS = [
+  '來源',
+  '名稱',
+  '狀態',
+  '角色',
+  '操作',
+] as const;
+
+/** What the 角色 column reads for a session with no character. */
+export const NO_CHARACTER_TEXT = '沒有角色';
 
 /** What the page shows when no session is detected. */
 export const NO_SESSIONS_TEXT = '目前沒有偵測到 session';
@@ -96,6 +112,13 @@ export interface SessionRow {
   readonly inferred: boolean;
   /** The session is released: the page fades it and marks it 已釋放. */
   readonly released: boolean;
+  /**
+   * The 角色 column: the character's name, its key when no installed pack
+   * names it, or NO_CHARACTER_TEXT.
+   */
+  readonly character: string;
+  /** The character the session plays, or null when it has none. */
+  readonly characterKey: CharacterKey | null;
   /** The button's text: 釋放, or 改回顯示 when released. */
   readonly action: string;
 }
@@ -117,15 +140,33 @@ function sourceOrder(source: SourceCode): number {
   return SOURCE_CODES.indexOf(source);
 }
 
+/** Each installed character's name, by character key. */
+function characterNames(
+  packs: StageView['packs'],
+): ReadonlyMap<CharacterKey, string> {
+  const names = new Map<CharacterKey, string>();
+  for (const pack of packs.installed) {
+    for (const character of pack.characters) {
+      names.set(characterKey(pack.id, character.id), character.name);
+    }
+  }
+  return names;
+}
+
 /** The session list's rows, in page order. */
 export function sessionRows(
-  view: Pick<StageView, 'sessions' | 'pool'>,
+  view: Pick<StageView, 'sessions' | 'pool' | 'actors' | 'packs'>,
 ): SessionRow[] {
   const releasedKeys = new Set<string>(view.pool.released);
+  const characterOf = new Map<string, CharacterKey>(
+    view.actors.map((actor) => [actor.sessionKey, actor.characterKey]),
+  );
+  const names = characterNames(view.packs);
   // A stable sort by source only: within a source, StageView's order stays.
   return view.sessions
     .map((session) => {
       const released = releasedKeys.has(session.sessionKey);
+      const played = characterOf.get(session.sessionKey) ?? null;
       return {
         order: sourceOrder(session.source),
         row: {
@@ -136,6 +177,9 @@ export function sessionRows(
           stateCode: session.state,
           inferred: session.confidence === 'inferred',
           released,
+          character:
+            played === null ? NO_CHARACTER_TEXT : (names.get(played) ?? played),
+          characterKey: played,
           action: released ? SHOW_AGAIN_ACTION : RELEASE_ACTION,
         },
       };

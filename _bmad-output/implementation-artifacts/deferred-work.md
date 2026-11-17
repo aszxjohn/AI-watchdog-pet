@@ -224,8 +224,8 @@
   summary: 3.2 路徑安全檢查一併處理：路徑段不得是 Windows 裝置名（`con.png`、`nul.js` 這類第一個 `.` 之前是裝置名的段）、manifest 與 zip 裡只差大小寫的路徑視為衝突、包 id 也擋 `com0`／`lpt0`
   evidence: Story 3.1 下半段審查 E14、E15、E16、B12（medium）。macOS 與 Windows 預設檔案系統不分大小寫；Microsoft 的保留名稱清單含 COM0、LPT0；要改 `src/shared/pack-api`，超出下半段範圍。
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-1-contract-pack.md`
-  summary: 3.4 產生 `actorId` 時，`actorIdSchema` 一併拒絕 `__proto__`
-  evidence: Story 3.1 下半段審查 E6（low）。包常用 `draw[actorId] = …` 組回傳值，`__proto__` 會改到原型；`main/pool` 產生的 id 不會是它，但契約應該擋掉。
+  summary: 3.4 產生 `actorId` 時，`actorIdSchema` 一併拒絕 `__proto__`（已解決）
+  evidence: Story 3.1 下半段審查 E6（low）。包常用 `draw[actorId] = …` 組回傳值，`__proto__` 會改到原型；`main/pool` 產生的 id 不會是它，但契約應該擋掉。已由 `spec-3-4-pool-assignment.md` 完成。
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-1-contract-pack.md`
   summary: `src/main/detection/adapters/cursor/project-name.ts` 第 6、15 行註解的範例路徑含系列名稱，可能違反 NFR7；換成中性的範例路徑，並考慮讓字面值掃描加入從 `characters/` 產生的禁用名單
   evidence: Story 3.1 下半段審查 B17（medium）。2.7 寫入的既有註解，不是下半段造成；下半段的字面值掃描只比對契約包的 id。
@@ -250,3 +250,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-3-pack-export-remove.md`
   summary: 「角色包」頁的匯出狀態行（匯出中／已匯出／無法匯出）、匯出中停用每列「匯出…」、移除確認區都只寫在 `src/panels/App.tsx`，沒有測試渲染它；開發代理實機也沒按過「匯出…」
   evidence: Story 3.3 下半段審查 VG1、B8(c)（medium）。純函式 `packExportStatus`、`packRowControls` 有測，但 App.tsx 的接線（狀態行的條件、傳給 `packRowControls` 的 `packExport`）改壞也不會被 CI 發現；和 3.3 上半段那筆一樣，交給 Epic 2 回顧 B8（端到端測試承接）。實機驗收時要看：按「匯出…」出現「匯出中…」且每列「匯出…」停用；存檔後出現「已匯出：名稱 版本」；取消對話框後狀態行回到原本。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-4-pool-assignment.md`
+  summary: 3.9 換角色之前，StageView 的 `actors` 可能指向已移除、已停用（沒上場）或新版本已不存在的角色；3.5 建沙盒、3.6 畫角色時要能處理找不到包或角色的 actor（例如改演佔位、記一行），不能因此出錯
+  evidence: Story 3.4 審查 B12（low）。3.4 決定池子在執行中變小時已分配的不動，換角色留給 3.9；`session-rows.ts` 找不到角色名時退回顯示 key。這是給 3.5、3.6 的交接條件。

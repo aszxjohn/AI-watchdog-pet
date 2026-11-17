@@ -1,18 +1,44 @@
 import { describe, expect, it } from 'vitest';
 import { DETECTION_ID_MAX_LENGTH } from '../../src/shared/detection-events';
+import { ACTOR_ID_MAX_LENGTH } from '../../src/shared/pack-api';
 import {
   POOL_SCHEMA_VERSION,
+  poolAssignmentSchema,
   poolFileSchema,
   poolSetReleasedInputSchema,
   sortedSessionKeys,
+  stageActorSchema,
+  stageActorsSchema,
   stagePoolSchema,
 } from '../../src/shared/pool';
 import { expectRejected, expectRoundTrip } from './schema-helpers';
 
+const CLAUDE_KEY = 'claude-code:00000000-0000-4000-8000-000000000001';
+const ASSIGNMENT = {
+  sessionKey: CLAUDE_KEY,
+  actorId: '0f6c1d2e-0000-4000-8000-00000000000a',
+  characterKey: 'sample-pack/probe-a',
+};
+
 /** The Design Notes example, with a real-looking Claude Code key. */
 const FILE = {
-  schemaVersion: 1,
-  released: ['claude-code:00000000-0000-4000-8000-000000000001', 'demo:3'],
+  schemaVersion: 2,
+  released: [CLAUDE_KEY, 'demo:3'],
+  assignments: [],
+};
+
+/** A file with an assignment (Story 3.4). */
+const ASSIGNED_FILE = {
+  schemaVersion: 2,
+  released: ['demo:3'],
+  assignments: [
+    ASSIGNMENT,
+    {
+      sessionKey: 'demo:1',
+      actorId: 'a2',
+      characterKey: 'sample-pack/probe-b',
+    },
+  ],
 };
 
 describe('sortedSessionKeys', () => {
@@ -36,47 +62,129 @@ describe('sortedSessionKeys', () => {
 });
 
 describe('poolFileSchema (assignments.json)', () => {
-  it('is at schemaVersion 1', () => {
-    expect(POOL_SCHEMA_VERSION).toBe(1);
+  it('is at schemaVersion 2 (Story 3.4)', () => {
+    expect(POOL_SCHEMA_VERSION).toBe(2);
   });
 
   it.each([
     ['the design-notes file', FILE],
-    ['nothing released', { schemaVersion: 1, released: [] }],
+    ['nothing released', { schemaVersion: 2, released: [], assignments: [] }],
     [
       'keys in any order, one repeated (the store sorts them on reading)',
-      { schemaVersion: 1, released: ['demo:3', 'codex:a', 'demo:3'] },
+      {
+        schemaVersion: 2,
+        released: ['demo:3', 'codex:a', 'demo:3'],
+        assignments: [],
+      },
     ],
     [
       'a native id with a colon',
-      { schemaVersion: 1, released: ['cursor:a:b'] },
+      { schemaVersion: 2, released: ['cursor:a:b'], assignments: [] },
+    ],
+    ['assignments', ASSIGNED_FILE],
+    [
+      'assignments in any order (the store sorts them on reading)',
+      {
+        ...ASSIGNED_FILE,
+        assignments: [...ASSIGNED_FILE.assignments].reverse(),
+      },
+    ],
+    [
+      'one character for two sessions (the pool ran out)',
+      {
+        ...ASSIGNED_FILE,
+        assignments: [
+          ASSIGNMENT,
+          { ...ASSIGNMENT, sessionKey: 'demo:1', actorId: 'a2' },
+        ],
+      },
     ],
   ])('round-trips %s', (_label, value) => {
     expectRoundTrip(poolFileSchema, value);
   });
 
   it.each([
-    ['no schemaVersion', { released: [] }],
-    ['schemaVersion 2', { ...FILE, schemaVersion: 2 }],
-    ['schemaVersion as a string', { ...FILE, schemaVersion: '1' }],
-    ['no released list', { schemaVersion: 1 }],
-    ['released as an object', { schemaVersion: 1, released: { a: 1 } }],
-    ['an unknown source', { schemaVersion: 1, released: ['vim:1'] }],
-    ['an empty native id', { schemaVersion: 1, released: ['demo:'] }],
+    ['no schemaVersion', { released: [], assignments: [] }],
+    ['schemaVersion 1', { ...FILE, schemaVersion: 1 }],
+    ['schemaVersion 3', { ...FILE, schemaVersion: 3 }],
+    ['schemaVersion as a string', { ...FILE, schemaVersion: '2' }],
+    ['no released list', { schemaVersion: 2, assignments: [] }],
+    ['no assignments list', { schemaVersion: 2, released: [] }],
+    ['released as an object', { ...FILE, released: { a: 1 } }],
+    ['assignments as an object', { ...FILE, assignments: {} }],
+    ['an unknown source', { ...FILE, released: ['vim:1'] }],
+    ['an empty native id', { ...FILE, released: ['demo:'] }],
     [
       'a native id past the limit',
       {
-        schemaVersion: 1,
+        ...FILE,
         released: [`demo:${'x'.repeat(DETECTION_ID_MAX_LENGTH + 1)}`],
       },
     ],
-    ['a control character', { schemaVersion: 1, released: ['demo:1\n'] }],
-    ['a number for a key', { schemaVersion: 1, released: [1] }],
+    ['a control character', { ...FILE, released: ['demo:1\n'] }],
+    ['a number for a key', { ...FILE, released: [1] }],
+    [
+      'one session assigned twice',
+      {
+        ...FILE,
+        assignments: [ASSIGNMENT, { ...ASSIGNMENT, actorId: 'another' }],
+      },
+    ],
+    [
+      'one actor id twice',
+      {
+        ...FILE,
+        assignments: [ASSIGNMENT, { ...ASSIGNMENT, sessionKey: 'demo:1' }],
+      },
+    ],
+    [
+      'an assignment of an unknown source',
+      { ...FILE, assignments: [{ ...ASSIGNMENT, sessionKey: 'vim:1' }] },
+    ],
+    [
+      'an assignment with a __proto__ actor id',
+      { ...FILE, assignments: [{ ...ASSIGNMENT, actorId: '__proto__' }] },
+    ],
+    [
+      'an assignment with no character',
+      {
+        ...FILE,
+        assignments: [{ sessionKey: CLAUDE_KEY, actorId: 'a1' }],
+      },
+    ],
     ['an unknown field', { ...FILE, actors: {} }],
     ['a list', [FILE]],
     ['null', null],
   ])('rejects %s', (_label, value) => {
     expectRejected(poolFileSchema, value);
+  });
+});
+
+describe('poolAssignmentSchema', () => {
+  it('round-trips an assignment', () => {
+    expectRoundTrip(poolAssignmentSchema, ASSIGNMENT);
+  });
+
+  it.each([
+    ['an empty actor id', { ...ASSIGNMENT, actorId: '' }],
+    [
+      'an actor id past the limit',
+      { ...ASSIGNMENT, actorId: 'x'.repeat(ACTOR_ID_MAX_LENGTH + 1) },
+    ],
+    ['a __proto__ actor id', { ...ASSIGNMENT, actorId: '__proto__' }],
+    ['a character key with no pack', { ...ASSIGNMENT, characterKey: 'a' }],
+    [
+      'a character key with three parts',
+      { ...ASSIGNMENT, characterKey: 'sample-pack/probe-a/x' },
+    ],
+    [
+      'an uppercase character id',
+      { ...ASSIGNMENT, characterKey: 'sample-pack/Probe' },
+    ],
+    ['a bad session key', { ...ASSIGNMENT, sessionKey: 'demo' }],
+    ['an extra field', { ...ASSIGNMENT, state: 'idle' }],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(poolAssignmentSchema, value);
   });
 });
 
@@ -98,6 +206,60 @@ describe('stagePoolSchema (StageView pool section)', () => {
     ['a bare list', ['demo:1']],
   ])('rejects %s', (_label, value) => {
     expectRejected(stagePoolSchema, value);
+  });
+});
+
+describe('stageActorsSchema (StageView actors section, Story 3.4)', () => {
+  const ACTOR = {
+    actorId: ASSIGNMENT.actorId,
+    sessionKey: CLAUDE_KEY,
+    characterKey: ASSIGNMENT.characterKey,
+    state: 'working',
+    confidence: 'exact',
+    displayName: 'gundam-pet',
+  };
+  const DEMO_ACTOR = {
+    actorId: 'a2',
+    sessionKey: 'demo:1',
+    characterKey: ASSIGNMENT.characterKey,
+    state: 'approval',
+    confidence: 'inferred',
+    displayName: null,
+  };
+
+  it.each([
+    ['no actor', []],
+    ['one actor', [ACTOR]],
+    ['two actors playing one character', [ACTOR, DEMO_ACTOR]],
+  ])('round-trips %s', (_label, value) => {
+    expectRoundTrip(stageActorsSchema, value);
+  });
+
+  it.each([
+    [
+      'two actors with one actor id',
+      [ACTOR, { ...DEMO_ACTOR, actorId: ACTOR.actorId }],
+    ],
+    ['two actors of one session', [ACTOR, { ...ACTOR, actorId: 'a3' }]],
+    ['not a list', ACTOR],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(stageActorsSchema, value);
+  });
+
+  it.each([
+    ['a __proto__ actor id', { ...ACTOR, actorId: '__proto__' }],
+    ['an unknown state', { ...ACTOR, state: 'sleeping' }],
+    ['an unknown confidence', { ...ACTOR, confidence: 'maybe' }],
+    ['an empty display name', { ...ACTOR, displayName: '' }],
+    [
+      'a display name past the limit',
+      { ...ACTOR, displayName: 'x'.repeat(DETECTION_ID_MAX_LENGTH + 1) },
+    ],
+    ['no display name', { ...ACTOR, displayName: undefined }],
+    ['a bad character key', { ...ACTOR, characterKey: 'probe-a' }],
+    ['the session source (packs never see it)', { ...ACTOR, source: 'codex' }],
+  ])('rejects an actor with %s', (_label, value) => {
+    expectRejected(stageActorSchema, value);
   });
 });
 

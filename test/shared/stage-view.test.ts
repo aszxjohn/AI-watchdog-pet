@@ -82,10 +82,20 @@ const VIEW: StageView = {
   sessions: [SESSION],
   adapters: [ADAPTER],
   pool: { released: ['demo:1'] },
+  actors: [],
   packs: { installed: [PACK] },
   packImport: { phase: 'idle' },
   packExport: { phase: 'idle' },
 };
+/** An actor of CODEX_SESSION, playing PACK's first character. */
+const ACTOR = {
+  actorId: '6f1d2c0e-0000-4000-8000-000000000001',
+  sessionKey: CODEX_SESSION.sessionKey,
+  characterKey: 'sample-pack/probe-a',
+  state: CODEX_SESSION.state,
+  confidence: CODEX_SESSION.confidence,
+  displayName: CODEX_SESSION.displayName,
+} as const;
 const NEXT_SETTINGS = {
   rev: 4,
   values: { ...SETTINGS_DEFAULTS, canvasDisplayId: 69733632 },
@@ -320,6 +330,14 @@ describe('stageViewSchema', () => {
     });
   });
 
+  it('round-trips a view with an actor (Story 3.4)', () => {
+    expectRoundTrip(stageViewSchema, {
+      ...VIEW,
+      sessions: [SESSION, CODEX_SESSION],
+      actors: [ACTOR],
+    });
+  });
+
   it('round-trips a released key with no session: one saved from an earlier run, before the sweep', () => {
     expectRoundTrip(stageViewSchema, {
       ...VIEW,
@@ -365,7 +383,12 @@ describe('stageViewSchema', () => {
       'an adapter with an unknown health',
       { ...VIEW, adapters: [{ ...ADAPTER, health: 'x' }] },
     ],
-    ['an unknown section', { ...VIEW, actors: [] }],
+    ['an unknown section', { ...VIEW, characters: [] }],
+    ['no actors section', { ...VIEW, actors: undefined }],
+    [
+      'an actor of a bad character key',
+      { ...VIEW, actors: [{ ...ACTOR, characterKey: 'sample-pack' }] },
+    ],
     [
       'bad settings',
       {
@@ -423,6 +446,14 @@ describe('stageViewDeltaSchema', () => {
     ['sessions and adapters together', { sessions: [], adapters: [] }],
     ['pool', { pool: { released: ['codex:0199a3c2-7f1e', 'demo:1'] } }],
     ['nothing released any more', { pool: { released: [] } }],
+    [
+      'sessions and actors together (Story 3.4)',
+      { sessions: [SESSION, CODEX_SESSION], actors: [ACTOR] },
+    ],
+    [
+      'pool and actors together: a release takes the actor away',
+      { pool: { released: [ACTOR.sessionKey] }, actors: [] },
+    ],
     ['packs', { packs: { installed: [PACK] } }],
     ['no packs any more', { packs: { installed: [] } }],
     ['packImport', { packImport: { phase: 'reading' } }],
@@ -460,7 +491,17 @@ describe('stageViewDeltaSchema', () => {
     ['no sections', { rev: 1, sections: {} }],
     ['an undefined section', { rev: 1, sections: { settings: undefined } }],
     ['an undefined canvas', { rev: 1, sections: { canvas: undefined } }],
-    ['an unknown section', { rev: 1, sections: { actors: [] } }],
+    ['an unknown section', { rev: 1, sections: { characters: [] } }],
+    ['undefined actors', { rev: 1, sections: { actors: undefined } }],
+    [
+      'two actors with one actor id',
+      {
+        rev: 1,
+        sections: {
+          actors: [ACTOR, { ...ACTOR, sessionKey: SESSION.sessionKey }],
+        },
+      },
+    ],
     [
       'a bad section',
       { rev: 1, sections: { settings: { rev: 1, values: {} } } },
@@ -555,6 +596,7 @@ describe('applyStageViewDelta', () => {
       sessions: [SESSION],
       adapters: [ADAPTER],
       pool: VIEW.pool,
+      actors: VIEW.actors,
       packs: VIEW.packs,
       packImport: VIEW.packImport,
       packExport: VIEW.packExport,

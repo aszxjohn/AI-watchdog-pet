@@ -106,6 +106,12 @@ export function splitSessionKey(sessionKey: SessionKey): SessionKeyParts {
 const detectionIdSchema = z.string().min(1).max(DETECTION_ID_MAX_LENGTH);
 
 /**
+ * A published session's display name, from its latest `session.meta`; null
+ * until one arrives. StageView's sessions and actors both carry it.
+ */
+export const sessionDisplayNameSchema = detectionIdSchema.nullable();
+
+/**
  * When the AI tool wrote the fact, epoch milliseconds. It is for ordering
  * and display; durations use the monotonic clock at receipt (AD-22). The one
  * exception is a replayed event, whose monotonic time main/detection/sessions

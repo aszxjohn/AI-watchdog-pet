@@ -72,6 +72,7 @@ describe('createWindowsStageSource', () => {
         sessions: [],
         adapters: [],
         pool: { released: [] },
+        actors: [],
         packs: { installed: [] },
         packImport: { phase: 'idle' },
         packExport: { phase: 'idle' },

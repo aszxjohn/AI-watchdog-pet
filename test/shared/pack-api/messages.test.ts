@@ -248,6 +248,22 @@ describe('actorIdSchema and displayNameSchema', () => {
     expectRejected(actorIdSchema, 'x'.repeat(65));
   });
 
+  it('rejects the actor id __proto__ as reserved-key (Story 3.4)', () => {
+    expectRuleIssue(actorIdSchema, '__proto__', 'reserved-key', []);
+    expectRoundTrip(actorIdSchema, '__proto');
+    expectRoundTrip(actorIdSchema, 'proto__');
+    expectRoundTrip(actorIdSchema, '6f1d2c0e-7a1b-4c3d-8e9f-0123456789ab');
+  });
+
+  it('rejects a message naming the actor id __proto__ (Story 3.4)', () => {
+    expectRuleIssue(
+      despawnMessageSchema,
+      changed(MESSAGES.despawn, ['actorId'], '__proto__'),
+      'reserved-key',
+      ['actorId'],
+    );
+  });
+
   it('a display name is a string or null', () => {
     expectRoundTrip(displayNameSchema, 'docs');
     expectRoundTrip(displayNameSchema, null);

@@ -257,6 +257,11 @@ body {
   font-size: 12px;
 }
 
+/* 沒有角色: a session with no character (released, an empty pool). */
+.no-character {
+  color: var(--muted);
+}
+
 .session-action {
   white-space: nowrap;
 }

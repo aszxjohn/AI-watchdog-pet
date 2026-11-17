@@ -26,6 +26,7 @@ function snapshot(rev: number, id: number | null = null): StageViewSnapshot {
       sessions: [],
       adapters: [],
       pool: { released: [] },
+      actors: [],
       packs: { installed: [] },
       packImport: { phase: 'idle' },
       packExport: { phase: 'idle' },
@@ -160,7 +161,7 @@ describe('subscribeStageView', () => {
 
   it.each([
     ['an empty delta', { rev: 2, sections: {} }],
-    ['an unknown section', { rev: 2, sections: { actors: [] } }],
+    ['an unknown section', { rev: 2, sections: { characters: [] } }],
     ['a bad value', delta(2, -1)],
     ['no rev', { sections: snapshot(2).view }],
     ['not an object', 'delta'],

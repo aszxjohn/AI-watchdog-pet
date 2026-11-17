@@ -21,11 +21,10 @@ import { SETTINGS_DEFAULTS } from '../../src/shared/settings';
 import {
   stageViewDeltaSchema,
   stageViewSnapshotSchema,
-  type StageViewDetectionSections,
+  type StageViewAssignerSections,
   type StageViewPackExportSections,
   type StageViewPackImportSections,
   type StageViewPacksSections,
-  type StageViewPoolSections,
 } from '../../src/shared/stage-view';
 import * as fake from '../helpers/fake-electron';
 
@@ -34,6 +33,7 @@ vi.mock('electron', () => import('../helpers/fake-electron'));
 let dir: string;
 let settings: SettingsStore;
 let windows: WindowsStageSource;
+let assigner: ReturnType<typeof fakeAssigner>;
 let detection: ReturnType<typeof fakeDetection>;
 let pool: ReturnType<typeof fakePool>;
 let packs: ReturnType<typeof fakePacks>;
@@ -42,25 +42,31 @@ let packExport: ReturnType<typeof fakePackExport>;
 let hub: StageViewHub;
 
 /**
- * A stand-in for main/detection's sections: update() replaces the sections
- * given and tells the listeners, as main/detection does (any value, so a
- * test can hand StageView one that fails the schema).
+ * A stand-in for main/pool's assigner (Story 3.4), StageView's one source of
+ * `sessions`, `adapters`, `pool` and `actors`: update() replaces the
+ * sections given and tells the listeners, as the assigner does (any value,
+ * so a test can hand StageView one that fails the schema).
  */
-function fakeDetection() {
-  let sections: StageViewDetectionSections = { sessions: [], adapters: [] };
+function fakeAssigner() {
+  let sections: StageViewAssignerSections = {
+    sessions: [],
+    adapters: [],
+    pool: { released: [] },
+    actors: [],
+  };
   const listeners = new Set<
-    (changed: Partial<StageViewDetectionSections>) => void
+    (changed: Partial<StageViewAssignerSections>) => void
   >();
   return {
     get: () => sections,
-    onChange(listener: (changed: Partial<StageViewDetectionSections>) => void) {
+    onChange(listener: (changed: Partial<StageViewAssignerSections>) => void) {
       listeners.add(listener);
       return () => {
         listeners.delete(listener);
       };
     },
     update(changed: Record<string, unknown>) {
-      const typed = changed as Partial<StageViewDetectionSections>;
+      const typed = changed as Partial<StageViewAssignerSections>;
       sections = { ...sections, ...typed };
       for (const listener of listeners) {
         listener(typed);
@@ -70,26 +76,25 @@ function fakeDetection() {
 }
 
 /**
- * A stand-in for main/pool's section: update() replaces it and tells the
- * listeners, as main/pool does (any value, so a test can hand StageView
- * one that fails the schema).
+ * main/detection's sections as they reach StageView: passed on through the
+ * assigner, only the sections given.
  */
-function fakePool() {
-  let sections: StageViewPoolSections = { pool: { released: [] } };
-  const listeners = new Set<(changed: StageViewPoolSections) => void>();
+function fakeDetection(through: ReturnType<typeof fakeAssigner>) {
   return {
-    get: () => sections,
-    onChange(listener: (changed: StageViewPoolSections) => void) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
+    update(changed: Record<string, unknown>) {
+      through.update(changed);
     },
+  };
+}
+
+/**
+ * main/pool's store's section as it reaches StageView: through the
+ * assigner, the pool section only.
+ */
+function fakePool(through: ReturnType<typeof fakeAssigner>) {
+  return {
     update(released: readonly unknown[]) {
-      sections = { pool: { released: released as SessionKey[] } };
-      for (const listener of listeners) {
-        listener(sections);
-      }
+      through.update({ pool: { released: released as SessionKey[] } });
     },
   };
 }
@@ -191,6 +196,8 @@ const WINDOWS_BEFORE_READY = {
 const NO_DETECTION = { sessions: [], adapters: [] };
 /** main/pool's section with nothing released. */
 const NO_POOL = { pool: { released: [] } };
+/** main/pool's assigner's actors section with no actor. */
+const NO_ACTORS = { actors: [] };
 /** main/packs' section with no pack installed. */
 const NO_PACKS = { packs: { installed: [] } };
 /** main/packs' importer before any import. */
@@ -234,16 +241,16 @@ beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awp-stage-view-'));
   settings = loadSettings({ file: path.join(dir, 'settings.json') });
   windows = createWindowsStageSource();
-  detection = fakeDetection();
-  pool = fakePool();
+  assigner = fakeAssigner();
+  detection = fakeDetection(assigner);
+  pool = fakePool(assigner);
   packs = fakePacks();
   packImport = fakePackImport();
   packExport = fakePackExport();
   hub = createStageView({
     settings,
     windows,
-    detection,
-    pool,
+    assigner,
     packs,
     packImport,
     packExport,
@@ -278,6 +285,7 @@ describe('StageView composition', () => {
         ...WINDOWS_BEFORE_READY,
         ...NO_DETECTION,
         ...NO_POOL,
+        ...NO_ACTORS,
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
@@ -333,6 +341,7 @@ describe('StageView composition', () => {
         ...WINDOWS_BEFORE_READY,
         ...NO_DETECTION,
         ...NO_POOL,
+        ...NO_ACTORS,
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
@@ -347,8 +356,7 @@ describe('StageView composition', () => {
     const later = createStageView({
       settings,
       windows,
-      detection,
-      pool,
+      assigner,
       packs,
       packImport,
       packExport,
@@ -391,8 +399,7 @@ describe("main/windows' sections", () => {
     const later = createStageView({
       settings,
       windows,
-      detection,
-      pool,
+      assigner,
       packs,
       packImport,
       packExport,
@@ -407,6 +414,7 @@ describe("main/windows' sections", () => {
         power: WINDOWS_BEFORE_READY.power,
         ...NO_DETECTION,
         ...NO_POOL,
+        ...NO_ACTORS,
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
@@ -440,6 +448,7 @@ describe("main/windows' sections", () => {
         power: { suspended: true, locked: false },
         ...NO_DETECTION,
         ...NO_POOL,
+        ...NO_ACTORS,
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
@@ -497,8 +506,7 @@ describe("main/detection's sections", () => {
     const later = createStageView({
       settings,
       windows,
-      detection,
-      pool,
+      assigner,
       packs,
       packImport,
       packExport,
@@ -512,6 +520,7 @@ describe("main/detection's sections", () => {
         sessions: [DEMO_SESSION],
         adapters: [DEMO_ADAPTER],
         ...NO_POOL,
+        ...NO_ACTORS,
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
@@ -562,8 +571,7 @@ describe("main/pool's section", () => {
     const later = createStageView({
       settings,
       windows,
-      detection,
-      pool,
+      assigner,
       packs,
       packImport,
       packExport,
@@ -576,6 +584,7 @@ describe("main/pool's section", () => {
         ...WINDOWS_BEFORE_READY,
         ...NO_DETECTION,
         pool: { released: ['claude-code:a', 'demo:1'] },
+        ...NO_ACTORS,
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
@@ -631,6 +640,129 @@ describe("main/pool's section", () => {
   });
 });
 
+describe("main/pool's assigner: the actors section (Story 3.4)", () => {
+  const CODEX_SESSION = {
+    sessionKey: 'codex:a',
+    source: 'codex',
+    displayName: null,
+    state: 'working',
+    confidence: 'exact',
+  };
+  const ACTOR = {
+    actorId: 'actor-1',
+    sessionKey: 'codex:a',
+    characterKey: 'sample-pack/probe-a',
+    state: 'working',
+    confidence: 'exact',
+    displayName: null,
+  };
+
+  it('starts from what the assigner has: sessions, adapters, pool and actors', () => {
+    assigner.update({
+      sessions: [CODEX_SESSION],
+      adapters: [{ source: 'codex', health: 'ok' }],
+      pool: { released: [] },
+      actors: [ACTOR],
+    });
+
+    const later = createStageView({
+      settings,
+      windows,
+      assigner,
+      packs,
+      packImport,
+      packExport,
+    });
+
+    expect(later.snapshot()).toStrictEqual({
+      rev: 0,
+      view: {
+        settings: settings.get(),
+        ...WINDOWS_BEFORE_READY,
+        sessions: [CODEX_SESSION],
+        adapters: [{ source: 'codex', health: 'ok' }],
+        ...NO_POOL,
+        actors: [ACTOR],
+        ...NO_PACKS,
+        ...NO_PACK_IMPORT,
+        ...NO_PACK_EXPORT,
+      },
+    });
+    expect(stageViewSnapshotSchema.safeParse(later.snapshot()).success).toBe(
+      true,
+    );
+  });
+
+  it('a new session and its actor, a state change of both, and a release with the actor it takes away: one delta each', () => {
+    const subscriber = contents(1);
+    hub.subscribe(subscriber);
+
+    assigner.update({ sessions: [CODEX_SESSION], actors: [ACTOR] });
+    assigner.update({
+      sessions: [{ ...CODEX_SESSION, state: 'done' }],
+      actors: [{ ...ACTOR, state: 'done' }],
+    });
+    assigner.update({ pool: { released: ['codex:a'] }, actors: [] });
+
+    expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
+      { rev: 1, sections: { sessions: [CODEX_SESSION], actors: [ACTOR] } },
+      {
+        rev: 2,
+        sections: {
+          sessions: [{ ...CODEX_SESSION, state: 'done' }],
+          actors: [{ ...ACTOR, state: 'done' }],
+        },
+      },
+      { rev: 3, sections: { pool: { released: ['codex:a'] }, actors: [] } },
+    ]);
+    for (const { args } of subscriber.sent) {
+      expect(stageViewDeltaSchema.safeParse(args[0]).success).toBe(true);
+    }
+    expect(hub.snapshot().view).toMatchObject({
+      sessions: [{ ...CODEX_SESSION, state: 'done' }],
+      pool: { released: ['codex:a'] },
+      actors: [],
+    });
+  });
+
+  it.each<[string, unknown, string]>([
+    [
+      'two actors with one actor id',
+      [ACTOR, { ...ACTOR, sessionKey: 'demo:1' }],
+      'actors',
+    ],
+    [
+      'the actor id __proto__',
+      [{ ...ACTOR, actorId: '__proto__' }],
+      'actors.0.actorId',
+    ],
+    [
+      'a bad character key',
+      [{ ...ACTOR, characterKey: 'probe-a' }],
+      'actors.0.characterKey',
+    ],
+  ])(
+    'drops an actors section that fails the schema before moving rev, with the session change it came with: %s',
+    (_label, actors, fields) => {
+      const subscriber = contents(1);
+      hub.subscribe(subscriber);
+
+      assigner.update({ sessions: [CODEX_SESSION], actors });
+
+      expect(subscriber.sent).toStrictEqual([]);
+      expect(hub.snapshot().rev).toBe(0);
+      expect(hub.snapshot().view).toMatchObject({ sessions: [], actors: [] });
+      expect(
+        vi
+          .mocked(console.error)
+          .mock.calls.map((call: unknown[]) => String(call[0])),
+      ).toStrictEqual([
+        `[stage-view] dropped a delta that fails the schema (sections: sessions, actors; fields: ${fields}); rev stays 0`,
+      ]);
+    },
+  );
+});
+
 describe("main/packs' section", () => {
   it('starts from what main/packs has', () => {
     packs.update([PACK]);
@@ -638,8 +770,7 @@ describe("main/packs' section", () => {
     const later = createStageView({
       settings,
       windows,
-      detection,
-      pool,
+      assigner,
       packs,
       packImport,
       packExport,
@@ -652,6 +783,7 @@ describe("main/packs' section", () => {
         ...WINDOWS_BEFORE_READY,
         ...NO_DETECTION,
         ...NO_POOL,
+        ...NO_ACTORS,
         packs: { installed: [PACK] },
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,
@@ -715,8 +847,7 @@ describe("main/packs' importer section", () => {
     const later = createStageView({
       settings,
       windows,
-      detection,
-      pool,
+      assigner,
       packs,
       packImport,
       packExport,
@@ -729,6 +860,7 @@ describe("main/packs' importer section", () => {
         ...WINDOWS_BEFORE_READY,
         ...NO_DETECTION,
         ...NO_POOL,
+        ...NO_ACTORS,
         ...NO_PACKS,
         packImport: CONFIRM,
         ...NO_PACK_EXPORT,
@@ -809,8 +941,7 @@ describe("main/packs' exporter section", () => {
     const later = createStageView({
       settings,
       windows,
-      detection,
-      pool,
+      assigner,
       packs,
       packImport,
       packExport,
@@ -823,6 +954,7 @@ describe("main/packs' exporter section", () => {
         ...WINDOWS_BEFORE_READY,
         ...NO_DETECTION,
         ...NO_POOL,
+        ...NO_ACTORS,
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         packExport: SAVING,
@@ -1002,6 +1134,7 @@ describe('subscribers', () => {
         ...WINDOWS_BEFORE_READY,
         ...NO_DETECTION,
         ...NO_POOL,
+        ...NO_ACTORS,
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
         ...NO_PACK_EXPORT,

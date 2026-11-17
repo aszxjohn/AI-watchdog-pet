@@ -149,12 +149,13 @@ function stageViewOf(store: PacksStore) {
   const hub = createStageView({
     settings,
     windows: createWindowsStageSource(),
-    detection: {
-      get: () => ({ sessions: [], adapters: [] }),
-      onChange: () => () => {},
-    },
-    pool: {
-      get: () => ({ pool: { released: [] } }),
+    assigner: {
+      get: () => ({
+        sessions: [],
+        adapters: [],
+        pool: { released: [] },
+        actors: [],
+      }),
       onChange: () => () => {},
     },
     packs: store,

@@ -271,14 +271,28 @@ vi.mock('../../src/main/persist/quit', () => ({
 vi.mock('../../src/main/pool/store', () => ({
   loadPool: (options: { file: string }) => {
     state.order.push(`loadPool ${options.file.replaceAll('\\', '/')}`);
+    return { fake: 'pool' };
+  },
+}));
+
+vi.mock('../../src/main/pool/assign', () => ({
+  createAssigner: (options: Record<string, { fake?: string }>) => {
+    state.order.push(
+      `createAssigner ${Object.entries(options)
+        .map(([name, source]) => `${name}=${String(source.fake)}`)
+        .join(' ')}`,
+    );
     return {
-      fake: 'pool',
-      sweep: (
+      fake: 'assigner',
+      watchPool: () => {
+        state.order.push('assigner.watchPool');
+      },
+      sync: (
         reported: ReadonlySet<string>,
         unconfirmed: ReadonlySet<string>,
       ) => {
         state.order.push(
-          `pool.sweep ${JSON.stringify([...reported])} ${JSON.stringify([...unconfirmed])}`,
+          `assigner.sync ${JSON.stringify([...reported])} ${JSON.stringify([...unconfirmed])}`,
         );
       },
     };
@@ -676,11 +690,13 @@ describe('the primary instance', () => {
       'createCursorAdapter root=~/.cursor/projects',
       'createDetection settings={"fake":"settings"} adapters=[{"fake":"claude-code-adapter"},{"fake":"gemini-adapter"},{"fake":"cursor-adapter"}]',
       'loadPool /fake/userData/assignments.json',
-      'detection.onSynced',
       'loadPacks /fake/userData/packs',
+      'createAssigner detection=detection store=pool settings=settings packs=packs',
+      'detection.onSynced',
       'createPackImporter packs',
       'createPackExporter packs',
-      'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} detection={"fake":"detection"} pool={"fake":"pool"} packs={"fake":"packs"} packImport={"fake":"importer"} packExport={"fake":"exporter"}',
+      'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} assigner={"fake":"assigner"} packs={"fake":"packs"} packImport={"fake":"importer"} packExport={"fake":"exporter"}',
+      'assigner.watchPool',
       'registerIpcHandler app:get-version ["panels"]',
       'registerSettingsHandlers',
       'registerPoolHandlers pool',
@@ -996,7 +1012,7 @@ describe('the primary instance', () => {
     ]);
   });
 
-  it('sweeps the pool with the keys detection reports at its start-up sync, and the sources it could not confirm', async () => {
+  it('hands the pool’s assigner (which sweeps the pool) the keys detection reports at its start-up sync, and the sources it could not confirm', async () => {
     await startMain();
     state.order = [];
 
@@ -1006,7 +1022,7 @@ describe('the primary instance', () => {
     );
 
     expect(state.order).toStrictEqual([
-      'pool.sweep ["claude-code:a","demo:1"] ["cursor"]',
+      'assigner.sync ["claude-code:a","demo:1"] ["cursor"]',
     ]);
   });
 

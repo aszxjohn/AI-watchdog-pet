@@ -723,12 +723,13 @@ describe('with the real check and install (the contract test pack)', () => {
     const hub = createStageView({
       settings: loadSettings({ file: path.join(root, 'settings.json') }),
       windows: createWindowsStageSource(),
-      detection: {
-        get: () => ({ sessions: [], adapters: [] }),
-        onChange: () => () => {},
-      },
-      pool: {
-        get: () => ({ pool: { released: [] } }),
+      assigner: {
+        get: () => ({
+          sessions: [],
+          adapters: [],
+          pool: { released: [] },
+          actors: [],
+        }),
         onChange: () => () => {},
       },
       packs: store,

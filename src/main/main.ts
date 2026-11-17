@@ -10,16 +10,17 @@
  *    `ready`), then starts the run log, settings, detection (demo mode off;
  *    the Claude Code adapter reading ~/.claude/projects, the Gemini CLI
  *    adapter reading ~/.gemini/tmp, the Cursor adapter reading
- *    ~/.cursor/projects), the pool (the released sessions, from
- *    assignments.json; swept once detection's start-up sync is over), the
- *    installed character packs (userData/packs, cleaned of what an install
- *    left behind), the pack import flow (main/packs' importer: the
- *    角色包 page's file dialog, on the panel) and export flow (main/packs'
- *    exporter: the save dialog, on the panel), StageView (settings,
- *    main/windows' displays, canvas and power sections, main/detection's
- *    sessions and adapters, main/pool's pool, main/packs' packs,
- *    packImport and packExport) and the IPC handlers (removing a pack
- *    among them), and guards every window
+ *    ~/.cursor/projects), the pool (the released sessions and the saved
+ *    assignments, from assignments.json), the installed character packs
+ *    (userData/packs, cleaned of what an install left behind), the pool's
+ *    assigner (a character for each shown session; it sweeps the pool
+ *    once detection's start-up sync is over), the pack import flow
+ *    (main/packs' importer: the 角色包 page's file dialog, on the panel)
+ *    and export flow (main/packs' exporter: the save dialog, on the
+ *    panel), StageView (settings, main/windows' displays, canvas and power
+ *    sections, main/pool's assigner's sessions, adapters, pool and actors,
+ *    main/packs' packs, packImport and packExport) and the IPC handlers
+ *    (removing a pack among them), and guards every window
  *    webContents. The canvas's hover and right-click handlers come
  *    once the canvas windows exist; a right-click on the demo session's
  *    square opens the demo menu, which calls detection.setDemo as the
@@ -99,6 +100,7 @@ import { handlePackProtocol } from './packs/protocol';
 import { removePack } from './packs/remove';
 import { loadPacks } from './packs/store';
 import { flushOnQuit } from './persist/quit';
+import { createAssigner } from './pool/assign';
 import { registerPoolHandlers } from './pool/ipc';
 import { loadPool } from './pool/store';
 import { registerSettingsHandlers } from './settings/ipc';
@@ -235,10 +237,10 @@ function startupStep(name: string, run: () => void): void {
 }
 
 function startPrimaryInstance(): void {
-  // Startup order: run log, settings, detection, pool, packs and their
-  // importer and exporter, StageView, IPC handlers, window guards; the tray
-  // and windows once ready. userData is the same folder for `npm start` and
-  // the packaged app.
+  // Startup order: run log, settings, detection, pool, packs, the pool's
+  // assigner, the packs' importer and exporter, StageView, IPC handlers,
+  // window guards; the tray and windows once ready. userData is the same
+  // folder for `npm start` and the packaged app.
   const userData = app.getPath('userData');
   initRunLog(path.join(userData, 'logs'));
   logEvent(
@@ -273,16 +275,9 @@ function startPrimaryInstance(): void {
       }),
     ],
   });
-  // main/pool owns the released sessions (assignments.json) and the pool
-  // section. Once detection's start-up sync is over (every adapter sent
-  // sync.ready or failed to start, or syncTimeoutMs passed), it drops the
-  // saved releases of sessions not reported since start, except those of
-  // the sources that did not confirm (still syncing, or failed to start);
-  // detection knows nothing of it.
+  // main/pool owns the released sessions and the saved assignments
+  // (assignments.json).
   const pool = loadPool({ file: path.join(userData, 'assignments.json') });
-  detection.onSynced((reported, unconfirmed) => {
-    pool.sweep(reported, unconfirmed);
-  });
   // main/packs owns the installed character packs (packs/index.json and a
   // folder per pack) and the packs section; loading also removes what an
   // earlier install left behind. Its importer is the one import flow (the
@@ -291,6 +286,20 @@ function startPrimaryInstance(): void {
   // packExport section. Both dialogs open on the panel window. Removing a
   // pack (its 移除…) is one quick call, answered by packs:remove itself.
   const packs = loadPacks({ dir: path.join(userData, 'packs') });
+  // main/pool's assigner gives each shown session a character from the
+  // pool (上場 packs, 加入池子 characters) and owns the pool and actors
+  // sections, passing detection's sessions and adapters on with them.
+  // Once detection's start-up sync is over (every adapter sent sync.ready
+  // or failed to start, or syncTimeoutMs passed), it sweeps the saved
+  // releases and assignments of sessions not reported since start (except
+  // those of the sources that did not confirm: still syncing, or failed to
+  // start) and assigns every session due a character; detection knows
+  // nothing of it. It follows settings and packs once StageView exists
+  // (watchPool, below).
+  const assigner = createAssigner({ detection, store: pool, settings, packs });
+  detection.onSynced((reported, unconfirmed) => {
+    assigner.sync(reported, unconfirmed);
+  });
   let panelWindow: BrowserWindow | undefined;
   /** The panel window, while one is open: the dialogs' parent. */
   function openPanelWindow(): BrowserWindow | undefined {
@@ -313,12 +322,15 @@ function startPrimaryInstance(): void {
   const stageView = createStageView({
     settings,
     windows: stageSources,
-    detection,
-    pool,
+    assigner,
     packs,
     packImport: importer,
     packExport: exporter,
   });
+  // Only now does the assigner follow settings and the installed packs:
+  // StageView hears a settings or packs change first, so the actors that
+  // change brings never reach a renderer ahead of it.
+  assigner.watchPool();
 
   registerIpcHandler(appGetVersion, ['panels'], () => app.getVersion());
   registerSettingsHandlers(settings);

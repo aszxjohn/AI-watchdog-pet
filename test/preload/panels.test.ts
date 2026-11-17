@@ -12,6 +12,7 @@ import { installPack } from '../../src/main/packs/install';
 import { registerPackHandlers } from '../../src/main/packs/ipc';
 import { removePack } from '../../src/main/packs/remove';
 import { loadPacks } from '../../src/main/packs/store';
+import { createAssigner } from '../../src/main/pool/assign';
 import { registerPoolHandlers } from '../../src/main/pool/ipc';
 import { loadPool, type PoolStore } from '../../src/main/pool/store';
 import { registerSettingsHandlers } from '../../src/main/settings/ipc';
@@ -77,6 +78,10 @@ function startMain(
   const detection = createDetection({ settings });
   pool = loadPool({ file: path.join(dir, 'assignments.json') });
   const packs = loadPacks({ dir: path.join(dir, 'packs') });
+  const assigner = createAssigner({ detection, store: pool, settings, packs });
+  detection.onSynced((reported, unconfirmed) => {
+    assigner.sync(reported, unconfirmed);
+  });
   const packImport = createPackImporter({
     store: packs,
     inspect: inspectPack,
@@ -97,13 +102,13 @@ function startMain(
     createStageView({
       settings,
       windows: createWindowsStageSource(),
-      detection,
-      pool,
+      assigner,
       packs,
       packImport,
       packExport,
     }),
   );
+  assigner.watchPool();
   return settings;
 }
 
@@ -173,6 +178,7 @@ describe('panels preload', () => {
         sessions: [],
         adapters: [],
         pool: { released: [] },
+        actors: [],
         packs: { installed: [] },
         packImport: { phase: 'idle' },
         packExport: { phase: 'idle' },

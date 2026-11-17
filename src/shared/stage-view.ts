@@ -1,6 +1,6 @@
 import {
   confidenceSchema,
-  DETECTION_ID_MAX_LENGTH,
+  sessionDisplayNameSchema,
   sessionKeySchema,
 } from './detection-events';
 import {
@@ -8,7 +8,7 @@ import {
   stagePackImportSchema,
   stagePacksSchema,
 } from './packs';
-import { stagePoolSchema } from './pool';
+import { stageActorsSchema, stagePoolSchema } from './pool';
 import { settingsStateSchema } from './settings';
 import { adapterHealthSchema, sourceCodeSchema } from './sources';
 import { stateCodeSchema } from './states';
@@ -21,11 +21,16 @@ import { z } from './zod-setup';
  *
  * - `settings`: main/settings;
  * - `displays`, `canvas`, `power`: main/windows (Story 1.6);
- * - `sessions`, `adapters`: main/detection (Story 2.3);
+ * - `sessions`, `adapters`: main/detection (Story 2.3), passed on by
+ *   main/pool's assigner (Story 3.4);
  * - `pool`: main/pool (Story 2.8), the released session keys. A panel
  *   matches them to `sessions` by key. Any one snapshot is a consistent
  *   view at a single `rev`; a session and its release may still arrive in
  *   different deltas (each delta is rev + 1);
+ * - `actors`: main/pool's assigner (Story 3.4), the character each shown
+ *   session plays. A change of a session and the change of `actors` it
+ *   causes (a new actor, its state, its end), and a release and the actor
+ *   it takes away, come in one delta;
  * - `packs`: main/packs (Story 3.2), the installed character packs;
  * - `packImport`: main/packs (Story 3.2), where the one import at a time
  *   is (reading, waiting for the user to confirm a replace, or its result);
@@ -118,7 +123,7 @@ export const stageSessionSchema = z
   .strictObject({
     sessionKey: sessionKeySchema,
     source: sourceCodeSchema,
-    displayName: z.string().min(1).max(DETECTION_ID_MAX_LENGTH).nullable(),
+    displayName: sessionDisplayNameSchema,
     state: stateCodeSchema,
     confidence: confidenceSchema,
   })
@@ -167,6 +172,7 @@ export const stageViewSchema = z.strictObject({
   sessions: stageSessionsSchema,
   adapters: stageAdaptersSchema,
   pool: stagePoolSchema,
+  actors: stageActorsSchema,
   packs: stagePacksSchema,
   packImport: stagePackImportSchema,
   packExport: stagePackExportSchema,
@@ -188,8 +194,19 @@ export type StageViewDetectionSections = Pick<
   'sessions' | 'adapters'
 >;
 
-/** The section main/pool owns. */
+/** The section main/pool's store owns: the released keys. */
 export type StageViewPoolSections = Pick<StageView, 'pool'>;
+
+/**
+ * What main/pool's assigner publishes (Story 3.4): main/detection's
+ * `sessions` and `adapters`, passed on, with main/pool's `pool` and
+ * `actors`, so a change of a session and what it does to `actors` are
+ * one change.
+ */
+export type StageViewAssignerSections = Pick<
+  StageView,
+  'sessions' | 'adapters' | 'pool' | 'actors'
+>;
 
 /** The section main/packs' store owns. */
 export type StageViewPacksSections = Pick<StageView, 'packs'>;
@@ -222,6 +239,7 @@ export const stageViewSectionsSchema = z
     sessions: stageSessionsSchema.exactOptional(),
     adapters: stageAdaptersSchema.exactOptional(),
     pool: stagePoolSchema.exactOptional(),
+    actors: stageActorsSchema.exactOptional(),
     packs: stagePacksSchema.exactOptional(),
     packImport: stagePackImportSchema.exactOptional(),
     packExport: stagePackExportSchema.exactOptional(),

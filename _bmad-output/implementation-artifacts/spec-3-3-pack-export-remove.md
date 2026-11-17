@@ -155,6 +155,8 @@ context:
 
 - 2026-11-16 審查後沒有修補項目（1 筆延後、其餘駁回），程式與上面主流程重跑時相同。
 
+- CI：commit `c2517f7`（2026-11-16）後，GitHub Actions 的 macOS、Windows 都通過（run 43837526684）。
+
 ## Spec Change Log
 
 ## Review Triage Log

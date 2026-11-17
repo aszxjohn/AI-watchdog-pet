@@ -5,7 +5,8 @@
  * The page comes from the URL fragment (`#/<page id>`, src/shared/panels.ts):
  * main opens the window on a page by loading that fragment, and the links on
  * the left change it. 管理 session lists the detected sessions (each can be
- * released or shown again) and the running adapters' health; 舞台設定
+ * released or shown again, and names the character it plays) and the
+ * running adapters' health; 舞台設定
  * lists the displays for the canvas and the detection timings (計時);
  * 角色包 lists the installed packs (上場, and 加入池子 per character; 匯出…
  * and 移除… per pack, with how the export went and the removal asked on
@@ -364,7 +365,8 @@ function StageSettings({
  * 管理 session: the sessions main/detection publishes and the health of
  * each running adapter, read from StageView only. Text and order come from
  * session-rows.ts; an inferred state carries a 推測 mark, a released
- * session is faded and marked 已釋放. The 釋放 / 改回顯示 logic (buttons
+ * session is faded and marked 已釋放, and each row names the character the
+ * session plays (a pack author's name, isolated with <bdi>) or 沒有角色. The 釋放 / 改回顯示 logic (buttons
  * disabled until main answers, a failure shown with the rows left as
  * StageView has them) is createReleaseToggle; this only renders it.
  */
@@ -447,6 +449,13 @@ function Sessions({
                         {INFERRED_LABEL}
                       </span>
                     ) : null}
+                  </td>
+                  <td>
+                    {row.characterKey === null ? (
+                      <span className="no-character">{row.character}</span>
+                    ) : (
+                      <bdi>{row.character}</bdi>
+                    )}
                   </td>
                   <td className="session-action">
                     <button

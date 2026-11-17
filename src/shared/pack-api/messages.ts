@@ -17,9 +17,17 @@ export const ACTOR_ID_MAX_LENGTH = 64;
 /**
  * An actor: one session paired with one character, for as long as that
  * pairing lasts. Opaque to the pack; main/pool makes it (3.4) and never
- * reuses one within a run.
+ * reuses one within a run. Never `__proto__`: a pack often builds its
+ * `draw` as `actors[actorId] = …`, which would change the prototype.
  */
-export const actorIdSchema = z.string().min(1).max(ACTOR_ID_MAX_LENGTH);
+export const actorIdSchema = z
+  .string()
+  .min(1)
+  .max(ACTOR_ID_MAX_LENGTH)
+  .refine(
+    (id) => id !== '__proto__',
+    ruleIssue('reserved-key', '__proto__ is not an actor id'),
+  );
 
 export type ActorId = z.infer<typeof actorIdSchema>;
 

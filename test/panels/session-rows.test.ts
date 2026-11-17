@@ -11,6 +11,7 @@ import {
   inferredTitle,
   nativeIdOf,
   NO_ADAPTERS_TEXT,
+  NO_CHARACTER_TEXT,
   NO_SESSIONS_TEXT,
   RELEASE_ACTION,
   RELEASED_LABEL,
@@ -24,7 +25,11 @@ import {
 import type { SessionKey } from '../../src/shared/detection-events';
 import type { IpcResult } from '../../src/shared/ipc';
 import type { StagePool } from '../../src/shared/pool';
-import type { StageAdapter, StageSession } from '../../src/shared/stage-view';
+import type {
+  StageAdapter,
+  StageSession,
+  StageView,
+} from '../../src/shared/stage-view';
 import { STATE_CODES, STATE_DISPLAY_NAMES } from '../../src/shared/states';
 
 const DEMO: StageSession = {
@@ -37,6 +42,12 @@ const DEMO: StageSession = {
 
 const NOTHING_RELEASED: StagePool = { released: [] };
 
+/** No actor and no installed pack: every row reads 沒有角色. */
+const NO_CHARACTERS: Pick<StageView, 'actors' | 'packs'> = {
+  actors: [],
+  packs: { installed: [] },
+};
+
 function session(fields: Partial<StageSession>): StageSession {
   return { ...DEMO, ...fields };
 }
@@ -44,7 +55,11 @@ function session(fields: Partial<StageSession>): StageSession {
 describe('sessionRows', () => {
   it('I/O matrix 打開示範模式: the demo session reads 示範 / 示範 / 要你批准', () => {
     expect(
-      sessionRows({ sessions: [DEMO], pool: NOTHING_RELEASED }),
+      sessionRows({
+        ...NO_CHARACTERS,
+        sessions: [DEMO],
+        pool: NOTHING_RELEASED,
+      }),
     ).toStrictEqual([
       {
         key: 'demo:1',
@@ -54,6 +69,8 @@ describe('sessionRows', () => {
         stateCode: 'approval',
         inferred: false,
         released: false,
+        character: '沒有角色',
+        characterKey: null,
         action: '釋放',
       },
     ]);
@@ -61,6 +78,7 @@ describe('sessionRows', () => {
 
   it.each(STATE_CODES)('shows the state %s by its Chinese name', (state) => {
     const [row] = sessionRows({
+      ...NO_CHARACTERS,
       sessions: [session({ state })],
       pool: NOTHING_RELEASED,
     });
@@ -70,6 +88,7 @@ describe('sessionRows', () => {
 
   it('I/O matrix 推測標示: an inferred state is marked, an exact one is not', () => {
     const rows = sessionRows({
+      ...NO_CHARACTERS,
       pool: NOTHING_RELEASED,
       sessions: [
         session({
@@ -120,6 +139,7 @@ describe('sessionRows', () => {
 
   it('shows the native id while the session has no display name', () => {
     const [row] = sessionRows({
+      ...NO_CHARACTERS,
       pool: NOTHING_RELEASED,
       sessions: [
         session({
@@ -135,6 +155,7 @@ describe('sessionRows', () => {
 
   it('orders rows by source, then in the order StageView lists them', () => {
     const rows = sessionRows({
+      ...NO_CHARACTERS,
       pool: NOTHING_RELEASED,
       sessions: [
         session({ sessionKey: 'demo:1', source: 'demo', displayName: '示範' }),
@@ -164,11 +185,14 @@ describe('sessionRows', () => {
       session({ sessionKey: 'codex:a', source: 'codex', displayName: 'a' }),
       session({ sessionKey: 'codex:b', source: 'codex', displayName: 'b' }),
     ];
-    const before = sessionRows({ sessions, pool: NOTHING_RELEASED }).map(
-      (row) => row.key,
-    );
+    const before = sessionRows({
+      ...NO_CHARACTERS,
+      sessions,
+      pool: NOTHING_RELEASED,
+    }).map((row) => row.key);
     // StageView keeps listing them in the order they were first seen.
     const after = sessionRows({
+      ...NO_CHARACTERS,
       pool: NOTHING_RELEASED,
       sessions: [
         { ...sessions[0], state: 'idle' } as StageSession,
@@ -184,7 +208,11 @@ describe('sessionRows', () => {
       session({ sessionKey: 'codex:a', source: 'codex', displayName: 'a' }),
     ];
     const order = (released: SessionKey[]) =>
-      sessionRows({ sessions, pool: { released } }).map((row) => row.key);
+      sessionRows({
+        ...NO_CHARACTERS,
+        sessions,
+        pool: { released },
+      }).map((row) => row.key);
 
     expect(order([])).toStrictEqual(['codex:b', 'codex:a']);
     expect(order(['codex:b'])).toStrictEqual(['codex:b', 'codex:a']);
@@ -192,9 +220,13 @@ describe('sessionRows', () => {
   });
 
   it('I/O matrix 沒有 session: no row, and the page text says so and points at 示範模式', () => {
-    expect(sessionRows({ sessions: [], pool: NOTHING_RELEASED })).toStrictEqual(
-      [],
-    );
+    expect(
+      sessionRows({
+        ...NO_CHARACTERS,
+        sessions: [],
+        pool: NOTHING_RELEASED,
+      }),
+    ).toStrictEqual([]);
     expect(NO_SESSIONS_TEXT).toBe('目前沒有偵測到 session');
     // The icon is in the menu bar on macOS, the notification area on Windows.
     expect(DEMO_MODE_HINT).toContain('選單列或系統匣');
@@ -207,6 +239,7 @@ describe('sessionRows', () => {
       session({ sessionKey: 'demo:1' }),
     ]);
     sessionRows({
+      ...NO_CHARACTERS,
       sessions: sessions as StageSession[],
       pool: NOTHING_RELEASED,
     });
@@ -216,11 +249,12 @@ describe('sessionRows', () => {
     ]);
   });
 
-  it('has the column headings 來源, 名稱, 狀態, 操作 (the 釋放 / 改回顯示 button)', () => {
+  it('has the column headings 來源, 名稱, 狀態, 角色, 操作 (the 釋放 / 改回顯示 button)', () => {
     expect([...SESSION_COLUMNS]).toStrictEqual([
       '來源',
       '名稱',
       '狀態',
+      '角色',
       '操作',
     ]);
     expect(SESSIONS_HEADING).toContain('session');
@@ -244,9 +278,11 @@ describe('I/O matrix', () => {
   ];
 
   function keys(sessions: StageSession[]) {
-    return sessionRows({ sessions, pool: NOTHING_RELEASED }).map(
-      (row) => row.key,
-    );
+    return sessionRows({
+      ...NO_CHARACTERS,
+      sessions,
+      pool: NOTHING_RELEASED,
+    }).map((row) => row.key);
   }
 
   it('名稱改變: a session whose name goes from its folder to its title keeps its row', () => {
@@ -294,6 +330,7 @@ describe('released sessions (Story 2.8)', () => {
 
   it('I/O matrix 釋放: a released row keeps its state, is marked released and offers 改回顯示', () => {
     const rows = sessionRows({
+      ...NO_CHARACTERS,
       sessions,
       pool: { released: ['codex:b', 'demo:1'] },
     });
@@ -318,6 +355,7 @@ describe('released sessions (Story 2.8)', () => {
 
   it('I/O matrix 改回顯示: once the key leaves the pool, the mark goes and the button is 釋放 again', () => {
     const [row] = sessionRows({
+      ...NO_CHARACTERS,
       sessions: [sessions[0] as StageSession],
       pool: NOTHING_RELEASED,
     });
@@ -327,7 +365,11 @@ describe('released sessions (Story 2.8)', () => {
 
   it('keeps the order when a session is released or shown again: the row does not move', () => {
     const order = (released: SessionKey[]) =>
-      sessionRows({ sessions, pool: { released } }).map((row) => row.key);
+      sessionRows({
+        ...NO_CHARACTERS,
+        sessions,
+        pool: { released },
+      }).map((row) => row.key);
     const before = order([]);
 
     expect(order(['codex:a'])).toStrictEqual(before);
@@ -336,11 +378,136 @@ describe('released sessions (Story 2.8)', () => {
 
   it('ignores a released key with no session (saved from an earlier run, or ended)', () => {
     const rows = sessionRows({
+      ...NO_CHARACTERS,
       sessions: [sessions[0] as StageSession],
       pool: { released: ['claude-code:gone'] },
     });
     expect(rows.map((row) => [row.key, row.released])).toStrictEqual([
       ['codex:a', false],
+    ]);
+  });
+});
+
+describe('I/O matrix', () => {
+  const PACKS: StageView['packs'] = {
+    installed: [
+      {
+        id: 'another-pack',
+        name: '另一包',
+        version: '2.0.0',
+        apiVersion: '1.0',
+        characters: [{ id: 'probe-one', name: '別包的探針一', height: 110 }],
+      },
+      {
+        id: 'sample-pack',
+        name: '範例包',
+        version: '1.0.0',
+        apiVersion: '1.0',
+        characters: [
+          { id: 'probe-one', name: '探針一', height: 110 },
+          { id: 'probe-two', name: '探針二', height: 96 },
+        ],
+      },
+    ],
+  };
+  const SESSIONS = [
+    session({ sessionKey: 'codex:a', source: 'codex', displayName: 'a' }),
+    session({ sessionKey: 'codex:b', source: 'codex', displayName: 'b' }),
+    session({ sessionKey: 'codex:c', source: 'codex', displayName: 'c' }),
+    session({ sessionKey: 'codex:d', source: 'codex', displayName: 'd' }),
+    session({ sessionKey: 'demo:1' }),
+  ];
+  function actor(
+    sessionKey: SessionKey,
+    characterKey: StageView['actors'][number]['characterKey'],
+    actorId: string,
+  ): StageView['actors'][number] {
+    const of = SESSIONS.find((s) => s.sessionKey === sessionKey);
+    if (of === undefined) {
+      throw new Error('no such session');
+    }
+    return {
+      actorId,
+      sessionKey,
+      characterKey,
+      state: of.state,
+      confidence: of.confidence,
+      displayName: of.displayName,
+    };
+  }
+
+  it('面板: each row names the character its session plays; a row with none reads 沒有角色; a released row is marked as before', () => {
+    const rows = sessionRows({
+      sessions: SESSIONS,
+      pool: { released: ['codex:c'] },
+      actors: [
+        actor('codex:a', 'sample-pack/probe-one', 'x1'),
+        actor('codex:b', 'another-pack/probe-one', 'x2'),
+        actor('codex:d', 'sample-pack/probe-one', 'x3'),
+        actor('demo:1', 'sample-pack/probe-two', 'x4'),
+      ],
+      packs: PACKS,
+    });
+
+    expect(
+      rows.map((row) => [
+        row.key,
+        row.character,
+        row.characterKey,
+        row.released,
+      ]),
+    ).toStrictEqual([
+      ['codex:a', '探針一', 'sample-pack/probe-one', false],
+      // Same character id, another pack: its own name.
+      ['codex:b', '別包的探針一', 'another-pack/probe-one', false],
+      ['codex:c', '沒有角色', null, true],
+      // One character for two sessions (the pool ran out).
+      ['codex:d', '探針一', 'sample-pack/probe-one', false],
+      ['demo:1', '探針二', 'sample-pack/probe-two', false],
+    ]);
+    expect(NO_CHARACTER_TEXT).toBe('沒有角色');
+  });
+
+  it('面板: a character no installed pack names any more (its pack was removed) shows its key', () => {
+    const [row] = sessionRows({
+      sessions: [SESSIONS[0] as StageSession],
+      pool: NOTHING_RELEASED,
+      actors: [actor('codex:a', 'removed-pack/probe-one', 'x1')],
+      packs: PACKS,
+    });
+
+    expect(row?.character).toBe('removed-pack/probe-one');
+    expect(row?.characterKey).toBe('removed-pack/probe-one');
+  });
+
+  it('面板: before the start-up sync, or with an empty pool, every row reads 沒有角色', () => {
+    const rows = sessionRows({
+      sessions: SESSIONS,
+      pool: NOTHING_RELEASED,
+      actors: [],
+      packs: PACKS,
+    });
+
+    expect(rows.map((row) => row.character)).toStrictEqual(
+      SESSIONS.map(() => '沒有角色'),
+    );
+    expect(rows.every((row) => row.characterKey === null)).toBe(true);
+  });
+
+  it('面板: an actor of a session not listed is ignored, and the rows keep their order', () => {
+    const rows = sessionRows({
+      sessions: [SESSIONS[1] as StageSession, SESSIONS[0] as StageSession],
+      pool: NOTHING_RELEASED,
+      actors: [
+        actor('codex:a', 'sample-pack/probe-one', 'x1'),
+        actor('codex:d', 'sample-pack/probe-two', 'x2'),
+      ],
+      packs: PACKS,
+    });
+
+    expect(rows.map((row) => [row.key, row.character])).toStrictEqual([
+      ['codex:b', '沒有角色'],
+      ['codex:a', '探針一'],
     ]);
   });
 });
