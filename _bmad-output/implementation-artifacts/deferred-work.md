@@ -271,3 +271,12 @@
 - source_spec: none
   summary: Story 3.6 下段：特殊繪圖與穩定性——`particles`（同一個 `emitterId` 跨 frame 持續發射、下一則沒出現就停、每包 emitter 數上限、收斂 preset 清單）、advancedBitmap（`stage.canvas` 只給宣告的角色、只允許 2d、ImageBitmap 以 transfer 傳送、尺寸與每秒張數上限）、WebGL context lost／GPU 行程當掉／renderer 無回應的處理、macOS 整個 app 被隱藏時畫布被藏起來的做法（角色上台前要決定，需在實機確認）
   evidence: 使用者 2026-11-17 選擇把 3.6 拆三段；中段交付時，用到粒子或 bitmap 的 `draw` 指令會被丟棄並記錄，下段才畫得出來；GPU 失效的處理要有真的繪圖才測得出來。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-6-tick-and-draw.md`
+  summary: 3.6 下段開放 bitmap 時，`draw` 的位元組檢查（`rules.ts` 的 `jsonBytes`）遇到 `bitmap.image` 是 ImageBitmap 會回 null，整則 draw 被當成不合規丟掉；要讓 bitmap 指令另外計算
+  evidence: Story 3.6 中段審查 B8（low）。目前 `stage.canvas` 是 null 碰不到；測試只用 `image: {}`。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-6-tick-and-draw.md`
+  summary: 角色在畫面底部的排列只用整個螢幕加固定邊距（24／96 DIP），不看工作區；Dock 或工作列在側邊、上方時，角色與它的 hit area 會壓在上面、擋住點擊。StageView 的 canvas 要帶工作區，排列以它為準
+  evidence: Story 3.6 中段審查 B10（medium）。使用者選了角色接住滑鼠，壓在工作列上會擋掉點擊；Epic 4 的遊走與排列一起處理，在那之前是已知限制。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-6-tick-and-draw.md`
+  summary: 同版本覆蓋安裝後，overlay 的 manifest、素材快取與沙盒仍是舊的（都以 `packId@version` 為 key）；3.9「包更新後卸除舊沙盒、重載」要一併處理同版本覆蓋，例如在 index 與 StageView 帶一個每次安裝都會變的識別
+  evidence: Story 3.6 中段審查 E2（medium）。3.2 允許同版本重裝（經確認），新的素材 key 會被當成 unknown-asset 丟掉。

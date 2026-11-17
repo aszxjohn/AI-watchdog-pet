@@ -14,6 +14,7 @@ import type {
   packsConfirm,
   packsExport,
   packsGetEntry,
+  packsGetManifest,
   packsLog,
   packsRemove,
   poolSetReleased,
@@ -126,6 +127,14 @@ export interface OverlayApi {
      * why main does not hand it over.
      */
     getEntry(packId: string): Promise<IpcResult<IpcData<typeof packsGetEntry>>>;
+    /**
+     * What the overlay draws the installed pack with at `version` (Story
+     * 3.6): its manifest and spritesheets, checked, or why not.
+     */
+    getManifest(
+      packId: string,
+      version: string,
+    ): Promise<IpcResult<IpcData<typeof packsGetManifest>>>;
     /** Writes one line about a pack's sandbox to the run log. */
     log(entry: PackLogEntry): Promise<IpcResult<IpcData<typeof packsLog>>>;
   };

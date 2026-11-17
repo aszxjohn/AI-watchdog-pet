@@ -28,16 +28,27 @@ describe('PACKAGED_CSP', () => {
 });
 
 describe('OVERLAY_PACKAGED_CSP', () => {
-  it('is the AD-24 policy plus frame-src pack: for the sandboxes (Story 3.5), exactly', () => {
+  it("is the AD-24 policy plus frame-src pack: for the sandboxes (Story 3.5) and img-src pack: for the packs' images (Story 3.6), exactly", () => {
     expect(OVERLAY_PACKAGED_CSP).toBe(
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src pack:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: pack:; connect-src 'self'; frame-src pack:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     );
   });
 
-  it("differs from the panels' policy only by frame-src pack:", () => {
-    const { 'frame-src': frameSrc, ...rest } = directives(OVERLAY_PACKAGED_CSP);
+  it("differs from the panels' policy only by frame-src pack: and pack: in img-src; connect-src stays 'self'", () => {
+    const {
+      'frame-src': frameSrc,
+      'img-src': imgSrc,
+      ...rest
+    } = directives(OVERLAY_PACKAGED_CSP);
     expect(frameSrc).toStrictEqual(['pack:']);
-    expect(rest).toStrictEqual(directives(PACKAGED_CSP));
+    expect(imgSrc).toStrictEqual([
+      ...(directives(PACKAGED_CSP)['img-src'] ?? []),
+      'pack:',
+    ]);
+    const { 'img-src': _panelsImgSrc, ...panelsRest } =
+      directives(PACKAGED_CSP);
+    expect(rest).toStrictEqual(panelsRest);
+    expect(rest['connect-src']).toStrictEqual(["'self'"]);
   });
 });
 

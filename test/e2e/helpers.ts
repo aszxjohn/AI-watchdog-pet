@@ -312,7 +312,7 @@ ${attempts}
     despawn: function () {},
     params: function () {},
     meta: function () {},
-    frame: function () { return []; }
+    frame: function () { return {}; }
   };
 })
 `;

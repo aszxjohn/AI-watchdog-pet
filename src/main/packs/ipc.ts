@@ -1,9 +1,14 @@
-import type { PackEntryResult, PackRemoveResult } from '../../shared/packs';
+import type {
+  PackEntryResult,
+  PackManifestResult,
+  PackRemoveResult,
+} from '../../shared/packs';
 import {
   packsChoose,
   packsConfirm,
   packsExport,
   packsGetEntry,
+  packsGetManifest,
   packsLog,
   packsRemove,
 } from '../../shared/ipc';
@@ -17,8 +22,9 @@ import type { PackImporter } from './importer';
 export const PACKS_RENDERERS: ChannelRenderers = ['panels'];
 
 /**
- * Only the overlay, which hosts the packs' sandboxes, gets their entries
- * and logs about them (Story 3.5); the panels get `sender-rejected`.
+ * Only the overlay, which hosts the packs' sandboxes and draws them, gets
+ * their entries and manifests and logs about them (Stories 3.5, 3.6); the
+ * panels get `sender-rejected`.
  */
 export const PACK_SANDBOX_RENDERERS: ChannelRenderers = ['overlay'];
 
@@ -61,13 +67,17 @@ export function registerPackHandlers(
  * The sandboxes' channels (Story 3.5), overlay only:
  * - `packs:get-entry`: `readEntry` answers with the installed pack's entry
  *   source, or why not (entry.ts);
- * - `packs:log`: `log` writes the line to the run log (sandbox-log.ts).
+ * - `packs:log`: `log` writes the line to the run log (sandbox-log.ts);
+ * - `packs:get-manifest` (Story 3.6): `readManifest` answers with what the
+ *   overlay draws the pack with at a version, or why not
+ *   (overlay-manifest.ts).
  * registerIpcHandler has already checked the arguments against the shared
- * schemas; bad ones reach neither.
+ * schemas; bad ones reach none of them.
  */
 export function registerPackSandboxHandlers(
   readEntry: (packId: string) => Promise<PackEntryResult>,
   log: (entry: PackLogEntry) => void,
+  readManifest: (packId: string, version: string) => PackManifestResult,
 ): void {
   registerIpcHandler(packsGetEntry, PACK_SANDBOX_RENDERERS, (_event, packId) =>
     readEntry(packId),
@@ -76,4 +86,9 @@ export function registerPackSandboxHandlers(
     log(entry);
     return null;
   });
+  registerIpcHandler(
+    packsGetManifest,
+    PACK_SANDBOX_RENDERERS,
+    (_event, packId, version) => readManifest(packId, version),
+  );
 }

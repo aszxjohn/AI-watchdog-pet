@@ -20,28 +20,43 @@
  *       the only thing from outside a pack gets is `stage`, as the
  *       argument of its factory (docs/pack-api-v1.md, sections 6 and 10);
  *    f. calls the factory with `stage` (hardened) and checks that it
- *       returned an object, neither an array nor a thenable (`handlers`,
- *       kept for Story 3.6).
+ *       returned an object, neither an array nor a thenable (`handlers`).
  *    Then it reports `sandbox.ready` or `sandbox.failed` with every
  *    removal's result and the console line count.
  * 4. The overlay's port arrives from the iframe (`{ type: 'port' }`, once);
  *    what was sent before it waits in an outbox. The pack's `stage.*`
  *    calls go out on the port; an uncaught `error` or unhandled rejection
  *    later on is reported as `sandbox.fault`.
- *
- * The stage sends the pack nothing yet (`init`, `frame` and the rest are
- * Story 3.6), so the pack has no actor here: `stage.random` throws for
- * every actor id, and `stage.fire`, `stage.hold` and `stage.face` reach
- * the overlay, which drops them as not the pack's actors.
+ * 5. Once ready (Story 3.6), the stage's messages come in on that port.
+ *    Each one that passes the pack API's stageMessageSchema goes to the
+ *    pack's `handlers[type]`, when that is a function (reading it and
+ *    calling it are each caught: a throwing handler stops nothing here);
+ *    anything else is ignored. `init`, `spawn` and `despawn` keep the set
+ *    of the pack's own actors that `stage.random` answers for (`init` and
+ *    `spawn` before the handler runs, `despawn` after). What `frame`
+ *    returns goes back as `{ type: 'draw', seq, actors: <it> }`, which the
+ *    overlay checks again; a `frame` the pack gives nothing to send for
+ *    (no handler, it threw, its value cannot be cloned, or the draw would
+ *    be over DRAW_MAX_BYTES or DRAW_MAX_COMMANDS, measured here before it
+ *    is posted) is answered with `sandbox.no-draw` instead, and so is a
+ *    `frame` that does not fit the schema but whose `seq` can be read: the
+ *    overlay never waits on a frame.
  *
  * Every function takes the global scope as an argument, so the pure parts
  * are unit-tested under Node and the whole boot runs in a child process
  * (test/sandbox). Keep this file ASCII-only.
  */
-import { SANDBOX_OUTBOX_MAX, STAGE_LOG_MAX_LENGTH } from '../shared/constants';
-import type { StageCallType } from '../shared/pack-api';
+import {
+  DRAW_MAX_BYTES,
+  DRAW_MAX_COMMANDS,
+  SANDBOX_OUTBOX_MAX,
+  STAGE_LOG_MAX_LENGTH,
+} from '../shared/constants';
+import { countDrawCommands, jsonBytes } from '../shared/draw-size';
+import { stageMessageSchema, type StageCallType } from '../shared/pack-api';
 import type {
   SandboxBootFailure,
+  SandboxNoDrawReason,
   SandboxRemoval,
   SandboxReport,
 } from '../shared/sandbox';
@@ -246,9 +261,9 @@ export type Harden = <T>(value: T) => T;
  * hardened. `post` sends a call to the overlay and throws when the
  * arguments cannot be sent; each method then throws a TypeError of its
  * own, so no host error object reaches the pack. `ownActors` are the
- * pack's actors as the stage told it (none before Story 3.6): `random`
- * answers only for those. `canvas` is null until bitmap drawing comes
- * (Story 3.6).
+ * pack's actors as the stage told it (`init`, `spawn`, `despawn`; read at
+ * each call): `random` answers only for those. `canvas` is null until
+ * bitmap drawing comes (Story 3.6's last part).
  */
 export function createStage(
   harden: Harden,
@@ -347,6 +362,11 @@ export interface BootOptions {
   readonly counter: ConsoleCounter;
   /** Sends one `stage.*` call to the overlay. */
   readonly post: (call: StageCallMessage) => void;
+  /**
+   * The pack's own actors, as the stage's messages say (run() keeps it);
+   * `stage.random` answers for these. None when left out.
+   */
+  readonly ownActors?: ReadonlySet<string>;
 }
 
 export interface BootOutcome {
@@ -358,7 +378,7 @@ export interface BootOutcome {
 /** Steps 3a to 3f of the module comment. Never throws. */
 export function boot(
   entrySource: string,
-  { scope = globalThis, counter, post }: BootOptions,
+  { scope = globalThis, counter, post, ownActors = new Set() }: BootOptions,
 ): BootOutcome {
   const apis = REMOVED_WORKER_APIS.map((name) => removeApi(scope, name));
   const intrinsics = SES_UNKNOWN_INTRINSICS.map((path) =>
@@ -410,7 +430,7 @@ export function boot(
   let handlers: unknown;
   try {
     handlers = Reflect.apply(factory, undefined, [
-      createStage(ses.harden, post),
+      createStage(ses.harden, post, ownActors),
     ]);
   } catch {
     return failed('factory-threw');
@@ -427,6 +447,148 @@ export function boot(
 /** The parts of a MessagePort the Worker uses. */
 export interface WorkerPort {
   postMessage(message: unknown): void;
+  /** Hears the stage's messages (a real port always has it). */
+  addEventListener?(
+    type: 'message',
+    listener: (event: { readonly data: unknown }) => void,
+  ): void;
+  /** Starts the port's message queue (a real port always has it). */
+  start?(): void;
+}
+
+/** What the bootstrap answers a `frame` with: the pack's `draw`. */
+export interface DrawReply {
+  readonly type: 'draw';
+  readonly seq: number;
+  /** What the pack's `frame` returned, unchecked: the overlay checks it. */
+  readonly actors: unknown;
+}
+
+/** What the bootstrap answers a `frame` with when the pack gave no `draw`. */
+export interface NoDrawReport {
+  readonly type: 'sandbox.no-draw';
+  readonly seq: number;
+  readonly reason: SandboxNoDrawReason;
+}
+
+/**
+ * Step 5 of the module comment for one message from the stage: checks it,
+ * keeps `ownActors` and calls the pack's handler; a `frame` is answered
+ * through `reply`, which throws when what it is given cannot be sent (then
+ * `sandbox.no-draw` follows). Never throws.
+ */
+export function routeStageMessage(
+  data: unknown,
+  handlers: object,
+  ownActors: Set<string>,
+  reply: (message: DrawReply | NoDrawReport) => void,
+): void {
+  const noDraw = (seq: number, reason: SandboxNoDrawReason): void => {
+    try {
+      reply({ type: 'sandbox.no-draw', seq, reason });
+    } catch {
+      // A plain report always clones; nothing is left to tell if not.
+    }
+  };
+  const parsed = stageMessageSchema.safeParse(data);
+  if (!parsed.success) {
+    // The overlay waits for an answer to a frame it sent: tell it.
+    const seq = frameSeqOf(data);
+    if (seq !== undefined) {
+      noDraw(seq, 'invalid-frame');
+    }
+    return;
+  }
+  const message = parsed.data;
+  switch (message.type) {
+    case 'init':
+      ownActors.clear();
+      for (const actor of message.actors) {
+        if (actor.own) {
+          ownActors.add(actor.actorId);
+        }
+      }
+      break;
+    case 'spawn':
+      ownActors.add(message.actorId);
+      break;
+    default:
+      break;
+  }
+  let handler: unknown;
+  let readThrew = false;
+  try {
+    handler = Reflect.get(handlers, message.type);
+  } catch {
+    readThrew = true;
+  }
+  if (message.type !== 'frame') {
+    if (typeof handler === 'function') {
+      try {
+        Reflect.apply(handler, handlers, [message]);
+      } catch {
+        // The pack's own trouble; the next message goes on.
+      }
+    }
+    if (message.type === 'despawn') {
+      ownActors.delete(message.actorId);
+    }
+    return;
+  }
+  const { seq } = message;
+  if (readThrew) {
+    noDraw(seq, 'frame-threw');
+    return;
+  }
+  if (typeof handler !== 'function') {
+    noDraw(seq, 'no-frame-handler');
+    return;
+  }
+  let actors: unknown;
+  try {
+    actors = Reflect.apply(handler, handlers, [message]);
+  } catch {
+    noDraw(seq, 'frame-threw');
+    return;
+  }
+  const draw: DrawReply = { type: 'draw', seq, actors };
+  let bytes: number | null;
+  let commands: number;
+  try {
+    bytes = jsonBytes(draw, DRAW_MAX_BYTES);
+    commands = countDrawCommands(draw, DRAW_MAX_COMMANDS);
+  } catch {
+    // A getter of the pack's threw: posting it would throw too.
+    noDraw(seq, 'draw-not-cloneable');
+    return;
+  }
+  if (bytes !== null && bytes > DRAW_MAX_BYTES) {
+    noDraw(seq, 'draw-too-large');
+    return;
+  }
+  if (commands > DRAW_MAX_COMMANDS) {
+    noDraw(seq, 'draw-too-many-commands');
+    return;
+  }
+  try {
+    reply(draw);
+  } catch {
+    noDraw(seq, 'draw-not-cloneable');
+  }
+}
+
+/**
+ * The `seq` of a message that says it is a `frame` (a non-negative safe
+ * integer), whether or not the rest of it fits; undefined otherwise.
+ */
+function frameSeqOf(data: unknown): number | undefined {
+  if (typeof data !== 'object' || data === null) {
+    return undefined;
+  }
+  const { type, seq } = data as { type?: unknown; seq?: unknown };
+  return type === 'frame' && Number.isSafeInteger(seq) && (seq as number) >= 0
+    ? (seq as number)
+    : undefined;
 }
 
 /** A `message` event in the Worker. */
@@ -458,13 +620,14 @@ function isPortMessage(data: unknown): boolean {
 }
 
 /**
- * The Worker's step 3 and 4: listens for the port and for uncaught
+ * The Worker's steps 3 to 5: listens for the port and for uncaught
  * trouble (reported once), boots, and reports. The boot report goes
  * first: `stage.*` calls the factory makes are sent after it. Reports
  * always wait for the port; calls made before it arrives wait too, up to
  * SANDBOX_OUTBOX_MAX (later ones are dropped). Each call is copied
  * (structured clone) when made, so arguments that cannot be sent throw at
- * the call.
+ * the call. Once the port is there and the boot gave `handlers`, the
+ * stage's messages on it go to routeStageMessage.
  */
 export function run(
   entrySource: string,
@@ -476,6 +639,10 @@ export function run(
   /** How many `stage.*` calls (not reports) the outbox holds. */
   let queuedCalls = 0;
   let port: WorkerPort | null = null;
+  /** The pack's handlers, once booted; none when the boot failed. */
+  let handlers: object | undefined;
+  /** The pack's own actors, as the stage's messages say. */
+  const ownActors = new Set<string>();
 
   const deliver = (message: unknown, report: boolean): void => {
     if (port !== null) {
@@ -507,6 +674,14 @@ export function run(
         // Already cloned once; nothing of the pack's can fail here.
       }
     }
+    first.addEventListener?.('message', (message) => {
+      if (handlers !== undefined) {
+        routeStageMessage(message.data, handlers, ownActors, (reply) => {
+          first.postMessage(reply);
+        });
+      }
+    });
+    first.start?.();
   });
   // The overlay takes the sandbox down at the first fault: one is enough.
   let faulted = false;
@@ -529,6 +704,7 @@ export function run(
   const outcome = boot(entrySource, {
     scope,
     counter,
+    ownActors,
     post: (call) => {
       if (!booting) {
         deliver(call, false);
@@ -541,6 +717,7 @@ export function run(
     },
   });
   booting = false;
+  handlers = outcome.handlers;
   deliver(outcome.report, true);
   for (const call of duringBoot) {
     deliver(call, false);

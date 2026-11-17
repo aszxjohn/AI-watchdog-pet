@@ -13,7 +13,10 @@
  * needs eval. The overlay and the panels get the same policy, except that
  * the overlay may also frame `pack:` (`frame-src pack:`): each pack's
  * sandbox is an iframe of `pack://_stage/sandbox.html` (Story 3.5), which
- * comes with its own, stricter policy (src/sandbox/csp.ts).
+ * comes with its own, stricter policy (src/sandbox/csp.ts); and it may
+ * load images from `pack:` (`img-src … pack:`), the packs' images it draws
+ * (Story 3.6). Nothing else of `pack:` is opened: the manifests and
+ * spritesheets come from main over IPC, not by fetching them.
  */
 
 /** The stage's own pages, by renderer name. */
@@ -40,17 +43,27 @@ function serialize(
     .join('; ');
 }
 
-/** The packaged directives of `page`: the overlay adds `frame-src pack:`. */
+/**
+ * The packaged directives of `page`: the overlay adds `pack:` to `img-src`
+ * and `frame-src pack:`.
+ */
 function directivesOf(
   page: CspPage,
 ): readonly (readonly [string, readonly string[]])[] {
   if (page === 'panels') {
     return PACKAGED_DIRECTIVES;
   }
-  return PACKAGED_DIRECTIVES.flatMap((directive) =>
-    directive[0] === 'connect-src'
-      ? [directive, ['frame-src', ['pack:']] as const]
-      : [directive],
+  return PACKAGED_DIRECTIVES.flatMap(
+    (directive): (readonly [string, readonly string[]])[] => {
+      switch (directive[0]) {
+        case 'img-src':
+          return [[directive[0], [...directive[1], 'pack:']]];
+        case 'connect-src':
+          return [directive, ['frame-src', ['pack:']]];
+        default:
+          return [directive];
+      }
+    },
   );
 }
 

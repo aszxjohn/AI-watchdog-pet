@@ -37,6 +37,7 @@ import {
   SANDBOX_DOCUMENT_FILE,
   STAGE_LOG_MAX_LENGTH,
 } from '../../src/shared/constants';
+import { drawMessageSchema } from '../../src/shared/pack-api';
 import { sandboxReportSchema } from '../../src/shared/sandbox';
 
 const ROOT = path.resolve(
@@ -101,6 +102,8 @@ interface BootCheck {
     readonly handlerKeys?: readonly string[] | null;
     readonly posted?: readonly unknown[];
     readonly consoleLines?: number;
+    readonly replies?: readonly unknown[];
+    readonly ownActors?: readonly string[];
     readonly electron?: string | null;
     readonly error?: unknown;
   };
@@ -134,6 +137,34 @@ function bootCheck(binary: string, entry: string, mode?: 'print'): BootCheck {
     stderr: run.stderr,
     result: JSON.parse(fs.readFileSync(out, 'utf8')) as BootCheck['result'],
   };
+}
+
+/**
+ * The contract test pack's answer to the boot check's init and frame: one
+ * draw for seq 0 with probe-two's sprite (busy: rotated), which passes the
+ * pack API's drawMessageSchema; its own actor known to stage.random.
+ */
+function expectContractDraw(run: BootCheck): void {
+  expect(run.result.report).toMatchObject({ type: 'sandbox.ready' });
+  expect(run.result.ownActors).toStrictEqual(['a1']);
+  expect(run.result.replies).toHaveLength(1);
+  const draw = drawMessageSchema.parse(run.result.replies?.[0]);
+  expect(draw.seq).toBe(0);
+  expect(Object.keys(draw.actors)).toStrictEqual(['a1']);
+  expect(draw.actors.a1).toStrictEqual([
+    expect.objectContaining({
+      type: 'sprite',
+      asset: 'probe-two-sheet',
+      x: -25,
+      y: -96,
+      scaleX: 25,
+      scaleY: 48,
+      rotation: expect.any(Number) as unknown,
+    }),
+  ]);
+  expect(['eyes-open', 'eyes-shut']).toContain(
+    (draw.actors.a1?.[0] as { frame?: string } | undefined)?.frame,
+  );
 }
 
 function writeEntry(name: string, source: string): string {
@@ -270,6 +301,14 @@ describe.skipIf(ELECTRON === undefined)('I/O matrix', () => {
     );
   });
 
+  it("出現: after lockdown, the bootstrap hands the contract test pack an init and a frame (stageMessageSchema checks them) and wraps the frame's answer as its draw", () => {
+    const run = bootCheck(ELECTRON as string, CONTRACT_ENTRY);
+
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toBe('');
+    expectContractDraw(run);
+  });
+
   it('lockdown: loading SES and lockdown() print nothing (0 console lines, empty stdout and stderr)', () => {
     const run = bootCheck(ELECTRON as string, CONTRACT_ENTRY);
 
@@ -314,6 +353,14 @@ describe('I/O matrix', () => {
       consoleLines: 1,
     });
     expect(run.result.handlerKeys).toBeNull();
+  });
+
+  it("出現: after lockdown, the bootstrap hands the contract test pack an init and a frame (stageMessageSchema checks them) and wraps the frame's answer as its draw", () => {
+    const run = bootCheck(process.execPath, CONTRACT_ENTRY);
+
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toBe('');
+    expectContractDraw(run);
   });
 
   it("入口: the contract test pack's entry is a factory; called with stage, it returns its handlers", () => {

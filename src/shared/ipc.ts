@@ -1,10 +1,12 @@
 import { sessionKeySchema } from './detection-events';
 import {
   packEntryResultSchema,
+  packManifestResultSchema,
   packRemoveResultSchema,
   packsConfirmInputSchema,
   packsExportInputSchema,
   packsGetEntryInputSchema,
+  packsGetManifestInputSchema,
   packsRemoveInputSchema,
 } from './packs';
 import { poolSetReleasedInputSchema } from './pool';
@@ -220,6 +222,20 @@ export const packsGetEntry = {
   channel: 'packs:get-entry',
   input: packsGetEntryInputSchema,
   output: packEntryResultSchema,
+} as const satisfies IpcContract;
+
+/**
+ * `packs:get-manifest` (overlay only, Story 3.6): what the overlay draws an
+ * installed pack with, at the version it asks for: the version's own
+ * manifest and its spritesheets' JSON, each checked. Its images come from
+ * `pack://` itself. main checks again that the pack is installed at that
+ * version and fits this stage; otherwise, or when a file cannot be read or
+ * does not fit its schema, it answers why.
+ */
+export const packsGetManifest = {
+  channel: 'packs:get-manifest',
+  input: packsGetManifestInputSchema,
+  output: packManifestResultSchema,
 } as const satisfies IpcContract;
 
 /**

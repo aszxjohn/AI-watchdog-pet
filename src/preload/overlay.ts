@@ -1,7 +1,8 @@
 // Overlay preload: exposes the overlay's minimal API as `window.awp` (AD-24):
 // the StageView subscription, the `canvas:ready` report, the canvas's
-// hover and right-click requests, and the packs' sandboxes' entry sources
-// and run log lines (Story 3.5). Sandboxed: only electron's renderer API
+// hover and right-click requests, the packs' sandboxes' entry sources
+// and run log lines (Story 3.5), and what the overlay draws each pack
+// with (Story 3.6). Sandboxed: only electron's renderer API
 // and src/shared, no Node globals.
 import { contextBridge } from 'electron';
 import { PRELOAD_API_KEY } from '../shared/constants';
@@ -11,6 +12,7 @@ import {
   canvasReady,
   canvasSetHover,
   packsGetEntry,
+  packsGetManifest,
   packsLog,
   type CanvasHover,
   type CanvasReadyReport,
@@ -32,6 +34,8 @@ const api: OverlayApi = Object.freeze({
   }),
   packs: Object.freeze({
     getEntry: (packId: string) => invoke(packsGetEntry, packId),
+    getManifest: (packId: string, version: string) =>
+      invoke(packsGetManifest, packId, version),
     log: (entry: PackLogEntry) => invoke(packsLog, entry),
   }),
 });

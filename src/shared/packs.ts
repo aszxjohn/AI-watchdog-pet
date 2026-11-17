@@ -2,6 +2,7 @@ import {
   PACK_IMPORT_MAX_TOTAL_BYTES,
   PACK_IMPORT_REPORTED_ISSUES_MAX,
   PACK_REJECTED_NAME_MAX_LENGTH,
+  PACK_SCHEME,
 } from './constants';
 import {
   API_INCOMPATIBILITY_REASONS,
@@ -12,12 +13,14 @@ import {
   idSchema,
   labelSchema,
   MANIFEST_CHARACTERS_MAX,
+  manifestSchema,
   PACK_API_ISSUE_RULES,
   type PackApiIssueRule,
   packIdSchema,
   type PackManifest,
   packPathSchema,
   packVersionSchema,
+  spritesheetSchema,
 } from './pack-api';
 import { z } from './zod-setup';
 
@@ -688,3 +691,63 @@ export type InstalledManifestResult =
       /** The error code, for `unreadable`. Never a path or file content. */
       readonly detail?: string;
     };
+
+// ---------------------------------------------------------------------------
+// What the overlay draws a pack with (Story 3.6).
+
+/**
+ * The `pack://` URL of `path` in version `version` of pack `packId`
+ * (main/packs serves only the paths its install worked out).
+ */
+export function packFileUrl(
+  packId: string,
+  version: string,
+  path: string,
+): string {
+  return `${PACK_SCHEME}://${packId}/${version}/${path}`;
+}
+
+/**
+ * `packs:get-manifest`'s arguments: the id of the installed pack and the
+ * version the overlay draws it at.
+ */
+export const packsGetManifestInputSchema = z.tuple([
+  packIdSchema,
+  packVersionSchema,
+]);
+
+/**
+ * One spritesheet asset as the overlay gets it: its image's pack path
+ * (`meta.image` taken relative to the sheet) and its JSON, checked
+ * (spritesheetSchema keeps only the fields the stage reads).
+ */
+export const packSpritesheetEntrySchema = z.strictObject({
+  image: packPathSchema,
+  data: spritesheetSchema,
+});
+
+export type PackSpritesheetEntry = z.infer<typeof packSpritesheetEntrySchema>;
+
+/**
+ * `packs:get-manifest`'s answer: the installed version's own manifest,
+ * checked, and each of its spritesheet assets by key; or why not, with
+ * `packs:get-entry`'s codes: `not-installed` (no such pack, or it is not
+ * installed at that version any more), `api-incompatible`, `read-failed`
+ * (the manifest or a spritesheet cannot be read or does not fit its
+ * schema, or a sheet's image is not one of the pack's served files).
+ */
+export const packManifestResultSchema = z.discriminatedUnion('ok', [
+  z.strictObject({
+    ok: z.literal(true),
+    packId: packIdSchema,
+    version: packVersionSchema,
+    manifest: manifestSchema,
+    spritesheets: z.record(idSchema, packSpritesheetEntrySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    code: z.enum(PACK_ENTRY_FAILURE_CODES),
+  }),
+]);
+
+export type PackManifestResult = z.infer<typeof packManifestResultSchema>;

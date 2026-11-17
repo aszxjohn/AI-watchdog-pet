@@ -24,11 +24,11 @@
  *    main/packs' packs, packImport and packExport) and the IPC handlers
  *    (a settings patch, an install and a removal each run in one StageView
  *    batch; removing a pack among them; the overlay's packs' entries and
- *    sandbox log lines), and guards every window
- *    webContents. The canvas's hover and right-click handlers come
- *    once the canvas windows exist; a right-click on the demo session's
- *    square opens the demo menu, which calls detection.setDemo as the
- *    tray's 示範模式 does.
+ *    sandbox log lines, and what it draws each pack with), and guards
+ *    every window webContents. The canvas's hover and right-click
+ *    handlers come once the canvas windows exist; no right-click opens a
+ *    menu yet (a character's menu is Story 4.3), and demo mode is
+ *    switched from the tray's 示範模式 only.
  * 3. Once ready: the session guards, the application menu, the `app://`
  *    handler, the `pack://` handler (with the sandbox document the build
  *    wrote next to main.cjs), the Dock icon hidden, the tray icon
@@ -79,11 +79,9 @@ import { appGetVersion } from '../shared/ipc';
 import { MAIN_PANEL_PAGE, type PanelPageId } from '../shared/panels';
 import { createClaudeCodeAdapter } from './detection/adapters/claude-code/claude-code';
 import { createCursorAdapter } from './detection/adapters/cursor/cursor';
-import { DEMO_SESSION_KEY } from './detection/adapters/demo/demo';
 import { createGeminiAdapter } from './detection/adapters/gemini/gemini';
 import {
   createDetection,
-  demoStateOf,
   watchDemoState,
   watchSleep,
 } from './detection/detection';
@@ -103,6 +101,7 @@ import {
   packFileFromArgv,
 } from './packs/launch-files';
 import { readInstalledManifest } from './packs/manifest';
+import { readPackManifest } from './packs/overlay-manifest';
 import { handlePackProtocol } from './packs/protocol';
 import { removePack } from './packs/remove';
 import { logPackEntry } from './packs/sandbox-log';
@@ -126,11 +125,7 @@ import {
 } from './windows/canvas-window';
 import { createDockController } from './windows/dock';
 import { currentEnvironment } from './windows/environment';
-import {
-  buildApplicationMenu,
-  openCanvasMenu,
-  type DemoMenuTarget,
-} from './windows/menu';
+import { buildApplicationMenu, openCanvasMenu } from './windows/menu';
 import { createPanelWindows, PRELOAD_BUNDLES } from './windows/panel-window';
 import { watchPower } from './windows/power';
 import { handleAppProtocol, registerSchemes } from './windows/protocols';
@@ -365,11 +360,13 @@ function startPrimaryInstance(): void {
   registerPackHandlers(importer, exporter, (packId) =>
     stageView.batch(() => removePack(packs, packId)),
   );
-  // The overlay's: each pack's entry for its sandbox, and the run log
-  // lines about the sandboxes (Story 3.5).
+  // The overlay's: each pack's entry for its sandbox, the run log lines
+  // about the sandboxes (Story 3.5), and what it draws each pack with
+  // (Story 3.6).
   registerPackSandboxHandlers(
     (packId) => readPackEntry(packs, packId),
     logPackEntry,
+    (packId, version) => readPackManifest(packs, packId, version),
   );
   registerStageViewHandlers(stageView);
   registerCanvasReadyHandler();
@@ -411,19 +408,11 @@ function startPrimaryInstance(): void {
     env,
     platform: process.platform,
   });
-  // The canvas's hover and right-click requests (AD-14). Only the demo
-  // session has a canvas menu for now (its square, Epic 2 acceptance);
-  // picking from it goes to detection.setDemo, as the tray's 示範模式 does.
-  const demoMenu: DemoMenuTarget = {
-    sessionKey: DEMO_SESSION_KEY,
-    state: () => demoStateOf(detection.get().sessions),
-    setDemo: (state) => {
-      detection.setDemo(state);
-    },
-  };
+  // The canvas's hover and right-click requests (AD-14). No character has
+  // a canvas menu yet (Story 4.3), so a right-click opens none.
   registerCanvasHoverHandler(canvas);
   registerCanvasContextMenuHandler(canvas, (sessionKey, win) => {
-    openCanvasMenu(sessionKey, win, demoMenu);
+    openCanvasMenu(sessionKey, win);
   });
   // Quitting closes the canvas with every other window; do not rebuild it.
   app.on('before-quit', () => {
@@ -556,8 +545,7 @@ function startPrimaryInstance(): void {
             app.quit();
           },
         });
-        // The 示範模式 check mark follows detection, so it agrees with a
-        // change made from the canvas menu.
+        // The 示範模式 check mark follows detection, whatever changed it.
         watchDemoState(detection, (state) => {
           showTrayDemoState(state);
         });

@@ -15,13 +15,13 @@
  * reloads). Moving within an area, from one area to another, or outside
  * all of them sends nothing.
  *
- * When the areas change under a cursor that has not moved (the demo square
- * goes away, the world is resized), a cursor that was over an area and is
- * no longer answers `over: false`. The reverse waits for the next move: an
- * area appearing under the last position seen does not turn click-through
- * off, because that position may be stale (forwarded moves stop at the
- * window's edge), and a stale "over" would block clicks to the windows
- * below.
+ * When the areas change under a cursor that has not moved (a character
+ * leaves or stops being drawn, the world is resized), a cursor that was
+ * over an area and is no longer answers `over: false`. The reverse waits
+ * for the next move: an area appearing under the last position seen does
+ * not turn click-through off, because that position may be stale
+ * (forwarded moves stop at the window's edge), and a stale "over" would
+ * block clicks to the windows below.
  */
 import type { CanvasHover } from '../shared/ipc';
 

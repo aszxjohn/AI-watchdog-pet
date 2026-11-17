@@ -78,8 +78,12 @@ function actor(actorId: string, packId: string): StageActor {
 function view(
   actors: readonly StageActor[],
   installed: readonly StagePack[] = [stagePack(ALPHA), stagePack(BRAVO)],
-): Pick<StageView, 'actors' | 'packs'> {
-  return { actors: [...actors], packs: { installed: [...installed] } };
+): Pick<StageView, 'actors' | 'packs' | 'characters'> {
+  return {
+    actors: [...actors],
+    packs: { installed: [...installed] },
+    characters: {},
+  };
 }
 
 const SOURCE = (packId: string) =>
@@ -98,6 +102,8 @@ const READY = {
 interface FakeFrame {
   readonly handlers: SandboxFrameHandlers;
   readonly handed: SandboxLoadMessage[];
+  /** What pack-host posted on the port (Story 3.6). */
+  readonly posted: unknown[];
   removed: boolean;
 }
 
@@ -144,6 +150,7 @@ function setup(
       const frame: FakeFrame = {
         handlers,
         handed: [],
+        posted: [],
         removed: false,
       };
       frames.push(frame);
@@ -151,6 +158,9 @@ function setup(
         hand(message) {
           order.push('hand');
           frame.handed.push(message);
+        },
+        post(message) {
+          frame.posted.push(message);
         },
         remove() {
           frame.removed = true;
@@ -549,7 +559,6 @@ describe('I/O matrix', () => {
   it.each<[string, unknown]>([
     ['not an object', 'stage.log'],
     ['an unknown type', { type: 'stage.teleport', actorId: 'a1' }],
-    ['a draw (Story 3.6)', { type: 'draw', seq: 0, actors: {} }],
     ['an extra field', { type: 'stage.log', text: 'x', level: 'error' }],
     ['a missing field', { type: 'stage.hold', actorId: 'a1' }],
     ['a wrong type of field', { type: 'stage.hold', actorId: 'a1', on: 'yes' }],

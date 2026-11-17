@@ -316,7 +316,7 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
         // 依 actor.characterId 挑畫法，回傳這隻的指令陣列，例如
         // [{ type: 'sprite', asset: actor.params.skin, x: -30, y: -110,
         //    scaleX: 30, scaleY: 55 }]
-        // （座標與 scaleX／scaleY 是暫定值，見下方說明）
+        // （x、y 是圖的左上角；2×2 的圖放大 30×55 倍成 60×110 基準像素，見 8.1）
         draw[actorId] = drawActor(actorId, actor, message.t);
       }
       return draw;
@@ -327,7 +327,7 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
 
 最外層的括號讓整支程式成為一個運算式，它的值就是工廠函式。lint 工具若回報這行「沒有用到的運算式」，那是誤報。
 
-範例裡的 `x`、`y` 與 `scaleX`、`scaleY` 是暫定值：範例包用 2×2 像素的圖放大成角色大小，並假設圖的左上角對齊 `x`、`y`。sprite 以圖的哪一點對齊、圖的像素怎麼換算成基準像素都還沒定案（第 11 節），定案後這些數字可能要改。
+範例包用 2×2 像素的圖放大成角色大小：圖的左上角放在 `x`、`y`，`scaleX`、`scaleY` 把 1 個圖像素放大成 30×55 個基準像素。sprite 的座標與像素換算見 8.1。
 
 ### actor
 
@@ -360,7 +360,7 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
 - `t`：舞台時間，毫秒，≥ 0。這是包**唯一**的時鐘。
 - `dt`：與上一個 `frame` 相隔的毫秒數，≥ 0。
 - `actors[]`：己方每個 actor 一筆 `{ actorId, state }`。
-- `events[]`：本 tick 的事件。v1.0 只有 `{ type: 'enter', actorId }` 與 `{ type: 'leave', actorId }`，代表任何一包的 actor 進場或離場。
+- `events[]`：上一則 `frame` 之後的所有事件，包括這包被跳過的 tick 裡發生的（見 8.3）。v1.0 只有 `{ type: 'enter', actorId }` 與 `{ type: 'leave', actorId }`，代表任何一包的 actor 進場或離場。
 
 注意：
 
@@ -379,12 +379,20 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
 | 欄位 | 規則 | 省略時 |
 |---|---|---|
 | `asset` | `assets` 裡的 key | 必填 |
-| `frame` | spritesheet 的格名稱；單張圖不填 | — |
-| `x`、`y` | 本地座標 | 必填 |
+| `frame` | spritesheet 的格名稱：spritesheet 一定要填，而且是它有的格；單張圖不填 | — |
+| `x`、`y` | 圖的左上角，本地座標 | 必填 |
 | `rotation` | 弧度 | 0 |
 | `scaleX`、`scaleY` | 縮放，負數代表翻轉 | 1 |
 | `alpha` | 0～1 | 1 |
-| `z` | 整數，只排同一個 actor 內的前後，越大越上層 | 0 |
+| `z` | 整數，只排同一個 actor 內的前後，越大越上層；一樣大時照陣列順序 | 0 |
+
+**座標與像素（定案）：**
+
+- `x`、`y` 是圖的左上角（第 0 列第 0 行像素的外角）在 actor 本地座標的位置，單位是基準像素。
+- 1 個圖像素 ＝ 1 基準像素 × `scaleX`（橫）、× `scaleY`（直）。舞台再乘上固定參數「大小」。
+- `scaleX`、`scaleY`、`rotation` 都以 (`x`, `y`) 這一點為原點：負的 `scaleX` 讓圖以這一點為軸左右翻轉，圖會往左延伸；`rotation` 繞這一點轉。
+- spritesheet 的格：裁切過的格（`trimmed`、`spriteSourceSize`、`sourceSize`）以未裁切的大小對齊 (`x`, `y`)；旋轉存放的格（`rotated`）照 PixiJS 轉回來。
+- 圖放大縮小時以線性內插取樣（不是最近點），所以邊緣會稍微柔化。spritesheet 的相鄰格之間至少要留 1 像素的透明間隔，否則會滲到隔壁格的顏色。
 
 **`particles`**：粒子發射器。
 
@@ -423,10 +431,20 @@ if (busy) {
 其他規則：
 
 - 一個 actor 給空陣列，代表這格什麼都不畫，**不會**觸發佔位。
-- 只能畫己方 actor。出現別的 `actorId`，整則 `draw` 會被丟棄。
+- **漏回（定案）：** `draw` 裡沒有某個己方 actor，那個 actor 這一則什麼都不畫（不觸發佔位），直到下一則有它的 `draw`。建議每一格都完整回傳本格 `frame.actors` 裡的 actor。
+- 只能畫這則 `frame` 的己方 actor。出現別的 `actorId`，整則 `draw` 會被丟棄。
+- `sprite` 的 `asset` 不在 `assets`、spritesheet 沒給 `frame` 或格名稱不存在、單張圖給了 `frame`，整則 `draw` 會被丟棄。
 - 指令或 `draw` 有多出來的欄位，就不合法。
-- 每則 `draw` 的指令數、位元組數、發射器數，以及 `bitmap` 的尺寸與每秒張數都有上限（舞台常數）。超過時整則丟棄，並記錄包 id；這也是執行失敗的條件之一（見 8.4）。
-- 素材由舞台從 `pack://<packId>/<version>/<path>` 載入並快取。除了 `bitmap`，包不傳任何圖檔資料。
+- 每則 `draw` 的指令數、位元組數、發射器數，以及 `bitmap` 的尺寸與每秒張數都有上限（舞台常數）。目前一則 `draw` 最多 256 個指令（所有 actor 合計）、64 KiB（JSON 大小）。超過時整則丟棄，並記錄包 id；這也是執行失敗的條件之一（見 8.4）。
+- 目前的舞台還不畫 `particles` 與 `bitmap`：這兩種指令會被略過（每包記錄一次），同一則 `draw` 的其他指令照畫。
+- 素材由舞台從 `pack://<packId>/<version>/<path>` 載入並快取（每個版本各自快取，換版本就重新載入）。除了 `bitmap`，包不傳任何圖檔資料。
+
+**spritesheet 的 JSON（定案）：** PixiJS／TexturePacker 的「JSON Hash」格式，舞台載入時檢查，只讀以下欄位，其他的都忽略：
+
+- `frames`：格名稱 → `{ frame: { x, y, w, h } }`，可選 `rotated`、`trimmed`、`spriteSourceSize`、`sourceSize`（照 PixiJS 的處理）。這些矩形與大小都必須是整數像素。格的 `pivot`、`anchor` 等欄位忽略：sprite 只依自己的 `x`、`y` 擺放。
+- `meta.image`：圖檔，相對於 JSON 檔所在的資料夾；`meta.size`：圖的大小；`meta.scale`：只接受 `1`（或字串 `"1"`），也可以省略。
+- `animations` 忽略：包自己用 `sprite` 的 `frame` 選每一格要畫哪張。
+- 有一格超出圖的範圍，或 JSON 不合上面的規則，這個 spritesheet 就不能用，用到它的 sprite 不畫（記錄包 id）。
 - `pack://` 只提供入口、`assets` 的路徑，以及已宣告 spritesheet 的 `meta.image`。包裡的其他檔案（包括 `manifest.json`、說明檔）會照樣安裝，但從 `pack://` 讀不到。
 
 ### 8.2 `stage`
@@ -446,8 +464,8 @@ if (busy) {
 
 ### 8.3 節拍
 
-- 節拍由舞台掌管，每個 tick 對有 actor 的包送一則 `frame`。
-- 每一包同時最多只有一則 `frame` 在途。上一則還沒回，這一格就跳過這包，不排隊。
+- 節拍由舞台掌管，每個 tick 對有 actor 的包送一則 `frame`。最後一個己方 actor 離場後，還會再收到一則 `actors` 為空的 `frame`，帶著它的 `leave`；之後到下一個己方 actor 出現前不再收到 `frame`。
+- 每一包同時最多只有一則 `frame` 在途。上一則還沒回，這一格就跳過這包，不排隊。`frame` 處理函式丟出例外、不存在、或回傳值無法傳送（例如含函式或 Promise）時，這則 `frame` 視為沒有 `draw`（記錄包 id），下一格照常送。
 - 舞台每次畫面更新，都用這包最後一則有效的 `draw`，不會等包。
 - 所以 `frame` 處理函式太慢，角色就會掉格：畫面停在上一則 `draw`，中間的 tick 包收不到。動畫請依 `frame.t` 計算，不要假設每格相隔固定時間。
 
@@ -534,11 +552,7 @@ if (busy) {
   - 角色處在舞台畫佔位的狀態時（3.2 的第 3 種情況），`frame` 裡這隻 actor 收到的是哪個狀態。
   - 訊息到達的順序，例如同一個 tick 的 `spawn`、`params`、`meta` 與 `frame` 誰先誰後。
 - **handlers：** 哪些處理函式必須提供，以及 `handlers` 有不認得的鍵時怎麼處理。範例包六種都有寫，鍵也只用訊息名稱。
-- **`draw`：**
-  - 漏掉某隻己方 actor 時怎麼處理。建議每一格都只回傳、而且完整回傳本格 `frame.actors` 裡的 actor。
-  - 各項上限的數值，以及 `drawTimeoutMs`、心跳逾時、`sandboxIdleMs` 等時間數值。
-- **繪圖：**
-  - sprite 以圖的哪一點對齊 `x`、`y`，以及圖的像素怎麼換算成基準像素。
-  - 粒子 preset 的正式清單：目前接受任何 id 格式的名稱，之後只接受清單裡的。
-- **素材：**
-  - spritesheet JSON 支援哪些欄位（範例包只用 `frames[].frame`、`meta.image`、`meta.size`、`meta.scale`）。圖片格式已定案：v1.0 只收 PNG（第 1 節）。
+- **`draw`：** 指令數與位元組數以外的上限數值（發射器數、`bitmap`），以及 `drawTimeoutMs`、心跳逾時、`sandboxIdleMs` 等時間數值。
+- **繪圖：** 粒子 preset 的正式清單：目前接受任何 id 格式的名稱，之後只接受清單裡的。
+
+已定案、移到正文的：`draw` 漏掉己方 actor 的處理、sprite 的座標與像素換算、spritesheet JSON 的欄位（都在 8.1）。圖片格式也已定案：v1.0 只收 PNG（第 1 節）。

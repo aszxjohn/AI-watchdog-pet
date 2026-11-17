@@ -26,9 +26,11 @@
  * The content type follows the extension; a pack never gets an HTML type
  * from here, and `nosniff` keeps the browser from guessing one.
  *
- * No CORS header (`Access-Control-Allow-Origin`) is sent yet. Story 3.6
- * decides it when the overlay (`app://overlay`) loads textures from here
- * with PixiJS, together with letting `pack:` into the overlay's CSP.
+ * No CORS header (`Access-Control-Allow-Origin`) is sent (Story 3.6): the
+ * overlay loads the packs' images from here as `<img crossorigin>`, which
+ * the scheme's `corsEnabled` lets it read without one (the Story 1.2
+ * prototype), with `pack:` in the overlay's `img-src`. The manifests and
+ * spritesheets it gets from main over IPC instead (`packs:get-manifest`).
  */
 import { protocol } from 'electron';
 import { createHash } from 'node:crypto';

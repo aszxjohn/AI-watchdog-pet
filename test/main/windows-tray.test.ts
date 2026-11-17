@@ -13,14 +13,10 @@ import {
   checkDemoItem,
   CLOSE_PANEL_LABEL,
   DEMO_OFF_LABEL,
-  DEMO_TURN_OFF_LABEL,
-  demoCanvasMenuTemplate,
-  demoItemId,
   openCanvasMenu,
   QUIT_LABEL,
   trayMenuTemplate,
   type ApplicationMenuActions,
-  type DemoMenuTarget,
 } from '../../src/main/windows/menu';
 import {
   createTray,
@@ -357,130 +353,33 @@ describe('the 示範模式 submenu', () => {
   });
 });
 
-describe('the canvas menu on the demo session', () => {
-  it('右鍵: the 8 states with the current one checked, a separator, then 關閉示範模式', () => {
-    const template = demoCanvasMenuTemplate('approval', actions());
-    expect(
-      template.map((item) => [item.id, item.type, item.label, item.checked]),
-    ).toStrictEqual([
-      ['demo-waiting', 'radio', '等你回覆', false],
-      ['demo-thinking', 'radio', '思考中', false],
-      ['demo-working', 'radio', '工作中', false],
-      ['demo-approval', 'radio', '要你批准', true],
-      ['demo-decision', 'radio', '要你決定', false],
-      ['demo-done', 'radio', '做完了', false],
-      ['demo-idle', 'radio', '休息中', false],
-      ['demo-error', 'radio', '出錯了', false],
-      [undefined, 'separator', undefined, undefined],
-      ['demo-turn-off', undefined, '關閉示範模式', undefined],
-    ]);
-    expect(DEMO_TURN_OFF_LABEL).toBe('關閉示範模式');
-  });
-
-  it.each(STATE_CODES)(
-    'checks only %s when it is the current state',
-    (state) => {
-      const checked = demoCanvasMenuTemplate(state, actions())
-        .filter((item) => item.checked === true)
-        .map((item) => item.id);
-      expect(checked).toStrictEqual([demoItemId(state)]);
-    },
-  );
-
-  it.each(STATE_CODES.map((state, index) => [state, index] as const))(
-    '從選單選: %s shows that state on the demo session',
-    (state, index) => {
-      const handlers = actions();
-      click(demoCanvasMenuTemplate('working', handlers)[index]);
-      expect(handlers.setDemo.mock.calls).toStrictEqual([[state]]);
-    },
-  );
-
-  it('關閉示範模式 turns demo mode off', () => {
-    const handlers = actions();
-    click(demoCanvasMenuTemplate('working', handlers).at(-1));
-    expect(handlers.setDemo.mock.calls).toStrictEqual([[null]]);
-  });
-
-  it('shares its state items with the tray submenu: same ids, labels and order', () => {
-    const shape = (item: { id?: string; type?: string; label?: string }) => [
-      item.id,
-      item.type,
-      item.label,
-    ];
-    expect(
-      demoCanvasMenuTemplate('done', actions()).slice(0, 8).map(shape),
-    ).toStrictEqual(demoItems().slice(1).map(shape));
-  });
-});
-
-describe('openCanvasMenu', () => {
+// openCanvasMenu. Story 3.6: the demo session's menu went with the demo
+// square; a character's menu is Story 4.3.
+describe('I/O matrix', () => {
   const CANVAS_WINDOW = { fake: 'canvas window' } as unknown as BaseWindow;
-
-  function target(state: StateCode | null) {
-    const setDemo = vi.fn<(next: StateCode | null) => void>();
-    const demo: DemoMenuTarget = {
-      sessionKey: 'demo:1',
-      state: () => state,
-      setDemo,
-    };
-    return { demo, setDemo };
-  }
 
   function lines(spy: ReturnType<typeof vi.spyOn>): string[] {
     return spy.mock.calls.map((call: unknown[]) => String(call[0]));
   }
 
-  it('右鍵: pops the demo menu up on the canvas window, its current state checked', () => {
-    const { demo } = target('approval');
-
-    expect(openCanvasMenu('demo:1', CANVAS_WINDOW, demo)).toBe(true);
-
-    expect(fake.FakeMenu.popUps).toHaveLength(1);
-    const [popped] = fake.FakeMenu.popUps;
-    expect(popped?.options).toStrictEqual({ window: CANVAS_WINDOW });
-    expect(popped?.menu.checkedIds()).toStrictEqual(['demo-approval']);
-    expect(lines(warn)).toStrictEqual([]);
-  });
-
-  it('從選單選: picking 出錯了 from the popped-up menu calls setDemo(error)', () => {
-    const { demo, setDemo } = target('approval');
-    openCanvasMenu('demo:1', CANVAS_WINDOW, demo);
-
-    fake.FakeMenu.popUps[0]?.menu.getMenuItemById('demo-error')?.click();
-
-    expect(setDemo.mock.calls).toStrictEqual([['error']]);
-  });
-
   it.each([
+    ['demo:1', 'demo'],
     ['codex:s1', 'codex'],
     ['claude-code:0b9a7c2e', 'claude-code'],
-    ['demo:2', 'demo'],
   ] as const)(
-    '不是示範 session (%s): no menu, one windows warning naming only the source',
+    '滑鼠: a right-click on %s opens no menu (右鍵沒有選單) and logs one windows line naming only the source',
     (sessionKey, source) => {
-      const { demo, setDemo } = target('approval');
+      info.mockClear();
 
-      expect(openCanvasMenu(sessionKey, CANVAS_WINDOW, demo)).toBe(false);
+      expect(openCanvasMenu(sessionKey, CANVAS_WINDOW)).toBe(false);
 
       expect(fake.FakeMenu.popUps).toStrictEqual([]);
-      expect(setDemo).not.toHaveBeenCalled();
-      expect(lines(warn)).toStrictEqual([
-        `[windows] canvas menu asked for a session that is not the demo session (source ${source}); no menu`,
+      expect(lines(info)).toStrictEqual([
+        `[windows] canvas right-click on a character (source ${source}); no canvas menu yet`,
       ]);
+      expect(lines(warn)).toStrictEqual([]);
     },
   );
-
-  it('demo mode already off (its square was still drawn): no menu, one windows warning', () => {
-    const { demo } = target(null);
-
-    expect(openCanvasMenu('demo:1', CANVAS_WINDOW, demo)).toBe(false);
-
-    expect(fake.FakeMenu.popUps).toStrictEqual([]);
-    expect(lines(warn)).toStrictEqual([
-      '[windows] canvas menu asked for the demo session while demo mode is off; no menu',
-    ]);
-  });
 });
 
 describe('the tray check mark follows detection', () => {
@@ -548,7 +447,7 @@ describe('the tray check mark follows detection', () => {
     );
   });
 
-  it('end to end, wired as main.ts does: the tray and the canvas menu change the same demo session and the tray mark follows both', () => {
+  it('end to end, wired as main.ts does: the tray changes the demo session and the tray mark follows detection', () => {
     const clock = fakeClock();
     const detection = createDetection({
       settings: {
@@ -566,33 +465,20 @@ describe('the tray check mark follows detection', () => {
     const tray = createTray('darwin', { ...actions(), setDemo });
     const menu = trayMenuOf(tray);
     watchDemoState(detection, showTrayDemoState);
-    const demo: DemoMenuTarget = {
-      sessionKey: DEMO_SESSION_KEY,
-      state: () => demoStateOf(detection.get().sessions),
-      setDemo,
-    };
-    const canvasWindow = {} as BaseWindow;
 
     // 出現: from the tray, 要你批准.
     menu.getMenuItemById('demo-approval')?.click();
     expect(demoStateOf(detection.get().sessions)).toBe('approval');
-
-    // 右鍵 then 從選單選 出錯了: detection and the tray mark both follow.
-    expect(openCanvasMenu(DEMO_SESSION_KEY, canvasWindow, demo)).toBe(true);
-    const canvasMenu = fake.FakeMenu.popUps.at(-1)?.menu;
-    expect(canvasMenu?.checkedIds()).toStrictEqual(['demo-approval']);
-    canvasMenu?.getMenuItemById('demo-error')?.click();
-    expect(demoStateOf(detection.get().sessions)).toBe('error');
-    expect(menu.checkedIds()).toStrictEqual(['demo-error']);
-
-    // The next right-click shows 出錯了 checked.
-    openCanvasMenu(DEMO_SESSION_KEY, canvasWindow, demo);
-    expect(fake.FakeMenu.popUps.at(-1)?.menu.checkedIds()).toStrictEqual([
-      'demo-error',
+    expect(detection.get().sessions.map((s) => s.sessionKey)).toStrictEqual([
+      DEMO_SESSION_KEY,
     ]);
 
-    // 關閉示範模式 from the canvas: the session is gone, the tray says 關閉.
-    fake.FakeMenu.popUps.at(-1)?.menu.getMenuItemById('demo-turn-off')?.click();
+    // Changed elsewhere (detection itself): the tray mark follows.
+    detection.setDemo('error');
+    expect(menu.checkedIds()).toStrictEqual(['demo-error']);
+
+    // 關閉 from the tray: the session is gone, the tray says 關閉.
+    menu.getMenuItemById('demo-off')?.click();
     expect(detection.get().sessions).toStrictEqual([]);
     expect(menu.checkedIds()).toStrictEqual(['demo-off']);
 

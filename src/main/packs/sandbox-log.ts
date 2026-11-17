@@ -1,6 +1,7 @@
 /**
  * main/packs (Story 3.5): the run log lines the overlay asks for about
- * the packs' sandboxes (`packs:log`). Every line names the pack; the
+ * the packs' sandboxes and, from Story 3.6, about drawing them
+ * (`packs:log`). Every line names the pack; the
  * entry has passed its schema already (English codes, ids, versions and
  * removal names only), and the one free text, a pack's `stage.log`, goes
  * through quotedName: control and bidi characters escaped, cut at
@@ -9,6 +10,7 @@
 import { SANDBOX_IDLE_MS, STAGE_LOG_MAX_LENGTH } from '../../shared/constants';
 import type {
   PackLogEntry,
+  PackNotDrawnReason,
   SandboxDestroyReason,
   SandboxRemoval,
 } from '../../shared/sandbox';
@@ -35,6 +37,16 @@ const DESTROY_TEXTS: Readonly<Record<SandboxDestroyReason, string>> =
     'not-installed': 'its pack is no longer installed',
     'api-incompatible': 'its pack no longer fits the stage API',
     'version-changed': 'its pack is installed at another version now',
+  });
+
+/** Why a pack's actors are not drawn, as its line says it (Story 3.6). */
+const NOT_DRAWN_TEXTS: Readonly<Record<PackNotDrawnReason, string>> =
+  Object.freeze({
+    'character-missing':
+      "an actor plays a character the stage cannot find (no effective values for it, or not in the pack's manifest)",
+    'manifest-unavailable':
+      'its manifest or spritesheets could not be had for the version installed',
+    'asset-failed': 'an asset could not be loaded or does not fit its image',
   });
 
 function messages(count: number): string {
@@ -85,6 +97,16 @@ export function packLogLine(entry: PackLogEntry): {
     case 'messages-dropped':
       return {
         message: `${pack}: dropped ${messages(entry.count)} from its sandbox (${entry.reason})`,
+        level: 'warn',
+      };
+    case 'commands-skipped':
+      return {
+        message: `${pack}: its draws have ${entry.command} commands, which the stage does not draw yet; the rest is drawn`,
+        level: 'info',
+      };
+    case 'not-drawn':
+      return {
+        message: `${pack}: not drawn${entry.asset === undefined ? '' : ` (asset ${entry.asset})`}: ${NOT_DRAWN_TEXTS[entry.reason]}`,
         level: 'warn',
       };
   }

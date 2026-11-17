@@ -72,6 +72,7 @@ const state = vi.hoisted(() => {
       | {
           readEntry(packId: string): unknown;
           log(entry: unknown): void;
+          readPackManifest(packId: string, version: string): unknown;
         }
       | undefined,
     /** The build folder main.ts passed to handlePackProtocol. */
@@ -104,17 +105,7 @@ const state = vi.hoisted(() => {
       | ((sessionKey: string, win: unknown) => void)
       | undefined,
     /** What the right-click callback passed to openCanvasMenu. */
-    menuArgs: undefined as
-      | [
-          string,
-          unknown,
-          {
-            sessionKey: string;
-            state(): string | null;
-            setDemo(state: string | null): void;
-          },
-        ]
-      | undefined,
+    menuArgs: undefined as unknown[] | undefined,
     /** The listener main.ts passed to watchDemoState. */
     demoListener: undefined as ((state: string | null) => void) | undefined,
     /** The listener main.ts passed to detection.onSynced. */
@@ -401,9 +392,10 @@ vi.mock('../../src/main/packs/ipc', () => ({
   registerPackSandboxHandlers: (
     readEntry: (packId: string) => unknown,
     log: (entry: unknown) => void,
+    readPackManifest: (packId: string, version: string) => unknown,
   ) => {
     state.order.push('registerPackSandboxHandlers');
-    state.sandboxHandlers = { readEntry, log };
+    state.sandboxHandlers = { readEntry, log, readPackManifest };
   },
 }));
 
@@ -411,6 +403,17 @@ vi.mock('../../src/main/packs/entry', () => ({
   readPackEntry: (store: { fake: string }, packId: string) => {
     state.order.push(`readPackEntry ${store.fake} ${packId}`);
     return Promise.resolve({ ok: false, code: 'not-installed' });
+  },
+}));
+
+vi.mock('../../src/main/packs/overlay-manifest', () => ({
+  readPackManifest: (
+    store: { fake: string },
+    packId: string,
+    version: string,
+  ) => {
+    state.order.push(`readPackManifest ${store.fake} ${packId} ${version}`);
+    return { ok: false, code: 'not-installed' };
   },
 }));
 
@@ -646,14 +649,12 @@ vi.mock('../../src/main/windows/menu', () => ({
     state.maybeFail('buildApplicationMenu');
     return { fake: `menu ${platform}` };
   },
-  openCanvasMenu: (
-    sessionKey: string,
-    win: unknown,
-    demo: NonNullable<typeof state.menuArgs>[2],
-  ) => {
-    state.order.push(`openCanvasMenu ${sessionKey} ${JSON.stringify(win)}`);
-    state.menuArgs = [sessionKey, win, demo];
-    return true;
+  openCanvasMenu: (...args: unknown[]) => {
+    state.order.push(
+      `openCanvasMenu ${String(args[0])} ${JSON.stringify(args[1])}`,
+    );
+    state.menuArgs = args;
+    return false;
   },
 }));
 
@@ -1048,7 +1049,7 @@ describe('the primary instance', () => {
     );
   });
 
-  it('wires a canvas right-click to the canvas menu, for the demo session as main/detection sees it', async () => {
+  it('wires a canvas right-click to openCanvasMenu with the canvas window and nothing else: no demo menu any more (Story 3.6)', async () => {
     await startMain();
     state.order = [];
 
@@ -1057,19 +1058,9 @@ describe('the primary instance', () => {
     expect(state.order).toStrictEqual([
       'openCanvasMenu codex:s1 {"fake":"canvas window"}',
     ]);
-    const demo = state.menuArgs?.[2];
-    expect(demo?.sessionKey).toBe('demo:1');
-
-    state.order = [];
-    // Its current state: the demo session's in detection's sessions section.
-    expect(demo?.state()).toBe('error');
-    // Picking from the menu goes to detection.setDemo, as the tray's does.
-    demo?.setDemo('done');
-    demo?.setDemo(null);
-    expect(state.order).toStrictEqual([
-      'demoStateOf ["fake sessions"]',
-      'detection.setDemo done',
-      'detection.setDemo null',
+    expect(state.menuArgs).toStrictEqual([
+      'codex:s1',
+      { fake: 'canvas window' },
     ]);
   });
 
@@ -1228,6 +1219,18 @@ describe('the packs sandboxes (Story 3.5)', () => {
     expect(state.order).toStrictEqual([
       'readPackEntry packs sample-pack',
       'logPackEntry {"kind":"sandbox-destroyed","packId":"x","reason":"idle"}',
+    ]);
+  });
+
+  it("packs:get-manifest reads from main/packs' store with readPackManifest (Story 3.6)", async () => {
+    await startMain();
+    state.order = [];
+
+    expect(
+      state.sandboxHandlers?.readPackManifest('sample-pack', '1.2.0'),
+    ).toStrictEqual({ ok: false, code: 'not-installed' });
+    expect(state.order).toStrictEqual([
+      'readPackManifest packs sample-pack 1.2.0',
     ]);
   });
 

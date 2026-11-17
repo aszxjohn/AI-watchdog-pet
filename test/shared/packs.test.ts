@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   characterKey,
@@ -15,15 +18,18 @@ import {
   packCharacterSummarySchema,
   packCompatibilitySchema,
   packEntryResultSchema,
+  packFileUrl,
   packIndexEntrySchema,
   packIndexFileSchema,
   packManifestIssueSchema,
   packRejectionSchema,
+  packManifestResultSchema,
   packRemoveResultSchema,
   PACKS_SCHEMA_VERSION,
   packsConfirmInputSchema,
   packsExportInputSchema,
   packsGetEntryInputSchema,
+  packsGetManifestInputSchema,
   packsRemoveInputSchema,
   stagePackExportSchema,
   stagePackImportSchema,
@@ -696,3 +702,92 @@ describe('characterKey (Story 3.3)', () => {
     expectRejected(characterKeySchema, value);
   });
 });
+
+describe('packs:get-manifest (Story 3.6)', () => {
+  const MANIFEST = contractManifestJson();
+  const SHEET = {
+    image: 'img/probe-two-sheet.png',
+    data: {
+      frames: {
+        'eyes-open': { frame: { x: 0, y: 0, w: 2, h: 2 } },
+        'eyes-shut': { frame: { x: 2, y: 0, w: 2, h: 2 } },
+      },
+      meta: { image: 'probe-two-sheet.png', size: { w: 4, h: 2 }, scale: 1 },
+    },
+  };
+
+  it('takes one pack id and one version', () => {
+    expectRoundTrip(packsGetManifestInputSchema, ['sample-pack', '1.4.0']);
+    expectRejected(packsGetManifestInputSchema, ['sample-pack']);
+    expectRejected(packsGetManifestInputSchema, ['_stage', '1.0.0']);
+    expectRejected(packsGetManifestInputSchema, ['sample-pack', '1.0']);
+    expectRejected(packsGetManifestInputSchema, ['sample-pack', '1.0.0', 'x']);
+  });
+
+  it('answers the manifest and each spritesheet, or a failure code', () => {
+    expectRoundTrip(packManifestResultSchema, {
+      ok: true,
+      packId: 'contract-pack',
+      version: '1.0.0',
+      manifest: MANIFEST,
+      spritesheets: { 'probe-two-sheet': SHEET },
+    });
+    for (const code of PACK_ENTRY_FAILURE_CODES) {
+      expectRoundTrip(packManifestResultSchema, { ok: false, code });
+    }
+  });
+
+  it.each<[string, unknown]>([
+    ['an unknown code', { ok: false, code: 'gone' }],
+    [
+      'a manifest that fails its schema',
+      {
+        ok: true,
+        packId: 'contract-pack',
+        version: '1.0.0',
+        manifest: { ...(MANIFEST as object), characters: [] },
+        spritesheets: {},
+      },
+    ],
+    [
+      'a sheet image that is not a pack path',
+      {
+        ok: true,
+        packId: 'contract-pack',
+        version: '1.0.0',
+        manifest: MANIFEST,
+        spritesheets: { 'probe-two-sheet': { ...SHEET, image: '../x.png' } },
+      },
+    ],
+    [
+      'no spritesheets',
+      {
+        ok: true,
+        packId: 'contract-pack',
+        version: '1.0.0',
+        manifest: MANIFEST,
+      },
+    ],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(packManifestResultSchema, value);
+  });
+
+  it('packFileUrl is pack://<packId>/<version>/<path>', () => {
+    expect(packFileUrl('sample-pack', '1.4.0', 'img/a.png')).toBe(
+      'pack://sample-pack/1.4.0/img/a.png',
+    );
+  });
+});
+
+/** The contract test pack's manifest, as JSON. */
+function contractManifestJson(): unknown {
+  return JSON.parse(
+    readFileSync(
+      path.join(
+        path.dirname(fileURLToPath(import.meta.url)),
+        '../packs/contract-pack/contract-pack/manifest.json',
+      ),
+      'utf8',
+    ),
+  ) as unknown;
+}

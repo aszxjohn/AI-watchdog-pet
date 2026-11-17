@@ -1,30 +1,29 @@
 /**
  * overlay/canvas-input (AD-14): the canvas's mouse handling, with the
- * preload API and the drawing passed in: no DOM and no PixiJS types here,
- * so it is unit-tested under Node. main.ts forwards the DOM events (their
- * client coordinates are world coordinates) and draws.
+ * preload API passed in: no DOM and no PixiJS types here, so it is
+ * unit-tested under Node. main.ts forwards the DOM events (their client
+ * coordinates are world coordinates) and the areas each drawn frame takes
+ * the mouse over.
  *
- * - Each StageView state gives the demo square (demo-square.ts). Once the
- *   canvas can draw, a changed square is drawn, and only then do the areas
- *   that take the mouse follow it. Until the canvas has initialised, or if
- *   it never does, nothing takes the mouse: no invisible region blocks
- *   clicks or opens a menu.
+ * - What takes the mouse is what the renderer last drew (Story 3.6): one
+ *   area per drawn actor, its manifest `hitbox` times its 大小 at its
+ *   place on screen, named by its session key, the one drawn on top last
+ *   (renderer/scene.ts). Nothing takes the mouse before the first drawn
+ *   frame, so no invisible region blocks clicks.
  * - Mouse moves and the cursor leaving the window go to pointer.ts, and
  *   each request it gives goes to main on `canvas:set-hover`. So does the
  *   `over: false` when the areas change under a still cursor that is no
- *   longer over one (the square went away or moved with the world).
- * - A right-click on the square asks main for its menu on
- *   `canvas:context-menu`, then counts as the cursor leaving: the native
- *   menu takes the mouse, and once it closes, click-through must not stay
- *   off where the menu was until the next move. The next move decides
- *   again. onContextMenu says whether the DOM event is to be
- *   preventDefault-ed: only such a right-click is.
+ *   longer over one (the actor left, moved or stopped being drawn).
+ * - A right-click on an actor goes to main on `canvas:context-menu`, named
+ *   by the session key of the actor under the cursor (the one on top);
+ *   onContextMenu says whether it was on one, to be preventDefault-ed.
+ *   main opens no menu yet (a character's menu is Story 4.3; the demo
+ *   session's menu went with the demo square), so nothing takes the mouse
+ *   away from the page and click-through stays as it is.
  */
 import type { SessionKey } from '../shared/detection-events';
 import type { IpcError, IpcResult } from '../shared/ipc';
 import type { OverlayApi } from '../shared/preload-api';
-import type { StageView } from '../shared/stage-view';
-import { demoSquare, demoSquareAreas, type DemoSquare } from './demo-square';
 import {
   areasChanged,
   hitTest,
@@ -39,19 +38,12 @@ import {
 export interface CanvasInputOptions {
   /** `window.awp`; undefined when the preload did not load. */
   readonly api: Pick<OverlayApi, 'canvas'> | undefined;
-  /**
-   * Draws `square` (null: nothing) and renders. Called only after
-   * onCanvasReady().
-   */
-  readonly draw: (square: DemoSquare | null) => void;
   readonly logError?: (message: string) => void;
 }
 
 export interface CanvasInput {
-  /** Hears each StageView state. */
-  onView(view: Pick<StageView, 'canvas' | 'sessions'>): void;
-  /** The canvas has initialised and can draw: the latest square is drawn. */
-  onCanvasReady(): void;
+  /** What takes the mouse now: the actors last drawn, top last. */
+  setAreas(areas: readonly HitArea<SessionKey>[]): void;
   /** The cursor moved to `point` (client coordinates). */
   onMouseMove(point: Point): void;
   /** The cursor left the window. */
@@ -63,15 +55,32 @@ export interface CanvasInput {
   onContextMenu(point: Point): boolean;
 }
 
+/** Whether two lists of areas are the same, area by area. */
+function sameAreas(
+  a: readonly HitArea<SessionKey>[],
+  b: readonly HitArea<SessionKey>[],
+): boolean {
+  return (
+    a.length === b.length &&
+    a.every((area, i) => {
+      const other = b[i];
+      return (
+        other !== undefined &&
+        area.key === other.key &&
+        area.x === other.x &&
+        area.y === other.y &&
+        area.width === other.width &&
+        area.height === other.height
+      );
+    })
+  );
+}
+
 export function createCanvasInput({
   api,
-  draw,
   logError = console.error,
 }: CanvasInputOptions): CanvasInput {
-  let canDraw = false;
-  /** What the latest StageView says to draw; null for nothing. */
-  let square: DemoSquare | null = null;
-  /** What takes the mouse: the square last drawn, if any. */
+  /** What takes the mouse: the actors last drawn. */
   let areas: readonly HitArea<SessionKey>[] = [];
   let pointer = POINTER_START;
 
@@ -93,29 +102,13 @@ export function createCanvasInput({
     });
   }
 
-  /** Draws the latest square, then lets what was drawn take the mouse. */
-  function show(): void {
-    if (!canDraw) {
-      return;
-    }
-    draw(square);
-    areas = demoSquareAreas(square);
-    apply(areasChanged(pointer, areas));
-  }
-
   return {
-    onView(view) {
-      const next = demoSquare(view);
-      if (JSON.stringify(next) === JSON.stringify(square)) {
+    setAreas(next) {
+      if (sameAreas(next, areas)) {
         return;
       }
-      square = next;
-      show();
-    },
-
-    onCanvasReady() {
-      canDraw = true;
-      show();
+      areas = [...next];
+      apply(areasChanged(pointer, areas));
     },
 
     onMouseMove(point) {
@@ -136,7 +129,6 @@ export function createCanvasInput({
           logFailure('canvas:context-menu', result);
         });
       }
-      apply(pointerLeft(pointer));
       return true;
     },
   };

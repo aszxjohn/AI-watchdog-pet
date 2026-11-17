@@ -12,6 +12,8 @@
  *   origin can only be `*`; what is posted is the entry source alone.
  * - The only message pack-host takes from an iframe's window is exactly
  *   `{ type: 'worker-error' }`, and only from a window of its own iframes.
+ * - post() (Story 3.6) posts a stage message on the kept end, once hand()
+ *   has made it; before that, or once removed, it posts nothing.
  * - remove() closes the kept end and removes the iframe; the Worker goes
  *   with its document.
  */
@@ -24,6 +26,7 @@ import type { SandboxFrame, SandboxFrames } from './host';
 
 /** The parts of a MessagePort pack-host keeps. */
 export interface SandboxFramePort {
+  postMessage(message: unknown): void;
   addEventListener(
     type: 'message',
     listener: (event: { readonly data: unknown }) => void,
@@ -144,6 +147,11 @@ export function createDomSandboxFrames<T, F extends SandboxIframeElement<T>>({
           });
           port.start();
           target.postMessage(message, '*', [channel.port2]);
+        },
+        post(message) {
+          if (!removed) {
+            port?.postMessage(message);
+          }
         },
         remove() {
           if (removed) {

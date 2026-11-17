@@ -258,3 +258,51 @@ export const SANDBOX_OUTBOX_MAX = 256;
  * load or run, or a factory that never returns.
  */
 export const SANDBOX_BOOT_TIMEOUT_MS = 10_000;
+
+/**
+ * How many times a second overlay/world ticks (Story 3.6, AD-11): each
+ * tick sends every pack with an actor on stage its messages and, unless
+ * its previous `frame` is still unanswered, one `frame`. Paused while the
+ * system sleeps or the screen is locked.
+ */
+export const TICK_HZ = 30;
+
+/**
+ * Largest `draw` a pack may send, in bytes of its JSON form (Story 3.6).
+ * The Worker bootstrap measures what the pack's `frame` returned before it
+ * posts it, and answers `sandbox.no-draw` instead of a larger one; the
+ * overlay measures again, before parsing the message, and drops a larger
+ * one whole.
+ */
+export const DRAW_MAX_BYTES = 64 * 1024;
+
+/**
+ * Most draw commands one `draw` may hold, all its actors together (Story
+ * 3.6), counted like DRAW_MAX_BYTES: by the Worker bootstrap before it
+ * posts the draw, and again by the overlay before parsing it.
+ */
+export const DRAW_MAX_COMMANDS = 256;
+
+/**
+ * Most events one pack's next `frame` carries (Story 3.6): while its
+ * frames go unanswered the events wait, and only the latest this many are
+ * kept.
+ */
+export const FRAME_EVENTS_MAX = 256;
+
+/**
+ * Until characters wander (Epic 4), they stand in one row near the bottom
+ * right of the canvas (Story 3.6): the first actor rightmost,
+ * STAGE_ROW_RIGHT_MARGIN DIP from the world's right edge, their feet
+ * STAGE_ROW_BOTTOM_MARGIN DIP above its bottom edge (past a Windows
+ * taskbar of 48 DIP or a bottom macOS Dock), each as wide as its `bounds`
+ * times its 大小 and STAGE_ROW_GAP DIP from the next. One that does not fit
+ * is not drawn.
+ */
+export const STAGE_ROW_RIGHT_MARGIN = 24;
+
+/** See STAGE_ROW_RIGHT_MARGIN. */
+export const STAGE_ROW_BOTTOM_MARGIN = 96;
+
+/** See STAGE_ROW_RIGHT_MARGIN. */
+export const STAGE_ROW_GAP = 16;

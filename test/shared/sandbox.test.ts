@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { packsGetEntry, packsLog } from '../../src/shared/ipc';
+import {
+  packsGetEntry,
+  packsGetManifest,
+  packsLog,
+} from '../../src/shared/ipc';
 import { isIpcChannelName } from '../../src/shared/ipc';
 import {
   SANDBOX_REMOVALS_MAX,
@@ -8,6 +12,9 @@ import {
 import {
   isSandboxFrameNotice,
   PACK_MESSAGE_DROP_REASONS,
+  PACK_NOT_DRAWN_REASONS,
+  SANDBOX_NO_DRAW_REASONS,
+  SKIPPED_DRAW_COMMANDS,
   packLogEntrySchema,
   packsLogInputSchema,
   SANDBOX_BOOT_FAILURES,
@@ -296,5 +303,129 @@ describe('the sandbox channels', () => {
     expect(packsLog.channel).toBe('packs:log');
     expect(isIpcChannelName(packsGetEntry.channel)).toBe(true);
     expect(isIpcChannelName(packsLog.channel)).toBe(true);
+  });
+});
+
+describe('Story 3.6: no-draw reports and the drawing lines', () => {
+  it('round-trips a no-draw report of each reason, and rejects a bad one', () => {
+    for (const reason of SANDBOX_NO_DRAW_REASONS) {
+      expectRoundTrip(sandboxReportSchema, {
+        type: 'sandbox.no-draw',
+        seq: 7,
+        reason,
+      });
+    }
+    expectRejected(sandboxReportSchema, {
+      type: 'sandbox.no-draw',
+      seq: -1,
+      reason: 'frame-threw',
+    });
+    expectRejected(sandboxReportSchema, {
+      type: 'sandbox.no-draw',
+      seq: 1,
+      reason: 'bored',
+    });
+    expectRejected(sandboxReportSchema, {
+      type: 'sandbox.no-draw',
+      seq: 1,
+      reason: 'frame-threw',
+      error: 'x',
+    });
+  });
+
+  it('a draw is not a report (its type has no sandbox. prefix)', () => {
+    expectRejected(sandboxReportSchema, { type: 'draw', seq: 0, actors: {} });
+  });
+
+  it("the drop reasons add the draw's own and the no-draw reasons, each once", () => {
+    expect(PACK_MESSAGE_DROP_REASONS).toStrictEqual([
+      'rate-limited',
+      'too-large',
+      'invalid',
+      'not-own-actor',
+      'log-rate-limited',
+      'not-ready',
+      'too-many-commands',
+      'unknown-asset',
+      'unknown-frame',
+      'stale-draw',
+      ...SANDBOX_NO_DRAW_REASONS,
+    ]);
+    for (const codes of [
+      PACK_MESSAGE_DROP_REASONS,
+      SKIPPED_DRAW_COMMANDS,
+      PACK_NOT_DRAWN_REASONS,
+    ]) {
+      expect(new Set(codes).size).toBe(codes.length);
+    }
+  });
+
+  it.each<[string, unknown]>([
+    [
+      'a skipped command type',
+      { kind: 'commands-skipped', packId: 'sample-pack', command: 'particles' },
+    ],
+    [
+      'a pack not drawn',
+      { kind: 'not-drawn', packId: 'sample-pack', reason: 'character-missing' },
+    ],
+    [
+      'an asset that failed',
+      {
+        kind: 'not-drawn',
+        packId: 'sample-pack',
+        reason: 'asset-failed',
+        asset: 'body-dots',
+      },
+    ],
+    [
+      'a draw dropped as stale',
+      {
+        kind: 'messages-dropped',
+        packId: 'sample-pack',
+        reason: 'stale-draw',
+        count: 2,
+      },
+    ],
+  ])('round-trips %s', (_label, value) => {
+    expectRoundTrip(packLogEntrySchema, value);
+  });
+
+  it.each<[string, unknown]>([
+    [
+      'a sprite command skipped',
+      { kind: 'commands-skipped', packId: 'sample-pack', command: 'sprite' },
+    ],
+    [
+      'an unknown reason',
+      { kind: 'not-drawn', packId: 'sample-pack', reason: 'shy' },
+    ],
+    [
+      'an asset that is not an id',
+      {
+        kind: 'not-drawn',
+        packId: 'sample-pack',
+        reason: 'asset-failed',
+        asset: 'img/a.png',
+      },
+    ],
+    [
+      'a session key',
+      {
+        kind: 'not-drawn',
+        packId: 'sample-pack',
+        reason: 'character-missing',
+        sessionKey: 'demo:1',
+      },
+    ],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(packLogEntrySchema, value);
+  });
+});
+
+describe('packs:get-manifest (Story 3.6)', () => {
+  it('is an overlay channel named <domain>:<action>', () => {
+    expect(packsGetManifest.channel).toBe('packs:get-manifest');
+    expect(isIpcChannelName(packsGetManifest.channel)).toBe(true);
   });
 });

@@ -5,7 +5,7 @@ import {
   SANDBOX_REMOVALS_MAX,
   STAGE_LOG_MAX_LENGTH,
 } from './constants';
-import { packIdSchema, packVersionSchema } from './pack-api';
+import { idSchema, packIdSchema, packVersionSchema } from './pack-api';
 import { PACK_ENTRY_FAILURE_CODES } from './packs';
 import { z } from './zod-setup';
 
@@ -23,12 +23,17 @@ import { z } from './zod-setup';
  *    It tells the overlay only that its Worker failed (SandboxFrameNotice).
  * 3. The Worker bootstrap reports on the port how it went (SandboxReport);
  *    the pack's `stage.*` calls come on the same port.
- * 4. The overlay writes what happened to the run log (`packs:log`,
+ * 4. From then on (Story 3.6) the overlay sends the pack its stage messages
+ *    on that port, and the bootstrap answers each `frame` with the pack's
+ *    `draw`, or with `sandbox.no-draw` when the pack gave none it could
+ *    send.
+ * 5. The overlay writes what happened to the run log (`packs:log`,
  *    PackLogEntry).
  *
- * The src/sandbox code uses only the TypeScript types of this file, so no
- * zod reaches the sandbox; the overlay checks what comes back with the
- * schemas here.
+ * The src/sandbox code uses only the TypeScript types of this file; the
+ * overlay checks what comes back with the schemas here. (The Worker
+ * bootstrap does bundle zod since Story 3.6: it checks the stage's
+ * messages with the pack API's stageMessageSchema.)
  */
 
 /** The sandbox document every pack's iframe shows. */
@@ -151,6 +156,27 @@ export type SandboxBootFailure = (typeof SANDBOX_BOOT_FAILURES)[number];
 /** Uncaught trouble in a running Worker: an `error` or an unhandled rejection. */
 export const SANDBOX_FAULTS = ['error', 'unhandled-rejection'] as const;
 
+/**
+ * Why the bootstrap answered a `frame` with no `draw` (Story 3.6): the
+ * pack's handlers have no `frame` function (`no-frame-handler`), reading
+ * or calling it threw (`frame-threw`), what it returned cannot be sent
+ * (`draw-not-cloneable`: a function, a promise…), the `draw` would be over
+ * DRAW_MAX_BYTES (`draw-too-large`) or DRAW_MAX_COMMANDS
+ * (`draw-too-many-commands`), measured before it is posted; or the
+ * `frame` itself does not fit the pack API's schema, its `seq` readable
+ * (`invalid-frame`: the pack never sees it).
+ */
+export const SANDBOX_NO_DRAW_REASONS = [
+  'no-frame-handler',
+  'frame-threw',
+  'draw-not-cloneable',
+  'draw-too-large',
+  'draw-too-many-commands',
+  'invalid-frame',
+] as const;
+
+export type SandboxNoDrawReason = (typeof SANDBOX_NO_DRAW_REASONS)[number];
+
 /** The start of every SandboxReport's `type` (a `stage.*` call never has it). */
 export const SANDBOX_REPORT_PREFIX = 'sandbox.';
 
@@ -159,7 +185,9 @@ export const SANDBOX_REPORT_PREFIX = 'sandbox.';
  * - `sandbox.ready`: the pack's factory returned its `handlers`; every
  *   removal, and no console output up to the end of `lockdown()`;
  * - `sandbox.failed`: why not (the removals and console lines so far);
- * - `sandbox.fault`: uncaught trouble later on.
+ * - `sandbox.fault`: uncaught trouble later on;
+ * - `sandbox.no-draw` (Story 3.6): the `frame` of `seq` gets no `draw`, and
+ *   why.
  */
 export const sandboxReportSchema = z.discriminatedUnion('type', [
   z.strictObject({
@@ -176,6 +204,11 @@ export const sandboxReportSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('sandbox.fault'),
     fault: z.enum(SANDBOX_FAULTS),
+  }),
+  z.strictObject({
+    type: z.literal('sandbox.no-draw'),
+    seq: z.int().nonnegative(),
+    reason: z.enum(SANDBOX_NO_DRAW_REASONS),
   }),
 ]);
 
@@ -231,10 +264,17 @@ export type SandboxDestroyReason = (typeof SANDBOX_DESTROY_REASONS)[number];
 
 /**
  * Why the overlay dropped a message from a pack's sandbox: over the pack's
- * message rate, larger than PACK_MESSAGE_MAX_BYTES, not a valid `stage.*`
- * call, an `actorId` that is not the pack's, a `stage.log` over its own
- * rate, or a call other than `stage.log` before the sandbox reported ready
- * (`not-ready`).
+ * message rate, larger than PACK_MESSAGE_MAX_BYTES (a `draw`:
+ * DRAW_MAX_BYTES), not a valid `stage.*` call or `draw`, an `actorId` that
+ * is not the pack's (a `draw`: not one of its `frame`'s actors), a
+ * `stage.log` over its own rate, or a call other than `stage.log` before
+ * the sandbox reported ready (`not-ready`). And for a `draw` (Story 3.6):
+ * more than DRAW_MAX_COMMANDS commands (`too-many-commands`), a sprite's
+ * `asset` that is not a key of the pack's manifest (`unknown-asset`), a
+ * `frame` on an image, or missing from or not in its spritesheet
+ * (`unknown-frame`), a `seq` that is not the `frame` the pack is answering
+ * (`stale-draw`); and the bootstrap's SandboxNoDrawReason for a `frame`
+ * that got no `draw`.
  */
 export const PACK_MESSAGE_DROP_REASONS = [
   'rate-limited',
@@ -243,9 +283,39 @@ export const PACK_MESSAGE_DROP_REASONS = [
   'not-own-actor',
   'log-rate-limited',
   'not-ready',
+  'too-many-commands',
+  'unknown-asset',
+  'unknown-frame',
+  'stale-draw',
+  ...SANDBOX_NO_DRAW_REASONS,
 ] as const;
 
 export type PackMessageDropReason = (typeof PACK_MESSAGE_DROP_REASONS)[number];
+
+/**
+ * The draw commands the stage does not draw yet (Story 3.6): it skips them
+ * and draws the rest of the `draw` (particles and bitmaps come with Story
+ * 3.6's last part).
+ */
+export const SKIPPED_DRAW_COMMANDS = ['particles', 'bitmap'] as const;
+
+export type SkippedDrawCommand = (typeof SKIPPED_DRAW_COMMANDS)[number];
+
+/**
+ * Why the overlay draws none of a pack's actors, or not all of their
+ * sprites (Story 3.6): an actor's character is not in StageView's
+ * `characters` (`character-missing`), `packs:get-manifest` gave nothing
+ * for the version installed (`manifest-unavailable`), or one of its assets
+ * could not be loaded or does not fit its image (`asset-failed`, with the
+ * asset's key).
+ */
+export const PACK_NOT_DRAWN_REASONS = [
+  'character-missing',
+  'manifest-unavailable',
+  'asset-failed',
+] as const;
+
+export type PackNotDrawnReason = (typeof PACK_NOT_DRAWN_REASONS)[number];
 
 /**
  * One run log line the overlay asks main for, about one pack, told apart
@@ -259,7 +329,11 @@ export type PackMessageDropReason = (typeof PACK_MESSAGE_DROP_REASONS)[number];
  * - `sandbox-failed`: its iframe was removed because of `reason`;
  * - `sandbox-skipped`: it has an actor but gets no sandbox;
  * - `messages-dropped`: `count` messages dropped for `reason` since the
- *   last such line.
+ *   last such line;
+ * - `commands-skipped` (Story 3.6): its `draw`s have `command` commands,
+ *   which the stage skips (once per sandbox and command type);
+ * - `not-drawn` (Story 3.6): its actors, or some of their sprites, are not
+ *   drawn, and why (once per pack and reason, until that changes).
  */
 export const packLogEntrySchema = z.discriminatedUnion('kind', [
   z.strictObject({
@@ -296,6 +370,17 @@ export const packLogEntrySchema = z.discriminatedUnion('kind', [
     packId: packIdSchema,
     reason: z.enum(PACK_MESSAGE_DROP_REASONS),
     count: z.int().positive(),
+  }),
+  z.strictObject({
+    kind: z.literal('commands-skipped'),
+    packId: packIdSchema,
+    command: z.enum(SKIPPED_DRAW_COMMANDS),
+  }),
+  z.strictObject({
+    kind: z.literal('not-drawn'),
+    packId: packIdSchema,
+    reason: z.enum(PACK_NOT_DRAWN_REASONS),
+    asset: idSchema.exactOptional(),
   }),
 ]);
 

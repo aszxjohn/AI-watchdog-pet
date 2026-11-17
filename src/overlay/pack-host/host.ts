@@ -39,8 +39,25 @@
  *   `hold` and `face` go to `onCall` (their world behaviour is Epic 4),
  *   and only once the sandbox has reported ready (before it: `not-ready`).
  *
- * The stage sends a pack no message yet (`init`, `frame` and the rest are
- * Story 3.6). Every line goes to the run log through `packs:log`.
+ * Story 3.6, the stage's side of a ready sandbox:
+ * - Each world tick (tick()) sends every ready pack whose look has come
+ *   (looks.ts: its manifest at the sandbox's version) its messages, worked
+ *   out by stage-messages.ts from what it sent before: `init` first, then
+ *   `despawn`, `params`, `spawn`, `meta` as things change, and a `frame`
+ *   unless the previous one is still unanswered (no queue: a slow pack
+ *   only skips ticks, and no other pack waits for it).
+ * - A message of `type: 'draw'` answers the unanswered `frame` when its
+ *   `seq` is that frame's (any other is `stale-draw`), and is then checked
+ *   (draw-rules.ts); one that passes is the pack's latest valid draw,
+ *   which the renderer draws every display frame (drawOf()) until the next
+ *   one passes. Command types not drawn yet are left out with one line per
+ *   sandbox and type. The bootstrap's `sandbox.no-draw` answers the frame
+ *   too, and counts as a drop of its reason. Drops go through the same
+ *   per-reason log limit as above.
+ * - A sandbox destroyed or failed takes its latest draw and its unanswered
+ *   frame with it.
+ *
+ * Every line goes to the run log through `packs:log`.
  */
 import {
   PACK_DROP_LOG_INTERVAL_MS,
@@ -53,7 +70,7 @@ import {
   STAGE_LOG_RATE_WINDOW_MS,
 } from '../../shared/constants';
 import type { IpcResult } from '../../shared/ipc';
-import type { StageCall } from '../../shared/pack-api';
+import type { StageCall, StageMessage } from '../../shared/pack-api';
 import type { PackEntryResult } from '../../shared/packs';
 import {
   type PackLogEntry,
@@ -66,15 +83,25 @@ import {
   sandboxLoadMessage,
   sandboxReportSchema,
   type SandboxSkipReason,
+  type SkippedDrawCommand,
 } from '../../shared/sandbox';
 import type { StageView } from '../../shared/stage-view';
 import { cutText } from '../../shared/text';
+import type { Looks } from '../looks';
+import type { WorldTick } from '../world/world';
+import { checkDraw, type DrawnActors } from './draw-rules';
+import { createPackLog } from './log';
 import {
   actorsByPack,
   checkPackMessage,
   createRateLimiter,
   type RateLimiter,
 } from './rules';
+import {
+  composeTick,
+  newPackStageState,
+  type PackStageState,
+} from './stage-messages';
 
 /** What one sandbox iframe tells pack-host. */
 export interface SandboxFrameHandlers {
@@ -93,6 +120,11 @@ export interface SandboxFrame {
    * what comes on the other end goes to onMessage.
    */
   hand(message: SandboxLoadMessage): void;
+  /**
+   * Posts one stage message on pack-host's end of the port (Story 3.6);
+   * nothing before hand(). Throws when it cannot be sent.
+   */
+  post(message: StageMessage): void;
   /** Removes the iframe (its Worker goes with it) and closes the port. */
   remove(): void;
 }
@@ -123,6 +155,11 @@ export interface PackHostOptions {
   readonly api: PackHostApi;
   readonly frames: SandboxFrames;
   readonly clock: PackHostClock;
+  /**
+   * Each pack's look at the version installed (looks.ts); without it no
+   * pack gets any stage message.
+   */
+  readonly looks?: Pick<Looks, 'get'>;
   /** Hears each accepted `fire`, `hold` and `face` (Epic 4 acts on them). */
   readonly onCall?: (packId: string, call: StageCall) => void;
   /** Where a `packs:log` that failed is reported (the console). */
@@ -132,9 +169,21 @@ export interface PackHostOptions {
 /** Where one pack's sandbox is. */
 export type SandboxPhase = 'requesting' | 'loading' | 'ready' | 'failed';
 
+/** A pack's latest valid draw (Story 3.6). */
+export interface PackDraw {
+  /** The version of the pack that drew it. */
+  readonly version: string;
+  /** Each actor's sprite commands; an actor left out is not drawn. */
+  readonly actors: DrawnActors;
+}
+
 export interface PackHost {
-  /** Follows a StageView state: its `actors` and `packs`. */
-  onView(view: Pick<StageView, 'actors' | 'packs'>): void;
+  /** Follows a StageView state: its `actors`, `packs` and `characters`. */
+  onView(view: Pick<StageView, 'actors' | 'packs' | 'characters'>): void;
+  /** One world tick: each ready pack gets its messages (Story 3.6). */
+  tick(tick: WorldTick): void;
+  /** The latest valid draw of `packId`'s ready sandbox, if any. */
+  drawOf(packId: string): PackDraw | undefined;
   /** Each pack with a sandbox (or one on its way, or failed), by id. */
   phases(): ReadonlyMap<string, SandboxPhase>;
 }
@@ -156,6 +205,12 @@ interface Sandbox {
     PackMessageDropReason,
     { loggedAt: number; suppressed: number }
   >;
+  /** What the stage has sent the pack (Story 3.6). */
+  readonly stage: PackStageState;
+  /** The pack's latest valid draw. */
+  draw: PackDraw | null;
+  /** The command types already logged as skipped. */
+  readonly skipped: Set<SkippedDrawCommand>;
 }
 
 /** Why a pack with an actor has no sandbox; `sticky` until its actors leave. */
@@ -165,6 +220,18 @@ interface Skip {
 }
 
 const NO_ACTORS: ReadonlySet<string> = new Set();
+
+/** No look: no pack gets a stage message. */
+const NO_LOOKS: Pick<Looks, 'get'> = { get: () => undefined };
+
+/** Whether `data` is a pack's `draw` (by its `type`). */
+function isDraw(data: unknown): boolean {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    (data as { type?: unknown }).type === 'draw'
+  );
+}
 
 /** Whether `data` is one of the bootstrap's reports (by its `type`). */
 function isReport(data: unknown): boolean {
@@ -179,6 +246,7 @@ export function createPackHost({
   api,
   frames,
   clock,
+  looks = NO_LOOKS,
   onCall = () => {},
   logError = console.error,
 }: PackHostOptions): PackHost {
@@ -186,29 +254,14 @@ export function createPackHost({
   const skips = new Map<string, Skip>();
   /** The last StageView's actors by pack. */
   let owners = new Map<string, Set<string>>();
+  /** The last StageView's actors and characters. */
+  let latest: Pick<StageView, 'actors' | 'characters'> = {
+    actors: [],
+    characters: {},
+  };
 
   /** Asks main to write `entry` to the run log; failures go to the console. */
-  function log(entry: PackLogEntry): void {
-    let reply: Promise<IpcResult<null>>;
-    try {
-      reply = api.log(entry);
-    } catch (error) {
-      logError(`[overlay] packs:log failed (${entry.kind})`, error);
-      return;
-    }
-    void reply.then(
-      (result) => {
-        if (!result.ok) {
-          logError(
-            `[overlay] packs:log: ${result.error.code}: ${result.error.message}`,
-          );
-        }
-      },
-      (error: unknown) => {
-        logError(`[overlay] packs:log failed (${entry.kind})`, error);
-      },
-    );
-  }
+  const log = createPackLog(api, logError);
 
   function skip(packId: string, reason: SandboxSkipReason, sticky: boolean) {
     if (skips.get(packId)?.reason === reason) {
@@ -280,6 +333,8 @@ export function createPackHost({
       return;
     }
     sandbox.phase = 'failed';
+    sandbox.draw = null;
+    sandbox.stage.inFlight = null;
     stopBootTimer(sandbox);
     removeFrame(sandbox);
     flushDrops(sandbox);
@@ -381,7 +436,56 @@ export function createPackHost({
           message.fault === 'error' ? 'worker-error' : 'unhandled-rejection',
         );
         return;
+      case 'sandbox.no-draw':
+        if (sandbox.phase !== 'ready') {
+          fail(sandbox, 'bad-report');
+          return;
+        }
+        if (sandbox.stage.inFlight?.seq !== message.seq) {
+          drop(sandbox, 'stale-draw');
+          return;
+        }
+        sandbox.stage.inFlight = null;
+        drop(sandbox, message.reason);
+        return;
     }
+  }
+
+  /** A `draw` from the pack (see the module comment). */
+  function receiveDraw(sandbox: Sandbox, data: unknown): void {
+    const { inFlight } = sandbox.stage;
+    const answering =
+      inFlight !== null && (data as { seq?: unknown }).seq === inFlight.seq;
+    if (answering) {
+      sandbox.stage.inFlight = null;
+    }
+    if (!sandbox.messages.take()) {
+      drop(sandbox, 'rate-limited');
+      return;
+    }
+    const look = looks.get(sandbox.packId);
+    if (
+      !answering ||
+      sandbox.phase !== 'ready' ||
+      sandbox.version === null ||
+      look === undefined ||
+      look.version !== sandbox.version
+    ) {
+      drop(sandbox, 'stale-draw');
+      return;
+    }
+    const check = checkDraw(data, inFlight.actors, look);
+    if (!check.ok) {
+      drop(sandbox, check.reason);
+      return;
+    }
+    for (const command of check.skipped) {
+      if (!sandbox.skipped.has(command)) {
+        sandbox.skipped.add(command);
+        log({ kind: 'commands-skipped', packId: sandbox.packId, command });
+      }
+    }
+    sandbox.draw = { version: sandbox.version, actors: check.actors };
   }
 
   function receive(sandbox: Sandbox, data: unknown): void {
@@ -390,6 +494,10 @@ export function createPackHost({
     }
     if (isReport(data)) {
       report(sandbox, data);
+      return;
+    }
+    if (isDraw(data)) {
+      receiveDraw(sandbox, data);
       return;
     }
     if (!sandbox.messages.take()) {
@@ -444,6 +552,9 @@ export function createPackHost({
         () => clock.now(),
       ),
       drops: new Map(),
+      stage: newPackStageState(),
+      draw: null,
+      skipped: new Set(),
     };
     sandboxes.set(packId, sandbox);
     let result: IpcResult<PackEntryResult> | undefined;
@@ -494,8 +605,26 @@ export function createPackHost({
     }
   }
 
+  /** Posts `messages` to `sandbox` in order; a failure fails the sandbox. */
+  function post(sandbox: Sandbox, messages: readonly StageMessage[]): void {
+    for (const message of messages) {
+      const { frame } = sandbox;
+      if (frame === null || sandbox.phase !== 'ready') {
+        return;
+      }
+      try {
+        frame.post(message);
+      } catch (error) {
+        logError(`[overlay] could not post to a sandbox`, error);
+        fail(sandbox, 'worker-error');
+        return;
+      }
+    }
+  }
+
   return {
     onView(view) {
+      latest = { actors: view.actors, characters: view.characters };
       owners = actorsByPack(view.actors);
       for (const packId of owners.keys()) {
         const pack = view.packs.installed.find(({ id }) => id === packId);
@@ -542,6 +671,36 @@ export function createPackHost({
           skips.delete(packId);
         }
       }
+    },
+
+    tick({ t, events }) {
+      for (const sandbox of sandboxes.values()) {
+        if (sandbox.phase !== 'ready' || sandbox.frame === null) {
+          continue;
+        }
+        const look = looks.get(sandbox.packId);
+        if (look === undefined || look.version !== sandbox.version) {
+          continue;
+        }
+        post(
+          sandbox,
+          composeTick(sandbox.stage, {
+            packId: sandbox.packId,
+            actors: latest.actors,
+            characters: latest.characters,
+            character: (characterId) => look.character(characterId),
+            t,
+            events,
+          }),
+        );
+      }
+    },
+
+    drawOf(packId) {
+      const sandbox = sandboxes.get(packId);
+      return sandbox?.phase === 'ready' && sandbox.draw !== null
+        ? sandbox.draw
+        : undefined;
     },
 
     phases() {

@@ -135,6 +135,8 @@ context:
 
 - 2026-11-17 審查修補後驗證（主流程重跑）：五項檢查全過（101 檔通過、1 檔跳過；5004 個測試通過、2 個跳過；depcruise 0 違規；`npm run e2e` 8 個全過）；`out/` 沒有被動到；diff 裡被改寫的 2 行既有 `expect(` 都在 `windows-main.test.ts`，是 install／remove 改成在批次裡執行的接線斷言（改得更嚴）。
 
+- CI：commit `f09cb86`（2026-11-17）後，GitHub Actions 的 unit（check）與 e2e 在 macOS、Windows 都通過（run 44042684199）。
+
 ## Spec Change Log
 
 ## Review Triage Log

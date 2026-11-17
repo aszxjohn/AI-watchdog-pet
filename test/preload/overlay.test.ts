@@ -147,7 +147,11 @@ describe('overlay preload', () => {
       'setHover',
       'contextMenu',
     ]);
-    expect(Object.keys(api.packs)).toStrictEqual(['getEntry', 'log']);
+    expect(Object.keys(api.packs)).toStrictEqual([
+      'getEntry',
+      'getManifest',
+      'log',
+    ]);
     expect(Object.keys(api.stageView)).toStrictEqual(['subscribe']);
     expect(Object.isFrozen(api)).toBe(true);
     expect(Object.isFrozen(api.canvas)).toBe(true);
