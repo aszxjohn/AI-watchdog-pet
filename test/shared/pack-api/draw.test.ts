@@ -5,6 +5,7 @@ import {
   drawCommandSchema,
   drawMessageSchema,
   EMITTER_ID_MAX_LENGTH,
+  PARTICLE_PRESETS,
   particlesCommandSchema,
   SPRITE_COMMAND_DEFAULTS,
   spriteCommandSchema,
@@ -216,12 +217,21 @@ describe('particles commands', () => {
       'the longest emitter id',
       changed(PARTICLES, ['emitterId'], 'e'.repeat(EMITTER_ID_MAX_LENGTH)),
     ],
-    [
-      'any id-style preset (v1.0)',
-      changed(PARTICLES, ['preset'], 'my-own-preset'),
-    ],
+    ...PARTICLE_PRESETS.map((preset) => [
+      `the preset ${preset}`,
+      changed(PARTICLES, ['preset'], preset),
+    ]),
   ])('round-trips %s', (_label, value) => {
     expectRoundTrip(particlesCommandSchema, value);
+  });
+
+  it('the presets are the stage’s list (Story 3.6)', () => {
+    expect(PARTICLE_PRESETS).toStrictEqual([
+      'sparkle',
+      'smoke',
+      'confetti',
+      'bubbles',
+    ]);
   });
 
   it('rejects a parameter named __proto__ as reserved-key', () => {
@@ -241,6 +251,14 @@ describe('particles commands', () => {
       changed(PARTICLES, ['emitterId'], 'e'.repeat(EMITTER_ID_MAX_LENGTH + 1)),
     ],
     ['a preset that is not an id', changed(PARTICLES, ['preset'], 'Sparkle')],
+    [
+      'an id-style preset outside the list',
+      changed(PARTICLES, ['preset'], 'fireworks'),
+    ],
+    [
+      'another id-style preset',
+      changed(PARTICLES, ['preset'], 'my-own-preset'),
+    ],
     ['no preset', removed(PARTICLES, ['preset'])],
     ['an object parameter', changed(PARTICLES, ['params', 'color'], { r: 1 })],
     ['an empty parameter name', changed(PARTICLES, ['params', ''], 1)],

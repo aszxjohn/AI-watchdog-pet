@@ -3,15 +3,37 @@
  * (no renderer, no DOM): the display objects a Scene becomes, and the
  * textures the backend makes (spritesheet frames, sampling).
  */
-import { Container, Graphics, Sprite, Texture, TextureSource } from 'pixi.js';
+import {
+  Container,
+  Graphics,
+  ImageSource,
+  type Particle,
+  ParticleContainer,
+  Sprite,
+  Texture,
+  TextureSource,
+} from 'pixi.js';
 import { describe, expect, it } from 'vitest';
+import type {
+  EmitterView,
+  ParticleView,
+} from '../../src/overlay/renderer/particles';
 import {
   createPixiStage,
+  type PaintCanvas,
+  type PaintContext,
+  PARTICLE_TEXTURE_SIZE,
+  particleTextures,
   pixiTextures,
   sheetTextures,
+  type StageParticles,
   TEXTURE_SCALE_MODE,
 } from '../../src/overlay/renderer/pixi-stage';
 import type { Scene, SceneActor } from '../../src/overlay/renderer/scene';
+import {
+  PARTICLE_PRESETS,
+  type ParticlePreset,
+} from '../../src/shared/pack-api';
 
 const BOUNDS = { x: -40, y: -130, width: 80, height: 130 };
 
@@ -29,6 +51,7 @@ function sceneActor(
     scale: 1,
     bounds: BOUNDS,
     sprites: [],
+    emitters: [],
     ...overrides,
   };
 }
@@ -48,8 +71,15 @@ function setup() {
     ['probe-one-plain', textureOf()],
     ['probe-two-sheet#eyes-open', textureOf()],
   ]);
-  const stage = createPixiStage(layer, (_packId, _version, asset, frame) =>
-    textures.get(frame === undefined ? asset : `${asset}#${frame}`),
+  const stage = createPixiStage(
+    layer,
+    (_packId, _version, asset, frame) =>
+      textures.get(frame === undefined ? asset : `${asset}#${frame}`),
+    // No emitters.
+    {
+      emittersOf: () => [],
+      textures: particleTextures(fakeCanvases().create),
+    },
   );
   return { layer, stage, textures };
 }
@@ -203,6 +233,330 @@ describe('I/O matrix', () => {
     stage.draw(scene([sceneActor('a1', { sprites: [sprite] })]));
 
     expect(partsOf(layer.children[0] as Container).sprites).toHaveLength(1);
+  });
+});
+
+/** A 2D context that writes down what is painted with it. */
+function recordingContext(calls: string[]): PaintContext {
+  const context: PaintContext = {
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    beginPath: () => calls.push('beginPath'),
+    closePath: () => calls.push('closePath'),
+    moveTo: (x, y) => calls.push(`moveTo ${x} ${y}`),
+    lineTo: (x, y) => calls.push(`lineTo ${x} ${y}`),
+    arc: (x, y, radius) => calls.push(`arc ${x} ${y} ${radius}`),
+    fill: () => calls.push(`fill ${String(context.fillStyle)}`),
+    stroke: () =>
+      calls.push(`stroke ${String(context.strokeStyle)} ${context.lineWidth}`),
+    fillRect: (x, y, width, height) =>
+      calls.push(
+        `fillRect ${x} ${y} ${width} ${height} ${String(context.fillStyle)}`,
+      ),
+    createRadialGradient: () => ({
+      addColorStop: (offset, color) => calls.push(`stop ${offset} ${color}`),
+      toString: () => 'gradient',
+    }),
+  };
+  return context;
+}
+
+/** Canvases that write down what is painted on them, in order made. */
+function fakeCanvases() {
+  const made: { canvas: PaintCanvas; calls: string[] }[] = [];
+  return {
+    made,
+    create: (): PaintCanvas => {
+      const calls: string[] = [];
+      const canvas: PaintCanvas = {
+        width: 300,
+        height: 150,
+        getContext: () => recordingContext(calls),
+      };
+      made.push({ canvas, calls });
+      return canvas;
+    },
+  };
+}
+
+function particle(overrides: Partial<ParticleView> = {}): ParticleView {
+  return {
+    x: 2,
+    y: -118,
+    size: 8,
+    rotation: 0.5,
+    color: 0xfff4b0,
+    alpha: 0.75,
+    ...overrides,
+  };
+}
+
+function emitter(
+  id: number,
+  preset: ParticlePreset,
+  particles: readonly ParticleView[],
+): EmitterView {
+  return { id, emitterId: `e${id}`, preset, active: true, particles };
+}
+
+/** A pixi-stage drawing particles from `emitters`, by actor. */
+function setupParticles() {
+  const layer = new Container();
+  const emitters = new Map<string, EmitterView[]>();
+  const canvases = fakeCanvases();
+  const particles: StageParticles = {
+    emittersOf: (actorId) => emitters.get(actorId) ?? [],
+    textures: particleTextures(canvases.create),
+  };
+  const sprite = textureOf();
+  const stage = createPixiStage(layer, () => sprite, particles);
+  return { layer, stage, emitters, particles, canvases };
+}
+
+/** An actor's particle containers (after its mask and sprites). */
+function emittersIn(container: Container): ParticleContainer<Particle>[] {
+  return container.children.filter(
+    (child): child is ParticleContainer<Particle> =>
+      child instanceof ParticleContainer,
+  );
+}
+
+const SPRITE_COMMAND = {
+  asset: 'probe-one-plain',
+  frame: undefined,
+  x: -30,
+  y: -110,
+  rotation: 0,
+  scaleX: 30,
+  scaleY: 55,
+  alpha: 1,
+};
+
+describe('I/O matrix', () => {
+  it('粒子出現: each emitter of a drawn actor is a ParticleContainer in its container above its sprites, with its preset’s texture and the actor’s bounds as its bounds area; its particles as particles.ts has them', () => {
+    const { layer, stage, emitters, particles } = setupParticles();
+    emitters.set('a1', [
+      emitter(1, 'sparkle', [particle(), particle({ x: -3, color: 0xffffff })]),
+    ]);
+
+    stage.draw(scene([sceneActor('a1', { sprites: [SPRITE_COMMAND] })]));
+
+    // What it put on screen, for main.ts's data attributes.
+    expect(stage.particleCounts()).toStrictEqual({ emitters: 1, particles: 2 });
+    const container = layer.children[0] as Container;
+    const [mask, sprite, sparkle] = container.children;
+    expect(mask).toBeInstanceOf(Graphics);
+    expect(sprite).toBeInstanceOf(Sprite);
+    expect(sparkle).toBeInstanceOf(ParticleContainer);
+    const emitterNode = sparkle as ParticleContainer<Particle>;
+    expect(emitterNode.texture).toBe(particles.textures.get('sparkle'));
+    const area = emitterNode.boundsArea;
+    expect([area.x, area.y, area.width, area.height]).toStrictEqual([
+      -40, -130, 80, 130,
+    ]);
+    const [first, second] = emitterNode.particleChildren;
+    expect(emitterNode.particleChildren).toHaveLength(2);
+    expect([first?.x, first?.y]).toStrictEqual([2, -118]);
+    expect([first?.anchorX, first?.anchorY]).toStrictEqual([0.5, 0.5]);
+    expect(first?.scaleX).toBeCloseTo(8 / PARTICLE_TEXTURE_SIZE);
+    expect(first?.scaleY).toBeCloseTo(8 / PARTICLE_TEXTURE_SIZE);
+    expect(first?.rotation).toBe(0.5);
+    expect(first?.tint).toBe(0xfff4b0);
+    expect(first?.alpha).toBe(0.75);
+    expect(first?.texture).toBe(emitterNode.texture);
+    expect(second?.tint).toBe(0xffffff);
+
+    // A sprite added later still goes under the particles.
+    stage.draw(
+      scene([sceneActor('a1', { sprites: [SPRITE_COMMAND, SPRITE_COMMAND] })]),
+    );
+    expect(
+      container.children.map((child) =>
+        child instanceof ParticleContainer
+          ? 'particles'
+          : child instanceof Sprite
+            ? 'sprite'
+            : child === container.mask
+              ? 'mask'
+              : 'other',
+      ),
+    ).toStrictEqual(['mask', 'sprite', 'sprite', 'particles']);
+  });
+
+  it('粒子跟隨: the same emitter keeps its container and particles from frame to frame; they take the new values, and their number follows', () => {
+    const { layer, stage, emitters } = setupParticles();
+    emitters.set('a1', [emitter(1, 'sparkle', [particle(), particle()])]);
+    stage.draw(scene([sceneActor('a1')]));
+    const [node] = emittersIn(layer.children[0] as Container);
+    const [kept] = node?.particleChildren ?? [];
+
+    emitters.set('a1', [
+      emitter(1, 'sparkle', [particle({ x: 30, y: -60, alpha: 0.2 })]),
+    ]);
+    stage.draw(scene([sceneActor('a1')]));
+
+    expect(emittersIn(layer.children[0] as Container)).toStrictEqual([node]);
+    expect(node?.particleChildren).toHaveLength(1);
+    expect(node?.particleChildren[0]).toBe(kept);
+    expect([kept?.x, kept?.y, kept?.alpha]).toStrictEqual([30, -60, 0.2]);
+
+    emitters.set('a1', [
+      emitter(1, 'sparkle', [particle(), particle(), particle()]),
+    ]);
+    stage.draw(scene([sceneActor('a1')]));
+    expect(node?.particleChildren).toHaveLength(3);
+  });
+
+  it('大小與裁切: the particles are in the actor’s container, so they take its 大小 and are clipped by its bounds mask', () => {
+    const { layer, stage, emitters } = setupParticles();
+    emitters.set('a1', [emitter(1, 'confetti', [particle({ y: -200 })])]);
+
+    stage.draw(scene([sceneActor('a1', { scale: 1.5 })]));
+
+    const container = layer.children[0] as Container;
+    const [node] = emittersIn(container);
+    expect(node?.parent).toBe(container);
+    expect(container.scale.x).toBe(1.5);
+    expect(container.mask).toBe(container.children[0]);
+    // Bounds that change move the bounds area with the mask.
+    stage.draw(
+      scene([
+        sceneActor('a1', {
+          scale: 1.5,
+          bounds: { x: -50, y: -150, width: 100, height: 150 },
+        }),
+      ]),
+    );
+    const area = node?.boundsArea;
+    expect([area?.x, area?.y, area?.width, area?.height]).toStrictEqual([
+      -50, -150, 100, 150,
+    ]);
+  });
+
+  it('粒子停止: an emitter gone from particles.ts has its container destroyed; the later ones keep theirs, in the order they started', () => {
+    const { layer, stage, emitters } = setupParticles();
+    emitters.set('a1', [
+      emitter(1, 'sparkle', [particle()]),
+      emitter(2, 'smoke', [particle()]),
+    ]);
+    stage.draw(scene([sceneActor('a1')]));
+    const [first, second] = emittersIn(layer.children[0] as Container);
+
+    emitters.set('a1', [
+      emitter(2, 'smoke', [particle()]),
+      emitter(3, 'bubbles', [particle()]),
+    ]);
+    stage.draw(scene([sceneActor('a1')]));
+
+    const now = emittersIn(layer.children[0] as Container);
+    expect(first?.destroyed).toBe(true);
+    expect(now[0]).toBe(second);
+    expect(now).toHaveLength(2);
+    expect(now[1]?.texture).not.toBe(second?.texture);
+
+    // All of them gone: none on screen.
+    emitters.set('a1', []);
+    stage.draw(scene([sceneActor('a1')]));
+    expect(emittersIn(layer.children[0] as Container)).toStrictEqual([]);
+    expect(stage.particleCounts()).toStrictEqual({ emitters: 0, particles: 0 });
+  });
+
+  it('actor 離場: an actor gone takes its emitters’ containers with it; the presets’ textures stay for the others', () => {
+    const { layer, stage, emitters, particles } = setupParticles();
+    emitters.set('a1', [emitter(1, 'sparkle', [particle()])]);
+    emitters.set('a2', [emitter(2, 'sparkle', [particle()])]);
+    stage.draw(scene([sceneActor('a1'), sceneActor('a2')]));
+    const [gone] = emittersIn(layer.children[0] as Container);
+    expect(stage.particleCounts()).toStrictEqual({ emitters: 2, particles: 2 });
+
+    stage.draw(scene([sceneActor('a2')]));
+
+    expect(stage.particleCounts()).toStrictEqual({ emitters: 1, particles: 1 });
+    expect(gone?.destroyed).toBe(true);
+    expect(particles.textures.get('sparkle').destroyed).toBe(false);
+    const [left] = emittersIn(layer.children[0] as Container);
+    expect(left?.texture).toBe(particles.textures.get('sparkle'));
+  });
+
+  it('粒子出現: emitters of an actor not in the scene are neither drawn nor counted; none before any draw', () => {
+    const { stage, emitters } = setupParticles();
+    expect(stage.particleCounts()).toStrictEqual({ emitters: 0, particles: 0 });
+    emitters.set('a9', [emitter(1, 'sparkle', [particle()])]);
+
+    stage.draw(scene([sceneActor('a1')]));
+
+    expect(stage.particleCounts()).toStrictEqual({ emitters: 0, particles: 0 });
+  });
+
+  it('hit area: drawing particles changes nothing but the actor’s own container (no sprite is added for them)', () => {
+    const { layer, stage, emitters } = setupParticles();
+    emitters.set('a1', [emitter(1, 'sparkle', [particle()])]);
+
+    const counts = stage.draw(scene([sceneActor('a1')]));
+
+    expect(counts).toStrictEqual({ actors: 1, sprites: 0 });
+    expect(layer.children).toHaveLength(1);
+  });
+});
+
+describe('the particle textures', () => {
+  it('四種 preset: one texture per preset, made once, on its own 32-pixel canvas, painted in white in its own shape, sampled linearly', () => {
+    const canvases = fakeCanvases();
+    const textures = particleTextures(canvases.create);
+
+    const made = PARTICLE_PRESETS.map((preset) => textures.get(preset));
+
+    expect(new Set(made).size).toBe(PARTICLE_PRESETS.length);
+    expect(textures.get('sparkle')).toBe(made[0]);
+    expect(canvases.made).toHaveLength(PARTICLE_PRESETS.length);
+    made.forEach((texture, index) => {
+      const canvas = canvases.made[index]?.canvas;
+      expect([canvas?.width, canvas?.height]).toStrictEqual([
+        PARTICLE_TEXTURE_SIZE,
+        PARTICLE_TEXTURE_SIZE,
+      ]);
+      expect(texture.source).toBeInstanceOf(ImageSource);
+      expect(texture.source.resource).toBe(canvas);
+      expect(texture.source.scaleMode).toBe(TEXTURE_SCALE_MODE);
+    });
+    const painted = canvases.made.map(({ calls }) => calls.join('\n'));
+    expect(new Set(painted).size).toBe(PARTICLE_PRESETS.length);
+    for (const calls of canvases.made.map((each) => each.calls)) {
+      expect(calls.length).toBeGreaterThan(0);
+      for (const call of calls) {
+        // White only: the particles' colours are their tint.
+        expect(call).not.toMatch(/rgba\((?!255, 255, 255,)/);
+        expect(call).not.toMatch(/#(?!ffffff)[0-9a-f]{6}/);
+      }
+    }
+    // The square and the bubble: a filled square, and a stroked ring.
+    expect(canvases.made[2]?.calls).toContain('fillRect 2 2 28 28 #ffffff');
+    expect(canvases.made[3]?.calls).toContain('stroke #ffffff 3');
+  });
+
+  it('a canvas without a 2D context gives a clear texture, not an error', () => {
+    const textures = particleTextures(() => ({
+      width: 0,
+      height: 0,
+      getContext: () => null,
+    }));
+
+    expect(textures.get('smoke')).toBeInstanceOf(Texture);
+  });
+
+  it('destroy() destroys the presets’ textures with their sources, and the stage’s with it', () => {
+    const { stage, particles, emitters } = setupParticles();
+    emitters.set('a1', [emitter(1, 'bubbles', [particle()])]);
+    stage.draw(scene([sceneActor('a1')]));
+    const texture = particles.textures.get('bubbles');
+    const { source } = texture;
+
+    stage.destroy();
+
+    expect(texture.destroyed).toBe(true);
+    expect(source.destroyed).toBe(true);
+    expect(stage.particleCounts()).toStrictEqual({ emitters: 0, particles: 0 });
   });
 });
 

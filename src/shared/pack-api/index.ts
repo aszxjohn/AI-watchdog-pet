@@ -1,7 +1,7 @@
 /**
  * The character pack API, v1 (Epic 3): the manifest, the messages between
- * stage and pack, draw commands, the spritesheet JSON the stage reads, the
- * API version and the fixed parameters.
+ * stage and pack, draw commands, the particle presets, the spritesheet JSON
+ * the stage reads, the API version and the fixed parameters.
  * The contract lives only here; the helpers in common.ts that are not
  * re-exported below are internal to it.
  */
@@ -20,6 +20,7 @@ export * from './fixed-params';
 export * from './manifest';
 export * from './messages';
 export * from './params';
+export * from './particles';
 export * from './spritesheet';
 export * from './stage';
 export * from './version';

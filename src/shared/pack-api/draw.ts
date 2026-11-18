@@ -7,6 +7,7 @@ import {
 } from './common';
 import { actorIdSchema } from './messages';
 import { paramValueSchema } from './params';
+import { PARTICLE_PRESETS } from './particles';
 
 /**
  * `draw`, the one message a pack sends back (API 1.0): for one `frame`, the
@@ -49,13 +50,14 @@ export const spriteCommandSchema = z.strictObject({
  * A particle emitter, kept alive by naming the same `emitterId` each tick.
  * An emitter belongs to one actor: its id is unique within that actor's
  * commands, and another actor may use the same id for its own emitter.
- * `preset` takes any id-style name for now; 3.6 narrows it to the stage's
- * preset list.
+ * `preset` is one of the stage's PARTICLE_PRESETS (Story 3.6). Of `params`
+ * the stage reads `rate` and `tint` (the author docs, section 8.1); the
+ * rest is let through and ignored.
  */
 export const particlesCommandSchema = z.strictObject({
   type: z.literal('particles'),
   emitterId: z.string().min(1).max(EMITTER_ID_MAX_LENGTH),
-  preset: idSchema,
+  preset: z.enum(PARTICLE_PRESETS),
   x: z.number(),
   y: z.number(),
   params: withoutProtoKey(

@@ -9,6 +9,7 @@ import { packLook, type PackLook } from '../../src/overlay/looks';
 import {
   checkDraw,
   countDrawCommands,
+  countEmitters,
   type DrawCheckLook,
 } from '../../src/overlay/pack-host/draw-rules';
 import {
@@ -21,6 +22,7 @@ import {
   DRAW_MAX_COMMANDS,
   PACK_DROP_LOG_INTERVAL_MS,
   PACK_MESSAGE_RATE_LIMIT,
+  PARTICLE_EMITTERS_MAX,
 } from '../../src/shared/constants';
 import {
   manifestSchema,
@@ -192,7 +194,7 @@ describe('I/O matrix', () => {
     });
   });
 
-  it('粒子與 bitmap: particles and bitmap commands are left out and named; the rest is kept', () => {
+  it('bitmap 照舊: bitmap commands are left out and named; the rest, particles too, is kept in the pack’s order', () => {
     expect(
       checkDraw(
         draw({ a1: [PARTICLES, SPRITE], a2: [BITMAP] }),
@@ -202,16 +204,97 @@ describe('I/O matrix', () => {
     ).toStrictEqual({
       ok: true,
       actors: new Map([
-        ['a1', [SPRITE]],
+        ['a1', [PARTICLES, SPRITE]],
         ['a2', []],
       ]),
-      skipped: new Set(['particles', 'bitmap']),
+      skipped: new Set(['bitmap']),
     });
   });
 
   it('漏回: a draw leaving out one of the frame’s actors passes, without it', () => {
     const check = checkDraw(draw({ a1: [SPRITE] }), FRAME_ACTORS, LOOK);
     expect(check.ok && [...check.actors.keys()]).toStrictEqual(['a1']);
+  });
+});
+
+/** `count` particles commands, each its own emitter id. */
+function emitters(count: number, prefix = 'e'): unknown[] {
+  return Array.from({ length: count }, (_unused, index) => ({
+    ...PARTICLES,
+    emitterId: `${prefix}${index}`,
+  }));
+}
+
+describe('I/O matrix', () => {
+  it('清單外 preset: a draw with a particles preset outside the list is dropped whole (invalid); each preset on it passes', () => {
+    expect(
+      checkDraw(
+        draw({ a1: [SPRITE, { ...PARTICLES, preset: 'fireworks' }] }),
+        FRAME_ACTORS,
+        LOOK,
+      ),
+    ).toStrictEqual({ ok: false, reason: 'invalid' });
+    for (const preset of ['sparkle', 'smoke', 'confetti', 'bubbles']) {
+      expect(
+        checkDraw(draw({ a1: [{ ...PARTICLES, preset }] }), FRAME_ACTORS, LOOK)
+          .ok,
+      ).toBe(true);
+    }
+  });
+
+  it(`發射器上限: more than ${PARTICLE_EMITTERS_MAX} particles commands over all actors drop the draw whole (too-many-emitters); exactly that many pass`, () => {
+    const half = PARTICLE_EMITTERS_MAX / 2;
+    expect(
+      checkDraw(
+        draw({ a1: emitters(half), a2: emitters(half + 1) }),
+        FRAME_ACTORS,
+        LOOK,
+      ),
+    ).toStrictEqual({ ok: false, reason: 'too-many-emitters' });
+    const most = checkDraw(
+      draw({ a1: [SPRITE, ...emitters(half)], a2: emitters(half) }),
+      FRAME_ACTORS,
+      LOOK,
+    );
+    expect(most.ok).toBe(true);
+    expect(most.ok && most.actors.get('a1')?.length).toBe(half + 1);
+  });
+
+  it('發射器上限: the emitters are counted after the schema and before the actors and assets', () => {
+    const over = emitters(PARTICLE_EMITTERS_MAX + 1);
+    // Not valid: invalid comes first.
+    expect(
+      checkDraw(
+        draw({ a1: [...over, { type: 'sprite' }] }),
+        FRAME_ACTORS,
+        LOOK,
+      ),
+    ).toStrictEqual({ ok: false, reason: 'invalid' });
+    // Valid, but for another actor and with an unknown asset: the emitters
+    // are counted first.
+    expect(
+      checkDraw(
+        draw({ b1: [...over, { ...SPRITE, asset: 'nothing-here' }] }),
+        FRAME_ACTORS,
+        LOOK,
+      ),
+    ).toStrictEqual({ ok: false, reason: 'too-many-emitters' });
+  });
+});
+
+describe('countEmitters', () => {
+  it('adds the particles commands of every actor up, stops past the limit, and counts anything else as 0', () => {
+    expect(
+      countEmitters(
+        draw({ a1: [PARTICLES, SPRITE, PARTICLES], a2: [BITMAP, PARTICLES] }),
+        10,
+      ),
+    ).toBe(3);
+    expect(countEmitters(draw({ a1: emitters(5) }), 2)).toBe(3);
+    expect(countEmitters(draw({ a1: [null, 'particles', 1] }), 2)).toBe(0);
+    expect(countEmitters(draw({ a1: 'x' }), 2)).toBe(0);
+    expect(countEmitters({ actors: [] }, 2)).toBe(0);
+    expect(countEmitters(null, 2)).toBe(0);
   });
 });
 
@@ -568,6 +651,16 @@ describe('I/O matrix', () => {
       draw({ a1: [{ ...SPRITE, frame: 'eyes-open' }] }),
       'unknown-frame',
     ],
+    [
+      'with a preset outside the list (清單外 preset)',
+      draw({ a1: [SPRITE, { ...PARTICLES, preset: 'fireworks' }] }),
+      'invalid',
+    ],
+    [
+      'with too many emitters (發射器上限)',
+      draw({ a1: emitters(PARTICLE_EMITTERS_MAX + 1) }),
+      'too-many-emitters',
+    ],
   ])(
     '不合規: a draw %s is dropped whole, its frame counts as answered, and one line names the pack',
     async (_label, data, reason) => {
@@ -694,7 +787,7 @@ describe('I/O matrix', () => {
     },
   );
 
-  it('粒子與 bitmap: they are left out of the draw, the rest is drawn, and each type is logged once per pack', async () => {
+  it('bitmap 照舊: bitmaps are left out of the draw, the rest (particles too) is drawn, and bitmap is logged once per pack', async () => {
     const t = setup();
     await showReady(t, [actor('a1', ALPHA)]);
     const alpha = frameOf(t, ALPHA);
@@ -706,9 +799,11 @@ describe('I/O matrix', () => {
       );
     }
 
-    expect(t.host.drawOf(ALPHA)?.actors.get('a1')).toStrictEqual([SPRITE]);
+    expect(t.host.drawOf(ALPHA)?.actors.get('a1')).toStrictEqual([
+      PARTICLES,
+      SPRITE,
+    ]);
     expect(t.logs).toStrictEqual([
-      { kind: 'commands-skipped', packId: ALPHA, command: 'particles' },
       { kind: 'commands-skipped', packId: ALPHA, command: 'bitmap' },
     ]);
   });

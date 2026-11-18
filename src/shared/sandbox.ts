@@ -273,8 +273,9 @@ export type SandboxDestroyReason = (typeof SANDBOX_DESTROY_REASONS)[number];
  * `asset` that is not a key of the pack's manifest (`unknown-asset`), a
  * `frame` on an image, or missing from or not in its spritesheet
  * (`unknown-frame`), a `seq` that is not the `frame` the pack is answering
- * (`stale-draw`); and the bootstrap's SandboxNoDrawReason for a `frame`
- * that got no `draw`.
+ * (`stale-draw`), more than PARTICLE_EMITTERS_MAX `particles` commands
+ * (`too-many-emitters`, Story 3.6's last part); and the bootstrap's
+ * SandboxNoDrawReason for a `frame` that got no `draw`.
  */
 export const PACK_MESSAGE_DROP_REASONS = [
   'rate-limited',
@@ -287,6 +288,7 @@ export const PACK_MESSAGE_DROP_REASONS = [
   'unknown-asset',
   'unknown-frame',
   'stale-draw',
+  'too-many-emitters',
   ...SANDBOX_NO_DRAW_REASONS,
 ] as const;
 
@@ -294,10 +296,10 @@ export type PackMessageDropReason = (typeof PACK_MESSAGE_DROP_REASONS)[number];
 
 /**
  * The draw commands the stage does not draw yet (Story 3.6): it skips them
- * and draws the rest of the `draw` (particles and bitmaps come with Story
- * 3.6's last part).
+ * and draws the rest of the `draw` (particles are drawn since Story 3.6's
+ * second last part; bitmaps come with its last part).
  */
-export const SKIPPED_DRAW_COMMANDS = ['particles', 'bitmap'] as const;
+export const SKIPPED_DRAW_COMMANDS = ['bitmap'] as const;
 
 export type SkippedDrawCommand = (typeof SKIPPED_DRAW_COMMANDS)[number];
 
@@ -330,8 +332,9 @@ export type PackNotDrawnReason = (typeof PACK_NOT_DRAWN_REASONS)[number];
  * - `sandbox-skipped`: it has an actor but gets no sandbox;
  * - `messages-dropped`: `count` messages dropped for `reason` since the
  *   last such line;
- * - `commands-skipped` (Story 3.6): its `draw`s have `command` commands,
- *   which the stage skips (once per sandbox and command type);
+ * - `commands-skipped` (Story 3.6): its `draw`s have `command` commands
+ *   (only `bitmap` now), which the stage skips (once per sandbox and
+ *   command type);
  * - `not-drawn` (Story 3.6): its actors, or some of their sprites, are not
  *   drawn, and why (once per pack and reason, until that changes).
  */

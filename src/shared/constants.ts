@@ -310,6 +310,28 @@ export const DRAW_MAX_BYTES = 64 * 1024;
 export const DRAW_MAX_COMMANDS = 256;
 
 /**
+ * Most particle emitters one `draw` may start or keep, all its actors
+ * together (Story 3.6): each `particles` command is one. The overlay
+ * counts them once the `draw` is valid and drops a `draw` with more whole
+ * (`too-many-emitters`).
+ */
+export const PARTICLE_EMITTERS_MAX = 16;
+
+/**
+ * Most particles one emitter has alive at once (Story 3.6): a full emitter
+ * stops emitting until some of its particles have run out; its `draw` is
+ * not dropped.
+ */
+export const PARTICLES_PER_EMITTER_MAX = 64;
+
+/**
+ * The longest step of the particles, in ms (Story 3.6): a display frame
+ * further from the last one (after a pause or a stall) moves them by this
+ * much only, so no burst of particles comes out at once.
+ */
+export const PARTICLE_STEP_MAX_MS = 100;
+
+/**
  * Most events one pack's next `frame` carries (Story 3.6): while its
  * frames go unanswered the events wait, and only the latest this many are
  * kept.

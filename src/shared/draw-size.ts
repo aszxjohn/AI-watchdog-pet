@@ -1,9 +1,11 @@
 /**
  * How big a pack's message is, counted without parsing it (Stories 3.5,
- * 3.6): its JSON size and a `draw`'s command count, each stopping as soon
- * as it is over its limit. The overlay checks what a sandbox sends with
- * them before parsing it; the Worker bootstrap checks a `draw` with them
- * before posting it. No imports, so the sandbox bundle can use them too.
+ * 3.6): its JSON size, a `draw`'s command count and its emitter count,
+ * each stopping as soon as it is over its limit. The overlay checks what a
+ * sandbox sends with the first two before parsing it, and the emitters
+ * once the `draw` is valid; the Worker bootstrap checks a `draw` with the
+ * first two before posting it. No imports, so the sandbox bundle can use
+ * them too.
  */
 
 /** UTF-8 bytes of `text` (a lone surrogate counts as 3, as U+FFFD would). */
@@ -106,6 +108,41 @@ export function countDrawCommands(data: unknown, limit: number): number {
       count += commands.length;
       if (count > limit) {
         return limit + 1;
+      }
+    }
+  }
+  return count;
+}
+
+/**
+ * How many `particles` commands `data.actors` holds over all its actors
+ * (Story 3.6: each is one emitter), stopping as soon as that is over
+ * `limit` (then `limit + 1`). Only objects of `type: 'particles'` in lists
+ * count; anything else counts 0. Never throws on structured-cloned data.
+ */
+export function countEmitters(data: unknown, limit: number): number {
+  if (typeof data !== 'object' || data === null) {
+    return 0;
+  }
+  const { actors } = data as { actors?: unknown };
+  if (typeof actors !== 'object' || actors === null || Array.isArray(actors)) {
+    return 0;
+  }
+  let count = 0;
+  for (const commands of Object.values(actors)) {
+    if (!Array.isArray(commands)) {
+      continue;
+    }
+    for (const command of commands) {
+      if (
+        typeof command === 'object' &&
+        command !== null &&
+        (command as { type?: unknown }).type === 'particles'
+      ) {
+        count += 1;
+        if (count > limit) {
+          return limit + 1;
+        }
       }
     }
   }

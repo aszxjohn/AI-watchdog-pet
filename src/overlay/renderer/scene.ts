@@ -11,10 +11,11 @@
  * - A placed actor is drawn when its state maps (world/states.ts: in the
  *   character's `states` or its `fallback`) and its pack's latest valid
  *   draw, made by the version installed, has it: its sprite commands,
- *   ordered by `z` (ties keep the pack's order). An empty list draws
- *   nothing but the actor is there. A state that does not map draws
- *   nothing of it (the placeholder is Story 3.7), nor does a draw that
- *   leaves it out.
+ *   ordered by `z` (ties keep the pack's order), and its `particles`
+ *   commands (its emitters, which particles.ts runs and pixi-stage.ts draws
+ *   above its sprites). An empty list draws nothing but the actor is
+ *   there. A state that does not map draws nothing of it (the placeholder
+ *   is Story 3.7), nor does a draw that leaves it out.
  * - Each drawn actor sits at its position, scaled by its 大小 (the `scale`
  *   fixed parameter), clipped to its manifest `bounds`. Actors are drawn
  *   by `y`, lower on the screen on top (ties keep StageView's order).
@@ -27,9 +28,9 @@
  *   `ready`) takes the mouse over its manifest `hitbox` times its 大小, at
  *   its position, named by its session key; the one drawn on top comes
  *   last (pointer.ts gives the last one under the cursor). Any other actor
- *   takes no mouse: not drawn, an empty list, or only sprites whose
- *   textures are still loading or failed, so nothing invisible catches a
- *   click.
+ *   takes no mouse: not drawn, an empty list, only particles, or only
+ *   sprites whose textures are still loading or failed, so nothing
+ *   invisible catches a click. Particles never change an actor's area.
  */
 import type { SessionKey } from '../../shared/detection-events';
 import {
@@ -40,7 +41,11 @@ import {
 import type { StageCharacter, StageView } from '../../shared/stage-view';
 import type { PackLook } from '../looks';
 import type { PackDraw } from '../pack-host/host';
-import type { SpriteCommand } from '../pack-host/draw-rules';
+import type {
+  DrawnCommand,
+  ParticlesCommand,
+  SpriteCommand,
+} from '../pack-host/draw-rules';
 import { packIdOf } from '../pack-host/rules';
 import type { HitArea } from '../pointer';
 import {
@@ -81,6 +86,8 @@ export interface SceneActor {
   readonly bounds: LocalBox;
   /** Its sprites, bottom first. */
   readonly sprites: readonly SceneSprite[];
+  /** Its emitters: the `particles` commands of its latest draw, in order. */
+  readonly emitters: readonly ParticlesCommand[];
 }
 
 /** What to draw this display frame. */
@@ -133,11 +140,10 @@ export function sceneSprite(command: SpriteCommand): SceneSprite {
   };
 }
 
-/** `commands` as sprites, ordered by `z` (stable). */
-export function sceneSprites(
-  commands: readonly SpriteCommand[],
-): SceneSprite[] {
+/** The sprite commands of `commands` as sprites, ordered by `z` (stable). */
+export function sceneSprites(commands: readonly DrawnCommand[]): SceneSprite[] {
   return commands
+    .filter((command) => command.type === 'sprite')
     .map((command, index) => ({
       command,
       index,
@@ -256,6 +262,7 @@ export function buildScene({
         scale: member.scale,
         bounds: member.bounds,
         sprites: sceneSprites(commands),
+        emitters: commands.filter((command) => command.type === 'particles'),
       },
       hitbox: character.hitbox,
     });

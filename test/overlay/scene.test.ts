@@ -6,7 +6,11 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { packLook, type PackLook } from '../../src/overlay/looks';
-import type { SpriteCommand } from '../../src/overlay/pack-host/draw-rules';
+import type {
+  DrawnCommand,
+  ParticlesCommand,
+  SpriteCommand,
+} from '../../src/overlay/pack-host/draw-rules';
 import type { PackDraw } from '../../src/overlay/pack-host/host';
 import { createMissingLog } from '../../src/overlay/renderer/missing-log';
 import {
@@ -156,8 +160,16 @@ function input({
   };
 }
 
+const SPARKLE: ParticlesCommand = {
+  type: 'particles',
+  emitterId: 'glow',
+  preset: 'sparkle',
+  x: 0,
+  y: -120,
+};
+
 function drawOf(
-  actors: Record<string, SpriteCommand[]>,
+  actors: Record<string, DrawnCommand[]>,
   version = '1.0.0',
 ): PackDraw {
   return { version, actors: new Map(Object.entries(actors)) };
@@ -195,6 +207,7 @@ describe('I/O matrix', () => {
             alpha: 1,
           },
         ],
+        emitters: [],
       },
     ]);
     expect(scene.missing).toStrictEqual(new Set());
@@ -531,6 +544,64 @@ describe('I/O matrix', () => {
       actors: [],
       areas: [],
     });
+  });
+
+  it('粒子出現: a drawn actor carries its particles commands as its emitters, in the pack’s order; its sprites are as without them', () => {
+    const smoke: ParticlesCommand = {
+      ...SPARKLE,
+      emitterId: 'puff',
+      preset: 'smoke',
+      params: { rate: 2 },
+    };
+    const scene = buildScene(
+      input({
+        actors: [actor('a1', `${ALPHA}/probe-one`)],
+        draws: { [ALPHA]: drawOf({ a1: [SPARKLE, SPRITE, smoke] }) },
+      }),
+    );
+    const plain = buildScene(
+      input({
+        actors: [actor('a1', `${ALPHA}/probe-one`)],
+        draws: { [ALPHA]: drawOf({ a1: [SPRITE] }) },
+      }),
+    );
+
+    expect(scene.actors[0]?.emitters).toStrictEqual([SPARKLE, smoke]);
+    expect(scene.actors[0]?.sprites).toStrictEqual(plain.actors[0]?.sprites);
+    expect(plain.actors[0]?.emitters).toStrictEqual([]);
+  });
+
+  it('hit area: an actor with only particles takes no mouse; particles do not change the area of an actor with a sprite', () => {
+    const actors = [
+      actor('a1', `${ALPHA}/probe-one`),
+      actor('a2', `${ALPHA}/probe-one`),
+    ];
+    const scene = buildScene(
+      input({
+        actors,
+        draws: {
+          [ALPHA]: drawOf({
+            a1: [SPARKLE],
+            a2: [SPRITE, { ...SPARKLE, x: 200, y: -400 }],
+          }),
+        },
+      }),
+    );
+    const plain = buildScene(
+      input({
+        actors,
+        draws: { [ALPHA]: drawOf({ a1: [], a2: [SPRITE] }) },
+      }),
+    );
+
+    expect(scene.actors.map((each) => each.actorId)).toStrictEqual([
+      'a1',
+      'a2',
+    ]);
+    expect(scene.areas).toStrictEqual(plain.areas);
+    expect(scene.areas.map((area) => area.key)).toStrictEqual([
+      'claude-code:a2',
+    ]);
   });
 
   it('no canvas placed yet: nothing is drawn', () => {

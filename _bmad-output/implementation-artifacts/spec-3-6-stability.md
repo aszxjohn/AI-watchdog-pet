@@ -158,6 +158,8 @@ context:
 
 - 2026-11-18 主流程重跑：五項檢查全過（112 檔通過、1 檔跳過；5233 個測試通過、2 個跳過；depcruise 312 個模組、0 違規；`npm run e2e` 15 個全過）；`out/` 沒有被動到；I/O 矩陣 10 列都有測試且都跑過；diff 裡沒有刪掉的 `expect(`。
 
+- CI：commit `b45c20e`（2026-11-18）後，GitHub Actions 的 unit（check）與 e2e 在 macOS、Windows 都通過（run 44224962740）。
+
 ## Spec Change Log
 
 ## Review Triage Log
@@ -191,4 +193,4 @@ context:
 - `npm run typecheck`、`npm run lint`、`CI=true npm test`、`npm run depcruise`、`npm run e2e`：預期全部通過。
 
 **Manual checks (if no CLI):**
-- 使用者在打包版實機驗收：在其他 app 按「隱藏其他」，看角色是否照第 1 題的決定處理。
+- 使用者在打包版實機驗收：在其他 app 按「隱藏其他」，桌寵 app 連畫布一起被隱藏（實測後接受隱藏）；從選單列打開面板後角色回來。

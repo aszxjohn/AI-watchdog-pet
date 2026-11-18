@@ -20,7 +20,12 @@ import 'pixi.js/unsafe-eval';
 //   renderer/pixi-stage.ts draws it with textures from
 //   renderer/textures.ts (images loaded here from `pack://`), and
 //   canvas-input.ts lets the characters on screen take the mouse (AD-14).
-//   With no actor, or paused, the render loop stops after one last frame;
+//   Before it is drawn, renderer/particles.ts follows the drawn actors'
+//   emitters and moves the particles on by the render loop's time (the
+//   ticker's deltaMS); pixi-stage.ts draws them with textures painted on
+//   canvases made here. With no actor, or paused, the render loop stops
+//   after one last frame, which moves no particle: they stand still until
+//   it runs again;
 // - PixiJS's resolution follows the canvas's display (`canvas.scaleFactor`,
 //   renderer/display.ts).
 // - While the canvas's WebGL context is lost (context-loss.ts, from its
@@ -29,10 +34,11 @@ import 'pixi.js/unsafe-eval';
 //   pauses (no `frame`), nothing takes the mouse, and main hears it on
 //   `canvas:gpu`; once it is back, drawing starts again from StageView now
 //   and each pack's last draw.
-// The body's data attributes say what was last drawn, how many areas take
-// the mouse and whether the context is lost, for DevTools.
+// The body's data attributes say what was last drawn, how many emitters
+// and particles there are, how many areas take the mouse and whether the
+// context is lost, for DevTools.
 import './index.css';
-import { Application, Assets, Container } from 'pixi.js';
+import { Application, Assets, Container, type Ticker } from 'pixi.js';
 import { PRELOAD_API_KEY } from '../shared/constants';
 import type { OverlayApi, PreloadHost } from '../shared/preload-api';
 import type { StageView } from '../shared/stage-view';
@@ -44,8 +50,10 @@ import { createPackHost } from './pack-host/host';
 import { createPackLog } from './pack-host/log';
 import { createMissingLog } from './renderer/missing-log';
 import { capFrameRate, followResolution } from './renderer/display';
+import { createParticleSystem } from './renderer/particles';
 import {
   createPixiStage,
+  particleTextures,
   pixiTextures,
   type PixiStage,
 } from './renderer/pixi-stage';
@@ -158,6 +166,9 @@ const textures = createTextureStore({
 
 const reportMissing = createMissingLog(log);
 
+/** The drawn actors' emitters and their particles. */
+const particles = createParticleSystem();
+
 /** The latest StageView. */
 let view: StageView | undefined;
 
@@ -182,8 +193,11 @@ function installedLooks(current: StageView): PackLook[] {
   });
 }
 
-/** One display frame: what to draw, drawn; what takes the mouse. */
-function drawFrame(): void {
+/**
+ * One display frame: what to draw, its particles moved on by `dtMs` (0 when
+ * not called by the render loop), drawn; what takes the mouse.
+ */
+function drawFrame(dtMs = 0): void {
   if (
     stage === undefined ||
     view === undefined ||
@@ -201,11 +215,25 @@ function drawFrame(): void {
       textures.get(packId, version, asset, frame) !== undefined,
   });
   reportMissing(scene.missing);
+  particles.sync(scene.actors);
+  particles.step(dtMs);
   const counts = stage.draw(scene);
   input.setAreas(scene.areas);
   show('drawnActors', String(counts.actors));
   show('drawnSprites', String(counts.sprites));
+  // What runs (particles.ts), and what of it is on screen (pixi-stage.ts).
+  const live = particles.counts();
+  show('particleEmitters', String(live.emitters));
+  show('liveParticles', String(live.particles));
+  const onScreen = stage.particleCounts();
+  show('drawnEmitters', String(onScreen.emitters));
+  show('drawnParticles', String(onScreen.particles));
   show('hitAreas', String(scene.areas.length));
+}
+
+/** The render loop's frame: the time since its last one, then drawFrame. */
+function onRenderFrame(ticker: Ticker): void {
+  drawFrame(ticker.deltaMS);
 }
 
 /**
@@ -270,11 +298,17 @@ async function initCanvas(): Promise<InitialisedCanvas> {
   });
   const layer = new Container();
   app.stage.addChild(layer);
-  stage = createPixiStage(layer, (packId, version, asset, frame) =>
-    textures.get(packId, version, asset, frame),
+  stage = createPixiStage(
+    layer,
+    (packId, version, asset, frame) =>
+      textures.get(packId, version, asset, frame),
+    {
+      emittersOf: (actorId) => particles.emittersOf(actorId),
+      textures: particleTextures(() => document.createElement('canvas')),
+    },
   );
   // Before the render the Application adds itself (a lower priority).
-  app.ticker.add(drawFrame);
+  app.ticker.add(onRenderFrame);
   capFrameRate(app.ticker);
   if (view !== undefined) {
     followView(view);

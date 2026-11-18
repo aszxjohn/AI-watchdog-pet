@@ -50,8 +50,8 @@
  *   `seq` is that frame's (any other is `stale-draw`), and is then checked
  *   (draw-rules.ts); one that passes is the pack's latest valid draw,
  *   which the renderer draws every display frame (drawOf()) until the next
- *   one passes. Command types not drawn yet are left out with one line per
- *   sandbox and type. The bootstrap's `sandbox.no-draw` answers the frame
+ *   one passes. Command types not drawn yet (`bitmap`) are left out with
+ *   one line per sandbox and type. The bootstrap's `sandbox.no-draw` answers the frame
  *   too, and counts as a drop of its reason. Drops go through the same
  *   per-reason log limit as above.
  * - A sandbox destroyed or failed takes its latest draw and its unanswered
@@ -173,7 +173,10 @@ export type SandboxPhase = 'requesting' | 'loading' | 'ready' | 'failed';
 export interface PackDraw {
   /** The version of the pack that drew it. */
   readonly version: string;
-  /** Each actor's sprite commands; an actor left out is not drawn. */
+  /**
+   * Each actor's sprite and particles commands; an actor left out is not
+   * drawn.
+   */
   readonly actors: DrawnActors;
 }
 

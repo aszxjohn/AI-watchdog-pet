@@ -349,6 +349,7 @@ describe('Story 3.6: no-draw reports and the drawing lines', () => {
       'unknown-asset',
       'unknown-frame',
       'stale-draw',
+      'too-many-emitters',
       ...SANDBOX_NO_DRAW_REASONS,
     ]);
     for (const codes of [
@@ -363,7 +364,7 @@ describe('Story 3.6: no-draw reports and the drawing lines', () => {
   it.each<[string, unknown]>([
     [
       'a skipped command type',
-      { kind: 'commands-skipped', packId: 'sample-pack', command: 'particles' },
+      { kind: 'commands-skipped', packId: 'sample-pack', command: 'bitmap' },
     ],
     [
       'a pack not drawn',
@@ -395,6 +396,10 @@ describe('Story 3.6: no-draw reports and the drawing lines', () => {
     [
       'a sprite command skipped',
       { kind: 'commands-skipped', packId: 'sample-pack', command: 'sprite' },
+    ],
+    [
+      'a particles command skipped (drawn since Story 3.6)',
+      { kind: 'commands-skipped', packId: 'sample-pack', command: 'particles' },
     ],
     [
       'an unknown reason',

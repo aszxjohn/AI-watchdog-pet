@@ -250,8 +250,8 @@ describe('readPackManifest', () => {
 describe('packLogLine (Story 3.6)', () => {
   it.each<[PackLogEntry, string, string]>([
     [
-      { kind: 'commands-skipped', packId: 'sample-pack', command: 'particles' },
-      'pack sample-pack: its draws have particles commands, which the stage does not draw yet; the rest is drawn',
+      { kind: 'commands-skipped', packId: 'sample-pack', command: 'bitmap' },
+      'pack sample-pack: its draws have bitmap commands, which the stage does not draw yet; the rest is drawn',
       'info',
     ],
     [

@@ -372,6 +372,11 @@ describe('I/O matrix', () => {
       context: 'lost',
       drawnActors: '0',
       drawnSprites: '0',
+      // The particles too (Story 3.6's second last part).
+      particleEmitters: '0',
+      liveParticles: '0',
+      drawnEmitters: '0',
+      drawnParticles: '0',
       hitAreas: '0',
     });
     expect(t.reports).toStrictEqual(['context-lost']);

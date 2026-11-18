@@ -80,6 +80,28 @@ export interface SyntheticSession {
   readonly sessionKey: `claude-code:${string}`;
 }
 
+/** The folder of the synthetic sessions' transcripts in `home`. */
+function claudeProjectFolder(home: string): string {
+  return path.join(home, '.claude', 'projects', '-e2e-project');
+}
+
+/** A synthetic transcript record of `type`, timestamped now. */
+function claudeRecord(
+  home: string,
+  sessionId: string,
+  type: 'user' | 'assistant',
+  message: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    type,
+    uuid: randomUUID(),
+    sessionId,
+    cwd: path.join(home, 'e2e-project'),
+    timestamp: new Date().toISOString(),
+    message,
+  };
+}
+
 /**
  * Writes `<home>/.claude/projects/<folder>/<uuid>.jsonl` with one `user`
  * record timestamped now, written here (no real transcript): the Claude
@@ -88,21 +110,50 @@ export interface SyntheticSession {
  */
 export function writeClaudeSession(home: string): SyntheticSession {
   const sessionId = randomUUID();
-  const folder = path.join(home, '.claude', 'projects', '-e2e-project');
+  const folder = claudeProjectFolder(home);
   fs.mkdirSync(folder, { recursive: true });
-  const record = {
-    type: 'user',
-    uuid: randomUUID(),
-    sessionId,
-    cwd: path.join(home, 'e2e-project'),
-    timestamp: new Date().toISOString(),
-    message: { role: 'user', content: 'e2e sandbox check' },
-  };
+  const record = claudeRecord(home, sessionId, 'user', {
+    role: 'user',
+    content: 'e2e sandbox check',
+  });
   fs.writeFileSync(
     path.join(folder, `${sessionId}.jsonl`),
     `${JSON.stringify(record)}\n`,
   );
   return { sessionId, sessionKey: `claude-code:${sessionId}` };
+}
+
+/**
+ * What a synthetic session can be made to do next, as the Claude Code
+ * adapter reads it (Story 2.4): `prompt`, a user prompt (a turn starts:
+ * thinking); `answer`, an assistant answer that ends the turn (done).
+ */
+export type SyntheticTurn = 'prompt' | 'answer';
+
+/**
+ * Appends one record timestamped now to `session`'s transcript in `home`
+ * (written here, no real transcript); the running adapter reads it.
+ */
+export function appendClaudeRecord(
+  home: string,
+  session: SyntheticSession,
+  turn: SyntheticTurn,
+): void {
+  const record =
+    turn === 'prompt'
+      ? claudeRecord(home, session.sessionId, 'user', {
+          role: 'user',
+          content: 'e2e prompt',
+        })
+      : claudeRecord(home, session.sessionId, 'assistant', {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'e2e answer' }],
+          stop_reason: 'end_turn',
+        });
+  fs.appendFileSync(
+    path.join(claudeProjectFolder(home), `${session.sessionId}.jsonl`),
+    `${JSON.stringify(record)}\n`,
+  );
 }
 
 /** The 127.0.0.1 server the probe's network attempts aim at. */

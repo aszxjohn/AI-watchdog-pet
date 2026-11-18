@@ -7,8 +7,10 @@
  * first message of each type it gets is written back with `stage.log`
  * (no other change: what it draws is the contract pack's). The tests read
  * the run log (what the pack got), the overlay's body data attributes
- * (what was drawn) and the panels' StageView. Nothing is read from the
- * screen, and nothing connects anywhere but the app itself.
+ * (what was drawn, the particles included: Story 3.6's second last part)
+ * and the panels' StageView; to change the session's state they append a
+ * synthetic record to its transcript. Nothing is read from the screen,
+ * and nothing connects anywhere but the app itself.
  */
 import {
   expect,
@@ -29,6 +31,7 @@ import {
   zipBuffer,
 } from '../helpers/awpet';
 import {
+  appendClaudeRecord,
   closeStage,
   LAUNCH_TIMEOUT_MS,
   launchStage,
@@ -55,6 +58,15 @@ const READY_TIMEOUT_MS = 90_000;
 
 /** How long the first draw may take to show once the sandbox is ready. */
 const DRAWN_TIMEOUT_MS = 20_000;
+
+/**
+ * How long a stopped sparkle emitter may take to be gone once StageView
+ * has the new state: the longest a sparkle lives (900 ms) and the new
+ * state reaching the pack and its draw coming back. Short on purpose:
+ * particles stepped in ticker frames instead of ms would live some 16
+ * times as long and miss it.
+ */
+const PARTICLES_GONE_TIMEOUT_MS = 5_000;
 
 /** The contract pack's manifest, checked: what the probe declares. */
 const MANIFEST = manifestSchema.parse({
@@ -343,6 +355,76 @@ test.describe('I/O matrix', () => {
     await expect
       .poll(async () => (await overlayData()).resolution)
       .toBe(String(view.canvas?.scaleFactor));
+  });
+
+  /** The probe actor's state as StageView has it now. */
+  async function stateNow(): Promise<string | undefined> {
+    return (await panelsSnapshot()).view.actors[0]?.state;
+  }
+
+  test("粒子出現: the probe's actor (probe-one, glow on by default) thinking has its sparkle emitter drawn, with live particles; it still takes the mouse as before", async () => {
+    const { view } = await panelsSnapshot();
+    expect(view.actors.map((actor) => actor.characterKey)).toStrictEqual([
+      `${STAGE_PACK_ID}/probe-one`,
+    ]);
+
+    appendClaudeRecord(dirs.home, session, 'prompt');
+    await expect.poll(stateNow, { timeout: DRAWN_TIMEOUT_MS }).toBe('thinking');
+    await expect
+      .poll(async () => (await overlayData()).particleEmitters, {
+        timeout: DRAWN_TIMEOUT_MS,
+      })
+      .toBe('1');
+    await expect
+      .poll(async () => Number((await overlayData()).liveParticles), {
+        timeout: DRAWN_TIMEOUT_MS,
+      })
+      .toBeGreaterThan(0);
+    // And they are on screen: what pixi-stage put there, not only what
+    // particles.ts runs.
+    await expect
+      .poll(async () => (await overlayData()).drawnEmitters, {
+        timeout: DRAWN_TIMEOUT_MS,
+      })
+      .toBe('1');
+    await expect
+      .poll(async () => Number((await overlayData()).drawnParticles), {
+        timeout: DRAWN_TIMEOUT_MS,
+      })
+      .toBeGreaterThan(0);
+    const data = await overlayData();
+    expect([data.drawnActors, data.hitAreas]).toStrictEqual(['1', '1']);
+  });
+
+  test('粒子停止: its turn done (probe-one shows it as waiting, without particles), the emitter stops and is gone once its particles ran out', async () => {
+    appendClaudeRecord(dirs.home, session, 'answer');
+    await expect
+      .poll(stateNow, { timeout: DRAWN_TIMEOUT_MS })
+      .toMatch(/^(?:done|waiting)$/);
+    await expect
+      .poll(
+        async () => {
+          const data = await overlayData();
+          return [data.particleEmitters, data.drawnEmitters];
+        },
+        { timeout: PARTICLES_GONE_TIMEOUT_MS },
+      )
+      .toStrictEqual(['0', '0']);
+    const data = await overlayData();
+    expect([
+      data.liveParticles,
+      data.drawnParticles,
+      data.drawnActors,
+    ]).toStrictEqual(['0', '0', '1']);
+    // Its draws were taken whole, and particles are not skipped any more.
+    expect(
+      readRunLog(dirs.logs).filter(
+        (line) =>
+          stageLine('dropped')(line) ||
+          stageLine('its draws have particles')(line) ||
+          stageTrouble(line),
+      ),
+    ).toStrictEqual([]);
   });
 
   test('加入與移出: the session released, its actor leaves: the probe gets its despawn, nothing is drawn any more (no square or anything else) and nothing takes the mouse', async () => {

@@ -7,10 +7,10 @@ import { z } from '../zod-setup';
  */
 
 /**
- * A pack id, character id, parameter key, asset key, choice value or
- * particle preset: lowercase letters, digits and `-`, 2 to 64 characters,
- * not starting with `-`. It can never start with `_`, so `pack://_stage/`
- * stays the stage's own host.
+ * A pack id, character id, parameter key, asset key or choice value:
+ * lowercase letters, digits and `-`, 2 to 64 characters, not starting with
+ * `-`. It can never start with `_`, so `pack://_stage/` stays the stage's
+ * own host. (A particle preset is one of PARTICLE_PRESETS, Story 3.6.)
  */
 export const ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/;
 

@@ -13,6 +13,23 @@
  * - Actors are put in the scene's order, bottom first.
  * - A sprite whose texture is not there (still loading, or failed) is
  *   hidden for that frame.
+ * - Particles (Story 3.6's second last part): each emitter particles.ts
+ *   runs for a drawn actor is one ParticleContainer in that actor's
+ *   container, so it moves, scales and is clipped with it, above all its
+ *   sprites, emitters in the order they started. The container's bounds
+ *   area is the actor's `bounds` (PixiJS does not work a
+ *   ParticleContainer's bounds out). Each particle is one Particle,
+ *   centre-anchored, sized, turned, coloured and faded as particles.ts
+ *   says; containers and particles are reused from frame to frame. An
+ *   emitter gone from particles.ts has its container destroyed.
+ *   particleCounts() says how many containers and particles the last
+ *   draw() put on screen (main.ts shows them, the e2e tests read them).
+ * - Each preset's texture (particleTextures) is painted in white, from
+ *   its PresetDef's shape, on a 2D canvas main.ts makes (not a render
+ *   texture: PixiJS uploads the canvas again once a lost WebGL context is
+ *   back), made the first time it is needed, outside PixiJS's global
+ *   cache, and shared by every particle of that preset; destroy() destroys
+ *   them.
  * - The textures (pixiTextures): images main.ts loads with `Image` from
  *   `pack://` (crossorigin, which the `pack` scheme's corsEnabled
  *   answers), each made into its own ImageSource and Texture, sampled
@@ -26,12 +43,26 @@ import {
   Graphics,
   type ImageResource,
   ImageSource,
+  Particle,
+  ParticleContainer,
+  type ParticleProperties,
+  Rectangle,
   Sprite,
   Spritesheet,
   type SpritesheetData,
   Texture,
 } from 'pixi.js';
-import type { PackSpritesheet } from '../../shared/pack-api';
+import type {
+  LocalBox,
+  PackSpritesheet,
+  ParticlePreset,
+} from '../../shared/pack-api';
+import {
+  type EmitterView,
+  PARTICLE_PRESET_DEFS,
+  type ParticleShape,
+  type ParticleView,
+} from './particles';
 import type { Scene } from './scene';
 import type { TextureBackend } from './textures';
 
@@ -86,11 +117,254 @@ export function pixiTextures<I extends LoadedImage>(
   };
 }
 
+/** The width and height of a preset's texture, in pixels. */
+export const PARTICLE_TEXTURE_SIZE = 32;
+
+/** A canvas gradient, as far as painting a preset's texture goes. */
+export interface PaintGradient {
+  addColorStop(offset: number, color: string): void;
+}
+
+/**
+ * The parts of a 2D canvas context (CanvasRenderingContext2D in the
+ * overlay) a preset's texture is painted with.
+ */
+export interface PaintContext {
+  fillStyle: unknown;
+  strokeStyle: unknown;
+  lineWidth: number;
+  beginPath(): void;
+  closePath(): void;
+  moveTo(x: number, y: number): void;
+  lineTo(x: number, y: number): void;
+  arc(
+    x: number,
+    y: number,
+    radius: number,
+    startAngle: number,
+    endAngle: number,
+  ): void;
+  fill(): void;
+  stroke(): void;
+  fillRect(x: number, y: number, width: number, height: number): void;
+  createRadialGradient(
+    x0: number,
+    y0: number,
+    r0: number,
+    x1: number,
+    y1: number,
+    r1: number,
+  ): PaintGradient;
+}
+
+/** A canvas (an HTMLCanvasElement in the overlay) to paint a texture on. */
+export interface PaintCanvas {
+  width: number;
+  height: number;
+  getContext(contextId: '2d'): PaintContext | null;
+}
+
+/** A radial fade from white at `stops`' offsets, filling the texture. */
+function paintGlow(
+  context: PaintContext,
+  stops: readonly (readonly [offset: number, alpha: number])[],
+): void {
+  const half = PARTICLE_TEXTURE_SIZE / 2;
+  const gradient = context.createRadialGradient(
+    half,
+    half,
+    0,
+    half,
+    half,
+    half,
+  );
+  for (const [offset, alpha] of stops) {
+    gradient.addColorStop(offset, `rgba(255, 255, 255, ${alpha})`);
+  }
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, PARTICLE_TEXTURE_SIZE, PARTICLE_TEXTURE_SIZE);
+}
+
+/** Paints `shape` in white on a PARTICLE_TEXTURE_SIZE square canvas. */
+export function paintParticle(
+  context: PaintContext,
+  shape: ParticleShape,
+): void {
+  const size = PARTICLE_TEXTURE_SIZE;
+  const half = size / 2;
+  switch (shape) {
+    case 'spark': {
+      // A glowing point with a four-pointed star over it.
+      paintGlow(context, [
+        [0, 1],
+        [0.3, 0.6],
+        [1, 0],
+      ]);
+      const arm = half - 1;
+      const waist = 2;
+      context.fillStyle = 'rgba(255, 255, 255, 0.9)';
+      context.beginPath();
+      context.moveTo(half, half - arm);
+      context.lineTo(half + waist, half - waist);
+      context.lineTo(half + arm, half);
+      context.lineTo(half + waist, half + waist);
+      context.lineTo(half, half + arm);
+      context.lineTo(half - waist, half + waist);
+      context.lineTo(half - arm, half);
+      context.lineTo(half - waist, half - waist);
+      context.closePath();
+      context.fill();
+      return;
+    }
+    case 'puff':
+      // Soft all the way to its edge.
+      paintGlow(context, [
+        [0, 1],
+        [0.5, 0.5],
+        [1, 0],
+      ]);
+      return;
+    case 'square':
+      // A clear pixel or two round it: its edges stay straight when it turns.
+      context.fillStyle = '#ffffff';
+      context.fillRect(2, 2, size - 4, size - 4);
+      return;
+    case 'bubble':
+      // A ring, faintly filled, with a highlight up on the left.
+      context.fillStyle = 'rgba(255, 255, 255, 0.15)';
+      context.beginPath();
+      context.arc(half, half, half - 3, 0, 2 * Math.PI);
+      context.fill();
+      context.strokeStyle = '#ffffff';
+      context.lineWidth = 3;
+      context.beginPath();
+      context.arc(half, half, half - 3, 0, 2 * Math.PI);
+      context.stroke();
+      context.fillStyle = 'rgba(255, 255, 255, 0.9)';
+      context.beginPath();
+      context.arc(half - 5, half - 5, 3, 0, 2 * Math.PI);
+      context.fill();
+      return;
+  }
+}
+
+/** The presets' textures (see the module comment). */
+export interface ParticleTextures {
+  /** `preset`'s texture, made the first time it is asked for. */
+  get(preset: ParticlePreset): Texture;
+  /** Destroys every texture made, with its source. */
+  destroy(): void;
+}
+
+/** The presets' textures, painted on canvases `createCanvas` makes. */
+export function particleTextures(
+  createCanvas: () => PaintCanvas,
+): ParticleTextures {
+  const made = new Map<ParticlePreset, Texture>();
+  return {
+    get(preset) {
+      let texture = made.get(preset);
+      if (texture === undefined) {
+        const canvas = createCanvas();
+        canvas.width = PARTICLE_TEXTURE_SIZE;
+        canvas.height = PARTICLE_TEXTURE_SIZE;
+        const context = canvas.getContext('2d');
+        // Without a 2D context the texture stays clear: nothing is drawn.
+        if (context !== null) {
+          paintParticle(context, PARTICLE_PRESET_DEFS[preset].shape);
+        }
+        texture = new Texture({
+          source: new ImageSource({
+            // An HTMLCanvasElement in the overlay, which PixiJS takes.
+            resource: canvas as unknown as ImageResource,
+            scaleMode: TEXTURE_SCALE_MODE,
+          }),
+        });
+        made.set(preset, texture);
+      }
+      return texture;
+    },
+    destroy() {
+      for (const texture of made.values()) {
+        texture.destroy(true);
+      }
+      made.clear();
+    },
+  };
+}
+
+/** What pixi-stage draws particles from (Story 3.6). */
+export interface StageParticles {
+  /** `actorId`'s emitters (particles.ts), oldest first. */
+  emittersOf(actorId: string): readonly EmitterView[];
+  /** The presets' textures. */
+  readonly textures: ParticleTextures;
+}
+
+/**
+ * What a particle's container works out each frame: where, how big,
+ * turned, coloured and faded, all of which change as it lives.
+ */
+const PARTICLE_PROPERTIES: ParticleProperties & Record<string, boolean> =
+  Object.freeze({
+    position: true,
+    vertex: true,
+    rotation: true,
+    color: true,
+    uvs: false,
+  });
+
+/** `box` as a PixiJS rectangle. */
+function rectangleOf({ x, y, width, height }: LocalBox): Rectangle {
+  return new Rectangle(x, y, width, height);
+}
+
+/** Makes `container`'s particles show `views`, reusing what it has. */
+function showParticles(
+  container: ParticleContainer<Particle>,
+  views: readonly ParticleView[],
+): void {
+  const children = container.particleChildren;
+  if (children.length > views.length) {
+    container.removeParticles(views.length);
+  } else if (children.length < views.length) {
+    const added: Particle[] = [];
+    for (let i = children.length; i < views.length; i += 1) {
+      added.push(
+        new Particle({
+          texture: container.texture,
+          anchorX: 0.5,
+          anchorY: 0.5,
+        }),
+      );
+    }
+    container.addParticle(...added);
+  }
+  views.forEach((view, index) => {
+    const particle = children[index];
+    if (particle === undefined) {
+      return;
+    }
+    const scale = view.size / PARTICLE_TEXTURE_SIZE;
+    particle.x = view.x;
+    particle.y = view.y;
+    particle.scaleX = scale;
+    particle.scaleY = scale;
+    particle.rotation = view.rotation;
+    if (particle.tint !== view.color) {
+      particle.tint = view.color;
+    }
+    particle.alpha = view.alpha;
+  });
+}
+
 /** One actor's display objects. */
 interface ActorNode {
   readonly container: Container;
   readonly mask: Graphics;
   readonly sprites: Sprite[];
+  /** Its emitters' containers, by EmitterView id, oldest first. */
+  readonly emitters: Map<number, ParticleContainer<Particle>>;
   /** The bounds the mask was drawn for. */
   bounds: string;
 }
@@ -101,9 +375,24 @@ export interface StageCounts {
   readonly sprites: number;
 }
 
+/** The particles one draw() put on screen. */
+export interface StageParticleCounts {
+  /** ParticleContainers, one per emitter. */
+  readonly emitters: number;
+  /** Particles in them, all together. */
+  readonly particles: number;
+}
+
 export interface PixiStage {
-  /** Puts `scene` on screen (it shows at the next render). */
+  /**
+   * Puts `scene` on screen (it shows at the next render), with each drawn
+   * actor's particles as they are now.
+   */
   draw(scene: Scene): StageCounts;
+  /** The particles the last draw() put on screen; none before any. */
+  particleCounts(): StageParticleCounts;
+  /** Destroys every actor's display objects and the presets' textures. */
+  destroy(): void;
 }
 
 export function createPixiStage(
@@ -114,8 +403,10 @@ export function createPixiStage(
     asset: string,
     frame: string | undefined,
   ) => Texture | undefined,
+  particles: StageParticles,
 ): PixiStage {
   const nodes = new Map<string, ActorNode>();
+  let particleCounts: StageParticleCounts = { emitters: 0, particles: 0 };
 
   function nodeOf(actorId: string): ActorNode {
     let node = nodes.get(actorId);
@@ -124,10 +415,46 @@ export function createPixiStage(
       const mask = new Graphics();
       container.addChild(mask);
       container.mask = mask;
-      node = { container, mask, sprites: [], bounds: '' };
+      node = { container, mask, sprites: [], emitters: new Map(), bounds: '' };
       nodes.set(actorId, node);
     }
     return node;
+  }
+
+  /**
+   * `node`'s emitters as particles.ts has them now, above its sprites;
+   * returns how many particles they hold.
+   */
+  function drawEmitters(
+    node: ActorNode,
+    actorId: string,
+    bounds: LocalBox,
+  ): number {
+    const kept = new Set<number>();
+    let count = 0;
+    for (const view of particles.emittersOf(actorId)) {
+      kept.add(view.id);
+      let emitter = node.emitters.get(view.id);
+      if (emitter === undefined) {
+        emitter = new ParticleContainer<Particle>({
+          texture: particles.textures.get(view.preset),
+          boundsArea: rectangleOf(bounds),
+          dynamicProperties: PARTICLE_PROPERTIES,
+        });
+        // Last: above the sprites and the emitters that started before.
+        node.container.addChild(emitter);
+        node.emitters.set(view.id, emitter);
+      }
+      showParticles(emitter, view.particles);
+      count += emitter.particleChildren.length;
+    }
+    for (const [id, emitter] of node.emitters) {
+      if (!kept.has(id)) {
+        emitter.destroy();
+        node.emitters.delete(id);
+      }
+    }
+    return count;
   }
 
   return {
@@ -135,6 +462,8 @@ export function createPixiStage(
       const drawn = new Set<string>();
       const order: Container[] = [];
       let sprites = 0;
+      let emitters = 0;
+      let alive = 0;
       for (const actor of scene.actors) {
         drawn.add(actor.actorId);
         const node = nodeOf(actor.actorId);
@@ -145,13 +474,17 @@ export function createPixiStage(
         if (node.bounds !== bounds) {
           node.mask.clear().rect(x, y, width, height).fill(0xffffff);
           node.bounds = bounds;
+          for (const emitter of node.emitters.values()) {
+            emitter.boundsArea = rectangleOf(actor.bounds);
+          }
         }
         actor.sprites.forEach((command, index) => {
           let sprite = node.sprites[index];
           if (sprite === undefined) {
             sprite = new Sprite();
             sprite.anchor.set(0);
-            node.container.addChild(sprite);
+            // After the mask and the other sprites, under the particles.
+            node.container.addChildAt(sprite, 1 + node.sprites.length);
             node.sprites.push(sprite);
           }
           const shown = texture(
@@ -175,6 +508,8 @@ export function createPixiStage(
         for (const extra of node.sprites.splice(actor.sprites.length)) {
           extra.destroy();
         }
+        alive += drawEmitters(node, actor.actorId, actor.bounds);
+        emitters += node.emitters.size;
         order.push(node.container);
       }
       for (const [actorId, node] of nodes) {
@@ -195,7 +530,20 @@ export function createPixiStage(
           layer.addChild(...order);
         }
       }
+      particleCounts = { emitters, particles: alive };
       return { actors: order.length, sprites };
+    },
+
+    particleCounts: () => particleCounts,
+
+    destroy() {
+      for (const node of nodes.values()) {
+        node.container.destroy({ children: true });
+      }
+      nodes.clear();
+      layer.removeChildren();
+      particleCounts = { emitters: 0, particles: 0 };
+      particles.textures.destroy();
     },
   };
 }

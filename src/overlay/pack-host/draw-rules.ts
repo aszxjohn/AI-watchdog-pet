@@ -6,19 +6,27 @@
  * 1. before it is parsed: plain JSON data (`invalid`) of at most
  *    DRAW_MAX_BYTES (`too-large`), with at most DRAW_MAX_COMMANDS commands
  *    over all its actors (`too-many-commands`);
- * 2. the pack API's drawMessageSchema (`invalid`);
- * 3. every actor in it is one of the pack's actors the `frame` it answers
+ * 2. the pack API's drawMessageSchema (`invalid`: a `particles` preset
+ *    outside PARTICLE_PRESETS too);
+ * 3. at most PARTICLE_EMITTERS_MAX `particles` commands over all its actors
+ *    (`too-many-emitters`);
+ * 4. every actor in it is one of the pack's actors the `frame` it answers
  *    named (`not-own-actor`);
- * 4. every sprite's `asset` is a key of the pack's manifest `assets`
+ * 5. every sprite's `asset` is a key of the pack's manifest `assets`
  *    (`unknown-asset`), with a `frame` exactly when that asset is a
  *    spritesheet, naming one of its frames (`unknown-frame`).
  *
- * What passes is kept as each actor's sprite commands: `particles` and
- * `bitmap` commands are not drawn yet (Story 3.6's last part), so they are
- * left out and reported, and the rest of the `draw` is drawn. An actor of
- * the `frame` that the `draw` leaves out is not drawn for it.
+ * What passes is kept as each actor's sprite and `particles` commands, in
+ * the pack's order: `bitmap` commands are not drawn yet (Story 3.6's last
+ * part), so they are left out and reported, and the rest of the `draw` is
+ * drawn. An actor of the `frame` that the `draw` leaves out is not drawn
+ * for it.
  */
-import { DRAW_MAX_BYTES, DRAW_MAX_COMMANDS } from '../../shared/constants';
+import {
+  DRAW_MAX_BYTES,
+  DRAW_MAX_COMMANDS,
+  PARTICLE_EMITTERS_MAX,
+} from '../../shared/constants';
 import {
   type DrawCommand,
   drawMessageSchema,
@@ -28,15 +36,28 @@ import type {
   PackMessageDropReason,
   SkippedDrawCommand,
 } from '../../shared/sandbox';
-import { countDrawCommands, jsonBytes } from '../../shared/draw-size';
+import {
+  countDrawCommands,
+  countEmitters,
+  jsonBytes,
+} from '../../shared/draw-size';
 
-export { countDrawCommands } from '../../shared/draw-size';
+export { countDrawCommands, countEmitters } from '../../shared/draw-size';
 
 /** A sprite command. */
 export type SpriteCommand = Extract<DrawCommand, { type: 'sprite' }>;
 
-/** What a checked `draw` keeps: each actor's sprites, in the pack's order. */
-export type DrawnActors = ReadonlyMap<string, readonly SpriteCommand[]>;
+/** A particles command: one emitter (Story 3.6). */
+export type ParticlesCommand = Extract<DrawCommand, { type: 'particles' }>;
+
+/** A command the stage draws. */
+export type DrawnCommand = SpriteCommand | ParticlesCommand;
+
+/**
+ * What a checked `draw` keeps: each actor's sprites and emitters, in the
+ * pack's order.
+ */
+export type DrawnActors = ReadonlyMap<string, readonly DrawnCommand[]>;
 
 /** A `draw` that passed checkDraw, or why it is dropped. */
 export type DrawCheck =
@@ -55,15 +76,20 @@ export interface DrawCheckLook {
   frames(key: string): ReadonlySet<string> | undefined;
 }
 
-/** The limits checkDraw applies before parsing. */
+/**
+ * The limits checkDraw applies: bytes and commands before parsing,
+ * emitters once the `draw` is valid.
+ */
 export interface DrawLimits {
   readonly bytes: number;
   readonly commands: number;
+  readonly emitters: number;
 }
 
 export const DRAW_LIMITS: DrawLimits = Object.freeze({
   bytes: DRAW_MAX_BYTES,
   commands: DRAW_MAX_COMMANDS,
+  emitters: PARTICLE_EMITTERS_MAX,
 });
 
 /**
@@ -90,17 +116,24 @@ export function checkDraw(
   if (!parsed.success) {
     return { ok: false, reason: 'invalid' };
   }
+  if (countEmitters(parsed.data, limits.emitters) > limits.emitters) {
+    return { ok: false, reason: 'too-many-emitters' };
+  }
   const entries = Object.entries(parsed.data.actors);
   if (entries.some(([actorId]) => !frameActors.has(actorId))) {
     return { ok: false, reason: 'not-own-actor' };
   }
-  const actors = new Map<string, SpriteCommand[]>();
+  const actors = new Map<string, DrawnCommand[]>();
   const skipped = new Set<SkippedDrawCommand>();
   for (const [actorId, commands] of entries) {
-    const sprites: SpriteCommand[] = [];
+    const drawn: DrawnCommand[] = [];
     for (const command of commands) {
-      if (command.type !== 'sprite') {
+      if (command.type === 'bitmap') {
         skipped.add(command.type);
+        continue;
+      }
+      if (command.type === 'particles') {
+        drawn.push(command);
         continue;
       }
       if (!Object.hasOwn(look.manifest.assets, command.asset)) {
@@ -114,9 +147,9 @@ export function checkDraw(
       ) {
         return { ok: false, reason: 'unknown-frame' };
       }
-      sprites.push(command);
+      drawn.push(command);
     }
-    actors.set(actorId, sprites);
+    actors.set(actorId, drawn);
   }
   return { ok: true, actors, skipped };
 }
