@@ -54,6 +54,9 @@ function fakeApi(reply: IpcResult<null> = OK) {
         calls.push(['contextMenu', sessionKey]);
         return reply;
       },
+      async gpu() {
+        return OK;
+      },
     },
   };
   return { api, calls };

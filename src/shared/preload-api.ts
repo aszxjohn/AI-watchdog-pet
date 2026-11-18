@@ -1,6 +1,7 @@
 import type { PRELOAD_API_KEY } from './constants';
 import type { SessionKey } from './detection-events';
 import type {
+  CanvasGpuState,
   CanvasHover,
   CanvasReadyReport,
   IpcData,
@@ -8,6 +9,7 @@ import type {
   IpcResult,
   appGetVersion,
   canvasContextMenu,
+  canvasGpu,
   canvasReady,
   canvasSetHover,
   packsChoose,
@@ -120,6 +122,11 @@ export interface OverlayApi {
     contextMenu(
       sessionKey: SessionKey,
     ): Promise<IpcResult<IpcData<typeof canvasContextMenu>>>;
+    /**
+     * Says the canvas's WebGL context was lost or is back (Story 3.6), only
+     * when that changes; main reloads the page when it is not back in time.
+     */
+    gpu(state: CanvasGpuState): Promise<IpcResult<IpcData<typeof canvasGpu>>>;
   };
   readonly packs: {
     /**

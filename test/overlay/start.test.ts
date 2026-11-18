@@ -75,6 +75,10 @@ function fakeApi(
         order.push('contextMenu');
         return { ok: true, data: null };
       },
+      async gpu() {
+        order.push('gpu');
+        return { ok: true, data: null };
+      },
     },
     packs: {
       async getEntry() {

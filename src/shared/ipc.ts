@@ -339,6 +339,29 @@ export const canvasContextMenu = {
   output: z.null(),
 } as const satisfies IpcContract;
 
+/**
+ * What became of the canvas's WebGL context (Story 3.6): it was lost, or
+ * it is back. The overlay says so only when that changes.
+ */
+export const canvasGpuStateSchema = z.enum([
+  'context-lost',
+  'context-restored',
+]);
+
+export type CanvasGpuState = z.infer<typeof canvasGpuStateSchema>;
+
+/**
+ * `canvas:gpu` (overlay only, Story 3.6): the canvas's WebGL context was
+ * lost or is back. main logs it once per change of that page and reloads
+ * the page when the context is not back within CANVAS_CONTEXT_RESTORE_MS.
+ * Answers null.
+ */
+export const canvasGpu = {
+  channel: 'canvas:gpu',
+  input: z.tuple([canvasGpuStateSchema]),
+  output: z.null(),
+} as const satisfies IpcContract;
+
 // Push channels (main to renderer).
 
 /** `stage-view:delta`: the sections that changed since the previous rev. */

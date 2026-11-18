@@ -100,6 +100,20 @@ const state = vi.hoisted(() => {
     sleepArgs: undefined as unknown[] | undefined,
     /** What main.ts passed to registerCanvasHoverHandler. */
     hoverCanvas: undefined as unknown,
+    /** What main.ts passed to registerCanvasGpuHandler. */
+    gpuCanvas: undefined as unknown,
+    /** What main.ts passed to registerCanvasReadyHandler. */
+    readyCanvas: undefined as
+      | { ready(webContentsId: number, report: unknown): void }
+      | undefined,
+    /** What main.ts passed to createCanvasWindows. */
+    canvasOptions: undefined as
+      | { createWindow(options: unknown): unknown }
+      | undefined,
+    /** The events anything listened for on a mock BrowserWindow. */
+    windowEvents: [] as string[],
+    /** Every systemPreferences notification subscription. */
+    notifications: [] as string[],
     /** The right-click callback main.ts passed to registerCanvasContextMenuHandler. */
     openMenu: undefined as
       | ((sessionKey: string, win: unknown) => void)
@@ -143,6 +157,11 @@ const state = vi.hoisted(() => {
       s.powerArgs = undefined;
       s.sleepArgs = undefined;
       s.hoverCanvas = undefined;
+      s.gpuCanvas = undefined;
+      s.readyCanvas = undefined;
+      s.canvasOptions = undefined;
+      s.windowEvents = [];
+      s.notifications = [];
       s.openMenu = undefined;
       s.menuArgs = undefined;
       s.demoListener = undefined;
@@ -206,6 +225,12 @@ vi.mock('electron', () => ({
     isDestroyed() {
       return this.destroyed;
     }
+    on(event: string) {
+      state.windowEvents.push(event);
+    }
+    once(event: string) {
+      state.windowEvents.push(event);
+    }
   },
   dialog: {
     showErrorBox: (title: string) => {
@@ -231,6 +256,22 @@ vi.mock('electron', () => ({
   session: { defaultSession: { fake: 'session' } },
   screen: { fake: 'screen' },
   powerMonitor: { fake: 'powerMonitor' },
+  // Recorded, so a test can tell that nothing subscribes (Story 3.6:
+  // hiding the whole app is accepted).
+  systemPreferences: {
+    subscribeNotification: (event: string) => {
+      state.notifications.push(`subscribeNotification ${event}`);
+      return 1;
+    },
+    subscribeLocalNotification: (event: string) => {
+      state.notifications.push(`subscribeLocalNotification ${event}`);
+      return 1;
+    },
+    subscribeWorkspaceNotification: (event: string) => {
+      state.notifications.push(`subscribeWorkspaceNotification ${event}`);
+      return 1;
+    },
+  },
 }));
 
 vi.mock('node:fs', async (importOriginal) => {
@@ -568,7 +609,10 @@ vi.mock('../../src/main/windows/power', () => ({
 }));
 
 vi.mock('../../src/main/windows/canvas-window', () => ({
-  registerCanvasReadyHandler: record('registerCanvasReadyHandler'),
+  registerCanvasReadyHandler: (canvas?: typeof state.readyCanvas) => {
+    state.order.push('registerCanvasReadyHandler');
+    state.readyCanvas = canvas;
+  },
   registerCanvasHoverHandler: (canvas: { fake: string }) => {
     state.order.push(`registerCanvasHoverHandler ${canvas.fake}`);
     state.hoverCanvas = canvas;
@@ -580,13 +624,27 @@ vi.mock('../../src/main/windows/canvas-window', () => ({
     state.order.push(`registerCanvasContextMenuHandler ${canvas.fake}`);
     state.openMenu = open;
   },
-  createCanvasWindows: (options: { preload: string; platform: string }) => {
+  registerCanvasGpuHandler: (canvas: { fake: string }) => {
+    state.order.push(`registerCanvasGpuHandler ${canvas.fake}`);
+    state.gpuCanvas = canvas;
+  },
+  createCanvasWindows: (options: {
+    preload: string;
+    platform: string;
+    createWindow(options: unknown): unknown;
+  }) => {
     state.order.push(
       `createCanvasWindows ${options.preload.split(/[\\/]/).at(-1)} ${options.platform}`,
     );
+    state.canvasOptions = options;
     return {
       fake: 'canvas',
       stop: record('canvas.stop'),
+      ready: (webContentsId: number, report: unknown) => {
+        state.order.push(
+          `canvas.ready ${webContentsId} ${JSON.stringify(report)}`,
+        );
+      },
     };
   },
 }));
@@ -675,6 +733,17 @@ vi.mock('../../src/main/windows/tray', () => ({
     state.order.push(`showTrayDemoState ${String(demoState)}`);
   },
 }));
+
+/** Every app event main.ts listens for, sorted. */
+const APP_EVENTS = [
+  'activate',
+  'before-quit',
+  'child-process-gone',
+  'open-file',
+  'second-instance',
+  'will-quit',
+  'window-all-closed',
+];
 
 /** Imports a fresh copy of main.ts, which runs its startup. */
 async function startMain(): Promise<void> {
@@ -807,6 +876,7 @@ describe('the primary instance', () => {
       `createCanvasWindows overlay.cjs ${process.platform}`,
       'registerCanvasHoverHandler canvas',
       'registerCanvasContextMenuHandler canvas',
+      'registerCanvasGpuHandler canvas',
     ]);
     expect(state.logs[0]).toMatch(/^app: start version=1\.0\.0 /);
   });
@@ -1040,6 +1110,81 @@ describe('the primary instance', () => {
       'detection.setDemo null',
       'app.quit',
     ]);
+  });
+
+  describe('I/O matrix', () => {
+    it('context 沒還原: canvas:ready reports go on to the canvas windows (a canvas that failed after a recovery is tried again)', async () => {
+      await startMain();
+      state.order = [];
+
+      state.readyCanvas?.ready(7, { ok: false, reason: 'Error: no WebGL' });
+
+      expect(state.order).toStrictEqual([
+        'canvas.ready 7 {"ok":false,"reason":"Error: no WebGL"}',
+      ]);
+    });
+
+    it('context lost 後還原: the canvas:gpu handler gets the canvas windows', async () => {
+      await startMain();
+      expect(state.gpuCanvas).toStrictEqual(
+        expect.objectContaining({ fake: 'canvas' }),
+      );
+    });
+
+    it('GPU 行程當掉: a GPU process gone is one error line with its reason and exit code; another child process is not logged', async () => {
+      await startMain();
+      await becomeReady();
+      expect(state.listeners.get('child-process-gone')).toHaveLength(1);
+      state.order = [];
+
+      emit(
+        'child-process-gone',
+        {},
+        { type: 'GPU', reason: 'crashed', exitCode: 139 },
+      );
+      emit(
+        'child-process-gone',
+        {},
+        { type: 'Utility', reason: 'crashed', exitCode: 1 },
+      );
+
+      expect(state.errors).toStrictEqual([
+        'windows: GPU process gone (crashed, exit code 139); the canvas recovers through its WebGL context',
+      ]);
+      // The app keeps running: nothing quits, nothing is rebuilt here.
+      expect(state.order).toStrictEqual([]);
+    });
+
+    it.each([['darwin'], ['win32'], ['linux']] as const)(
+      'macOS 隱藏: on %s nothing follows the whole app being hidden (accepted: the canvas hides with it); the same steps run once ready',
+      async (platform) => {
+        setPlatform(platform);
+        await startMain();
+        state.order = [];
+        await becomeReady();
+        expect(state.order).toStrictEqual(readySteps());
+        expect(state.errors).toStrictEqual([]);
+        // No app-hidden notification is subscribed, and the app hears no
+        // event beyond these.
+        expect(state.notifications).toStrictEqual([]);
+        expect([...state.listeners.keys()].sort()).toStrictEqual(APP_EVENTS);
+        // main puts nothing on the canvas window it creates (canvas-window.ts
+        // adds no hide handling either: windows-canvas.test.ts).
+        state.canvasOptions?.createWindow({});
+        expect(state.order).toContain('new BrowserWindow');
+        expect(state.windowEvents).toStrictEqual([]);
+      },
+    );
+
+    it.each([['win32'], ['linux']] as const)(
+      'Windows: on %s the GPU process is followed, and the canvas:gpu handler registered, as on macOS',
+      async (platform) => {
+        setPlatform(platform);
+        await startMain();
+        expect(state.order).toContain('registerCanvasGpuHandler canvas');
+        expect(state.listeners.get('child-process-gone')).toHaveLength(1);
+      },
+    );
   });
 
   it('gives the canvas hover handler the canvas windows', async () => {

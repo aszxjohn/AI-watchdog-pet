@@ -25,10 +25,11 @@
  *    (a settings patch, an install and a removal each run in one StageView
  *    batch; removing a pack among them; the overlay's packs' entries and
  *    sandbox log lines, and what it draws each pack with), and guards
- *    every window webContents. The canvas's hover and right-click
- *    handlers come once the canvas windows exist; no right-click opens a
- *    menu yet (a character's menu is Story 4.3), and demo mode is
- *    switched from the tray's 示範模式 only.
+ *    every window webContents. The canvas's hover, right-click and WebGL
+ *    context handlers come once the canvas windows exist; no right-click
+ *    opens a menu yet (a character's menu is Story 4.3), and demo mode is
+ *    switched from the tray's 示範模式 only. A GPU process that goes away
+ *    is logged (Story 3.6).
  * 3. Once ready: the session guards, the application menu, the `app://`
  *    handler, the `pack://` handler (with the sandbox document the build
  *    wrote next to main.cjs), the Dock icon hidden, the tray icon
@@ -36,7 +37,8 @@
  *    it), then the stage: the canvas on the chosen display (following
  *    display and settings changes) and the sleep / lock watch (sleep also
  *    goes to detection's clock), and last the `.awpet` files held until
- *    ready (see 6).
+ *    ready (see 6). On macOS, hiding the whole app hides the canvas too
+ *    (accepted in Story 3.6: see canvas-window.ts).
  *    Each step that throws is logged as an error with its errorCode and the
  *    next one still runs, so a failure in any other step does not stop the
  *    tray from being created; only the session guards are different:
@@ -120,11 +122,13 @@ import {
 import {
   createCanvasWindows,
   registerCanvasContextMenuHandler,
+  registerCanvasGpuHandler,
   registerCanvasHoverHandler,
   registerCanvasReadyHandler,
 } from './windows/canvas-window';
 import { createDockController } from './windows/dock';
 import { currentEnvironment } from './windows/environment';
+import { watchGpuProcess } from './windows/gpu';
 import { buildApplicationMenu, openCanvasMenu } from './windows/menu';
 import { createPanelWindows, PRELOAD_BUNDLES } from './windows/panel-window';
 import { watchPower } from './windows/power';
@@ -369,7 +373,14 @@ function startPrimaryInstance(): void {
     (packId, version) => readPackManifest(packs, packId, version),
   );
   registerStageViewHandlers(stageView);
-  registerCanvasReadyHandler();
+  // Each report is logged; a canvas that did not initialise after a
+  // recovery is tried again (the canvas windows, created below, exist by
+  // the time any page can report).
+  registerCanvasReadyHandler({
+    ready: (webContentsId, report) => {
+      canvas.ready(webContentsId, report);
+    },
+  });
 
   // Write settings, then released sessions, that are still waiting for
   // their debounce before exiting, then log the quit (will-quit listeners
@@ -414,6 +425,11 @@ function startPrimaryInstance(): void {
   registerCanvasContextMenuHandler(canvas, (sessionKey, win) => {
     openCanvasMenu(sessionKey, win);
   });
+  // The canvas's WebGL context (Story 3.6): its page is reloaded when the
+  // context is not restored in time. A GPU process that goes away is only
+  // logged: the canvas comes back through its context.
+  registerCanvasGpuHandler(canvas);
+  watchGpuProcess(app);
   // Quitting closes the canvas with every other window; do not rebuild it.
   app.on('before-quit', () => {
     canvas.stop();

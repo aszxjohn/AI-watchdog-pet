@@ -89,8 +89,8 @@
   summary: windows 區段只要一筆不合 schema，StageView 就會一直推不出去（R16，重提 1.6 B2／E7／E8）
   evidence: `src/main/stage-view/stage-view.ts:76-94`。觸發條件（重複的螢幕 id）沒有實際證據；之後新增區段時，改成先驗證再前進 rev。
 - source_spec: `_bmad-output/implementation-artifacts/spec-epic-1-retro-closeout.md`
-  summary: 面板開著、Dock 圖示出現時，Dock 圖示右鍵選單的「隱藏」，以及別的 app 的「隱藏其他」，仍會把整個 app 連同畫布藏起來（R2 同類，收尾 story 只處理本 app 選單的 ⌘H）
-  evidence: 兩者都走 macOS 的整個 app 隱藏（NSApplication hide），所有視窗都會被藏；收尾 story 審查 E5／B8 指出，沒有實測。Epic 3 角色上台前決定做法，例如偵測 app 被隱藏後讓畫布重新出現，並在實機確認。
+  summary: 面板開著、Dock 圖示出現時，Dock 圖示右鍵選單的「隱藏」，以及別的 app 的「隱藏其他」，仍會把整個 app 連同畫布藏起來（R2 同類，收尾 story 只處理本 app 選單的 ⌘H）（已決定：實測後接受隱藏）
+  evidence: 兩者都走 macOS 的整個 app 隱藏（NSApplication hide），所有視窗都會被藏；收尾 story 審查 E5／B8 指出，沒有實測。2026-11-18 Story 3.6（下之一）實測（`spec-3-6-stability.md`）：在 app 被隱藏後對畫布呼叫 `showInactive()` 或 `moveTop()`，都會把整個 app 叫回來，面板也一起出現；焦點沒被搶走。使用者選擇接受隱藏：畫布跟著 app 藏起來，從選單列打開面板後角色回來。沒試過的方向：由 main 先把面板收起（`orderOut`）再叫回畫布；要做時需要原生程式碼或確認 Electron 的 `hide()` 在 app 隱藏狀態下的行為。
 - source_spec: `_bmad-output/implementation-artifacts/spec-epic-1-retro-closeout.md`
   summary: 「關閉面板」（⌘H）與 ⌘W 都走 win.close()，之後若有頁面擋下卸載（Epic 2 編輯頁），關閉可能被取消或丟掉未存內容
   evidence: `src/main/windows/panel-window.ts` 的 `close()`；目前沒有任何頁面會擋。與 R12 同一類，Epic 2 編輯頁一起決定「未存內容時關閉面板」的規則。
@@ -280,3 +280,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-6-tick-and-draw.md`
   summary: 同版本覆蓋安裝後，overlay 的 manifest、素材快取與沙盒仍是舊的（都以 `packId@version` 為 key）；3.9「包更新後卸除舊沙盒、重載」要一併處理同版本覆蓋，例如在 index 與 StageView 帶一個每次安裝都會變的識別
   evidence: Story 3.6 中段審查 E2（medium）。3.2 允許同版本重裝（經確認），新的素材 key 會被當成 unknown-asset 丟掉。
+- source_spec: none
+  summary: Story 3.6 下段之二（繪圖指令）：`particles`（自己寫的發射器，用 PixiJS `ParticleContainer`；同一個 `emitterId` 跨 frame 持續發射、下一則沒出現就停、每包 emitter 數上限、preset 正式清單放 `src/shared/pack-api`，並決定清單外的 preset 是略過那一條還是整則丟棄）與 advancedBitmap（`stage.canvas` 只給宣告的角色、只允許 2d、ImageBitmap 以 transfer 傳送、尺寸與每秒張數上限、`draw-size` 對 ImageBitmap 的計算；先用小實驗確認 opaque origin 的 blob Worker 能把 OffscreenCanvas 畫好的 ImageBitmap 傳給 overlay 當貼圖）
+  evidence: 使用者 2026-11-18 選擇把 3.6 下段再拆兩段，先做穩定性（GPU 與畫布失效、macOS 隱藏），這兩件影響每天使用的新版；粒子與 bitmap 都是繪圖指令，放在一起，bitmap 的可行性在那段先確認。

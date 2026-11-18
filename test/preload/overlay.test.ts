@@ -24,6 +24,7 @@ import {
 } from '../../src/main/stage-view/stage-view';
 import {
   registerCanvasContextMenuHandler,
+  registerCanvasGpuHandler,
   registerCanvasHoverHandler,
   registerCanvasReadyHandler,
 } from '../../src/main/windows/canvas-window';
@@ -31,9 +32,11 @@ import { createWindowsStageSource } from '../../src/main/windows/stage-sources';
 import type { SessionKey } from '../../src/shared/detection-events';
 import {
   canvasContextMenu,
+  canvasGpu,
   canvasReady,
   canvasSetHover,
   settingsPatch,
+  type CanvasGpuState,
   type CanvasHover,
 } from '../../src/shared/ipc';
 import type { OverlayApi } from '../../src/shared/preload-api';
@@ -146,6 +149,7 @@ describe('overlay preload', () => {
       'ready',
       'setHover',
       'contextMenu',
+      'gpu',
     ]);
     expect(Object.keys(api.packs)).toStrictEqual([
       'getEntry',
@@ -310,6 +314,63 @@ describe('canvas hover and right-click', () => {
     }
     expect(hovers).toStrictEqual([]);
     expect(menus).toStrictEqual([]);
+  });
+});
+
+describe('I/O matrix', () => {
+  /** The canvas:gpu handler, on a canvas whose page is the fake sender. */
+  function startGpu() {
+    const reports: [number, CanvasGpuState][] = [];
+    registerCanvasGpuHandler({
+      gpu: (webContentsId, state) => {
+        reports.push([webContentsId, state]);
+      },
+    });
+    return reports;
+  }
+
+  it('context lost 後還原: canvas.gpu sends the state and reaches main with the sending page', async () => {
+    const reports = startGpu();
+    const api = await loadApi();
+
+    expect(await api.canvas.gpu('context-lost')).toStrictEqual({
+      ok: true,
+      data: null,
+    });
+    expect(await api.canvas.gpu('context-restored')).toStrictEqual({
+      ok: true,
+      data: null,
+    });
+    expect(reports).toStrictEqual([
+      [fake.sender.id, 'context-lost'],
+      [fake.sender.id, 'context-restored'],
+    ]);
+  });
+
+  it('壞輸入: canvas.gpu with a state that is not one answers invalid-input; main hears nothing', async () => {
+    const reports = startGpu();
+    const api = await loadApi();
+
+    const result = await api.canvas.gpu('lost' as CanvasGpuState);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'invalid-input' },
+    });
+    expect(reports).toStrictEqual([]);
+  });
+
+  it('壞輸入: the panels calling canvas:gpu are sender-rejected; main hears nothing', async () => {
+    const reports = startGpu();
+    fake.sender.mainFrame.url = 'app://panels/index.html';
+
+    expect(
+      await fake.ipcRenderer.invoke(canvasGpu.channel, 'context-lost'),
+    ).toMatchObject({ ok: false, error: { code: 'sender-rejected' } });
+    expect(reports).toStrictEqual([]);
+    expect(lines(warn)).toContain(
+      '[ipc] canvas:gpu: sender rejected: renderer panels may not use this channel',
+    );
   });
 });
 

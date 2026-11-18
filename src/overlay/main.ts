@@ -23,14 +23,21 @@ import 'pixi.js/unsafe-eval';
 //   With no actor, or paused, the render loop stops after one last frame;
 // - PixiJS's resolution follows the canvas's display (`canvas.scaleFactor`,
 //   renderer/display.ts).
-// The body's data attributes say what was last drawn and how many areas
-// take the mouse, for DevTools.
+// - While the canvas's WebGL context is lost (context-loss.ts, from its
+//   events or already lost once PixiJS initialised), nothing is drawn: the
+//   render loop stops, PixiJS stops following the window's size, the world
+//   pauses (no `frame`), nothing takes the mouse, and main hears it on
+//   `canvas:gpu`; once it is back, drawing starts again from StageView now
+//   and each pack's last draw.
+// The body's data attributes say what was last drawn, how many areas take
+// the mouse and whether the context is lost, for DevTools.
 import './index.css';
 import { Application, Assets, Container } from 'pixi.js';
 import { PRELOAD_API_KEY } from '../shared/constants';
 import type { OverlayApi, PreloadHost } from '../shared/preload-api';
 import type { StageView } from '../shared/stage-view';
 import { createCanvasInput } from './canvas-input';
+import { createContextStage } from './context-loss';
 import { createLooks, type PackLook } from './looks';
 import { createDomSandboxFrames } from './pack-host/dom';
 import { createPackHost } from './pack-host/host';
@@ -100,6 +107,33 @@ const world = createWorld({
   },
 });
 
+/** PixiJS's `resizeTo`, which takes null to stop following a size. */
+const resizable = app as unknown as { resizeTo: Window | null };
+
+/** The canvas's WebGL context: while it is lost, nothing is drawn. */
+const context = createContextStage<StageView>({
+  api,
+  world,
+  input,
+  ticker: {
+    started: () => app.ticker.started,
+    stop: () => {
+      app.stop();
+    },
+  },
+  resize: {
+    pause: () => {
+      resizable.resizeTo = null;
+    },
+    resume: () => {
+      resizable.resizeTo = window;
+    },
+  },
+  show,
+  view: () => view,
+  follow: followView,
+});
+
 /** Loads a pack's image from `pack://`, readable by WebGL (crossorigin). */
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -150,7 +184,12 @@ function installedLooks(current: StageView): PackLook[] {
 
 /** One display frame: what to draw, drawn; what takes the mouse. */
 function drawFrame(): void {
-  if (stage === undefined || view === undefined || packHost === undefined) {
+  if (
+    stage === undefined ||
+    view === undefined ||
+    packHost === undefined ||
+    context.isLost()
+  ) {
     return;
   }
   textures.sync(installedLooks(view));
@@ -169,9 +208,12 @@ function drawFrame(): void {
   show('hitAreas', String(scene.areas.length));
 }
 
-/** Follows StageView with the canvas: its resolution and render loop. */
+/**
+ * Follows StageView with the canvas: its resolution and render loop.
+ * Nothing while the context is lost; resume follows the view then.
+ */
 function followView(current: StageView): void {
-  if (stage === undefined) {
+  if (stage === undefined || context.isLost()) {
     return;
   }
   show(
@@ -218,6 +260,14 @@ async function initCanvas(): Promise<InitialisedCanvas> {
     autoStart: false,
   });
   document.body.append(app.canvas);
+  // Its events, then whether it got lost while PixiJS initialised.
+  context.attach({
+    on: (event, listener) => {
+      app.canvas.addEventListener(event, listener);
+    },
+    isContextLost: () =>
+      'gl' in app.renderer ? app.renderer.gl.isContextLost() : false,
+  });
   const layer = new Container();
   app.stage.addChild(layer);
   stage = createPixiStage(layer, (packId, version, asset, frame) =>
@@ -250,7 +300,7 @@ void startOverlay({
     view = snapshot.view;
     looks?.onView(view);
     packHost?.onView(view);
-    world.onView(view);
+    context.onView(view);
     followView(view);
   },
 });

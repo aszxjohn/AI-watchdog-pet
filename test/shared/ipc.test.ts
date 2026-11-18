@@ -3,6 +3,7 @@ import {
   appGetVersion,
   CANVAS_READY_REASON_MAX_LENGTH,
   canvasContextMenu,
+  canvasGpu,
   canvasReady,
   canvasSetHover,
   ipcErrorCodeSchema,
@@ -387,6 +388,38 @@ describe('canvas:context-menu contract', () => {
     expectRoundTrip(canvasContextMenu.output, null);
     expectRejected(canvasContextMenu.output, undefined);
     expectRejected(canvasContextMenu.output, 'menu');
+  });
+});
+
+describe('canvas:gpu contract', () => {
+  it('uses a valid channel name', () => {
+    expect(canvasGpu.channel).toBe('canvas:gpu');
+    expect(isIpcChannelName(canvasGpu.channel)).toBe(true);
+  });
+
+  it.each([['context-lost'], ['context-restored']])(
+    'takes exactly one state: %s',
+    (state) => {
+      expectRoundTrip(canvasGpu.input, [state]);
+    },
+  );
+
+  it.each([
+    ['no state', []],
+    ['two states', ['context-lost', 'context-restored']],
+    ['an unknown state', ['lost']],
+    ['a different case', ['Context-Lost']],
+    ['an object', [{ state: 'context-lost' }]],
+    ['a boolean', [true]],
+    ['null', [null]],
+  ])('rejects %s', (_label, args) => {
+    expectRejected(canvasGpu.input, args);
+  });
+
+  it('answers null', () => {
+    expectRoundTrip(canvasGpu.output, null);
+    expectRejected(canvasGpu.output, undefined);
+    expectRejected(canvasGpu.output, 'context-lost');
   });
 });
 

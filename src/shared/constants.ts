@@ -114,14 +114,40 @@ export const RUN_LOG_RETENTION_MS = 24 * 60 * 60 * 1000;
 export const RUN_LOG_MAX_LINE_LENGTH = 4000;
 
 /**
- * main/windows rebuilds the canvas window when its renderer goes away, but
- * at most this many times within CANVAS_REBUILD_WINDOW_MS; one more crash in
- * that window stops the rebuilds (the app keeps running without a canvas).
+ * main/windows rebuilds the canvas window when its renderer goes away, and
+ * reloads its page when it cannot draw (Story 3.6), but at most this many
+ * times, all together, within CANVAS_REBUILD_WINDOW_MS; one more in that
+ * window stops them all (the app keeps running, without a canvas or with
+ * the canvas as it is).
  */
 export const CANVAS_REBUILD_LIMIT = 3;
 
-/** The sliding window CANVAS_REBUILD_LIMIT counts rebuilds in. */
+/**
+ * The sliding window CANVAS_REBUILD_LIMIT counts in. Every recovery of the
+ * canvas counts (Story 3.6): a window rebuilt after its renderer went away,
+ * and a page reloaded because its WebGL context was not restored in time
+ * (CANVAS_CONTEXT_RESTORE_MS) or it still did not respond
+ * CANVAS_UNRESPONSIVE_RELOAD_MS after Chromium found it unresponsive.
+ */
 export const CANVAS_REBUILD_WINDOW_MS = 60_000;
+
+/**
+ * How long main/windows waits, from the overlay saying its canvas lost its
+ * WebGL context, for it to say the context is back (Story 3.6); then it
+ * reloads the canvas page. PixiJS keeps the lost context restorable, and
+ * the GPU process coming back usually restores it within a second or two.
+ */
+export const CANVAS_CONTEXT_RESTORE_MS = 5_000;
+
+/**
+ * How long main/windows waits, once Chromium has found the canvas page
+ * unresponsive (Electron's `unresponsive`, which comes only after
+ * Chromium's own hang detection), for it to respond again (`responsive`)
+ * before it reloads the page in a new renderer (Story 3.6). So the page has
+ * stopped responding for longer than this by then. Click-through is back
+ * on as soon as `unresponsive` comes.
+ */
+export const CANVAS_UNRESPONSIVE_RELOAD_MS = 10_000;
 
 /**
  * How much of a transcript an adapter replays when it starts reading a file

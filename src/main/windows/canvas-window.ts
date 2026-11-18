@@ -32,10 +32,41 @@
  *   where it was asked to be, and a difference is logged as a warning (the
  *   OS can move or resize a window: the macOS menu bar, Windows DPI).
  * - A renderer that goes away is logged and the window rebuilt at the same
- *   place (the new overlay fetches a fresh StageView snapshot), at most
- *   CANVAS_REBUILD_LIMIT times within CANVAS_REBUILD_WINDOW_MS; one more
- *   stops the rebuilds and is logged as an error, and the app keeps running
- *   without a canvas. A main-frame load failure is logged.
+ *   place (the new overlay fetches a fresh StageView snapshot). A
+ *   main-frame load failure is logged.
+ * - The canvas's WebGL context (Story 3.6, `canvas:gpu`): the overlay says
+ *   when it is lost and when it is back, only when that changes; main logs
+ *   one line for each change of a page (a repeat changes nothing, and does
+ *   not restart the wait) and reloads the page when the context is not back
+ *   within CANVAS_CONTEXT_RESTORE_MS. A GPU process that goes away is
+ *   logged by gpu.ts; the canvas comes back through its context.
+ * - A page Chromium finds unresponsive (`unresponsive`, its own hang
+ *   detection) that still has not responded CANVAS_UNRESPONSIVE_RELOAD_MS
+ *   later is reloaded in a new renderer: its renderer is stopped
+ *   (forcefullyCrashRenderer) and, once it is gone, the page reloaded. One
+ *   that responds again in time (`responsive`) is logged and left as it
+ *   is. A page whose context is not back in time while it is also
+ *   unresponsive is reloaded that way too, as one recovery.
+ * - A page that comes after a recovery and reports on `canvas:ready` that
+ *   its canvas did not initialise is reloaded again, as one more recovery.
+ *   A reload that cannot be started (stopping the renderer or reloading
+ *   throws) falls back to rebuilding the window.
+ * - Reloading the canvas is reloading the window's page: the new overlay
+ *   subscribes to StageView again, reports `canvas:ready` again and makes
+ *   the packs' sandboxes again for the actors on stage. Each new page load
+ *   starts all of this over.
+ * - Rebuilds and reloads together happen at most CANVAS_REBUILD_LIMIT times
+ *   within CANVAS_REBUILD_WINDOW_MS; one more stops them all and is logged
+ *   as an error, and the app keeps running without a canvas (a rebuild) or
+ *   with the canvas as it is (a reload). Once stopped (that, or the app
+ *   quitting), a lost context or an unresponsive page starts no wait and
+ *   logs nothing.
+ * - macOS: hiding the whole app (another app's 隱藏其他 ⌥⌘H, the Dock's
+ *   隱藏) hides the canvas with every other window, and it comes back when
+ *   the app is shown again (the menu bar icon opening the panel). Accepted
+ *   (Story 3.6, measured on the machine): putting the canvas back on screen
+ *   while the app is hidden, with showInactive() or moveTop(), makes macOS
+ *   show the whole app again, the panel included.
  * - The overlay reports on `canvas:ready` whether PixiJS initialised; that
  *   goes to the run log.
  */
@@ -46,21 +77,25 @@ import type {
 } from 'electron';
 import {
   APP_SCHEME,
+  CANVAS_CONTEXT_RESTORE_MS,
   CANVAS_REBUILD_LIMIT,
   CANVAS_REBUILD_WINDOW_MS,
+  CANVAS_UNRESPONSIVE_RELOAD_MS,
 } from '../../shared/constants';
 import type { SessionKey } from '../../shared/detection-events';
 import {
   canvasContextMenu,
+  canvasGpu,
   canvasReady,
   canvasSetHover,
+  type CanvasGpuState,
   type CanvasHover,
   type CanvasReadyReport,
 } from '../../shared/ipc';
 import type { DisplayBounds, StageCanvas } from '../../shared/stage-view';
 import type { ChannelRenderers } from '../ipc/origin';
 import { registerIpcHandler } from '../ipc/register';
-import { logEvent } from '../log/run-log';
+import { errorCode, logEvent } from '../log/run-log';
 import { describePlacement } from './displays';
 import type { WindowsEnvironment } from './environment';
 import { OVERLAY_HOST } from './protocols';
@@ -167,6 +202,13 @@ export interface CanvasWindowHandle {
     /** Matches an IPC event's `sender.id`. */
     readonly id: number;
     loadURL(url: string): Promise<void>;
+    /** Loads the page again (a new page load: did-navigate follows). */
+    reload(): void;
+    /**
+     * Stops the page's renderer; `render-process-gone` follows, and a
+     * reload after it runs the page in a new renderer.
+     */
+    forcefullyCrashRenderer(): void;
     /** A main-frame navigation committed: a new page load, reloads included. */
     on(event: 'did-navigate', listener: () => void): unknown;
     on(
@@ -188,6 +230,8 @@ export interface CanvasWindowHandle {
   on(event: 'closed', listener: () => void): unknown;
   /** The page stopped responding. */
   on(event: 'unresponsive', listener: () => void): unknown;
+  /** The page responds again. */
+  on(event: 'responsive', listener: () => void): unknown;
   setIgnoreMouseEvents(
     ignore: boolean,
     options?: IgnoreMouseEventsOptions,
@@ -217,6 +261,10 @@ export interface CanvasWindowsOptions<
    * own `render-process-gone` listener.
    */
   readonly defer?: (run: () => void) => void;
+  /** Starts a timer on the same clock as `now` (default `setTimeout`). */
+  readonly setTimer?: (run: () => void, delayMs: number) => unknown;
+  /** Clears a timer setTimer started (default `clearTimeout`). */
+  readonly clearTimer?: (handle: unknown) => void;
 }
 
 export interface CanvasWindows<
@@ -243,6 +291,18 @@ export interface CanvasWindows<
    * greater than the last one taken, and every request on Linux.
    */
   setHover(webContentsId: number, hover: CanvasHover): void;
+  /**
+   * The page in `webContentsId` says its WebGL context was lost or is back
+   * (only when that changes). A repeat, a report from any other page, and
+   * `context-restored` with nothing lost change nothing.
+   */
+  gpu(webContentsId: number, state: CanvasGpuState): void;
+  /**
+   * The page in `webContentsId` reported on `canvas:ready`. A page that
+   * comes after a recovery and failed to initialise is reloaded (one more
+   * recovery, within the limit); anything else changes nothing.
+   */
+  ready(webContentsId: number, report: CanvasReadyReport): void;
 }
 
 function sameBounds(a: DisplayBounds, b: DisplayBounds): boolean {
@@ -286,6 +346,23 @@ function checkBounds(
 /** No request taken yet, click-through on: a new window or page load. */
 const NO_HOVER = { seq: 0, over: false } as const;
 
+/** `1.5 s` for the run log. */
+function describeSeconds(ms: number): string {
+  return `${(Math.max(0, ms) / 1000).toFixed(1)} s`;
+}
+
+/** Why a page is reloaded, for the run log. */
+const CONTEXT_NOT_RESTORED = `its WebGL context was not restored within ${CANVAS_CONTEXT_RESTORE_MS / 1000} s`;
+const NOT_RESPONDING = `it still did not respond ${CANVAS_UNRESPONSIVE_RELOAD_MS / 1000} s after Chromium found it unresponsive`;
+const NOT_INITIALISED =
+  'its canvas did not initialise after a recovery (canvas:ready)';
+
+/** One recovery of the canvas: a rebuilt window or a reloaded page. */
+interface Recovery {
+  readonly at: number;
+  readonly kind: 'rebuild' | 'reload';
+}
+
 export function createCanvasWindows<W extends CanvasWindowHandle>({
   createWindow,
   preload,
@@ -296,18 +373,172 @@ export function createCanvasWindows<W extends CanvasWindowHandle>({
   defer = (run) => {
     setTimeout(run, 0);
   },
+  setTimer = (run, delayMs) => setTimeout(run, delayMs),
+  clearTimer = (handle) => {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  },
 }: CanvasWindowsOptions<W>): CanvasWindows<W> {
   let current: W | undefined;
   let placement: CanvasPlacement | undefined;
-  /** When each rebuild in the last CANVAS_REBUILD_WINDOW_MS happened. */
-  let rebuilds: number[] = [];
-  /** Set by stop() or once the rebuild limit is hit; nothing is created after. */
+  /** Each rebuild and reload in the last CANVAS_REBUILD_WINDOW_MS. */
+  let recoveries: Recovery[] = [];
+  /**
+   * Set by stop() or once the limit is hit; nothing is created, rebuilt or
+   * reloaded after.
+   */
   let stopped = false;
+  /**
+   * The window whose renderer main stopped on purpose, its page to reload
+   * once that renderer is gone (not a crash to rebuild for).
+   */
+  let reloadWhenGone: W | undefined;
+  /**
+   * The window whose page was last reloaded or which was last rebuilt, until
+   * that page reports a canvas that initialised: a failure from it is one
+   * more recovery.
+   */
+  let recovered: W | undefined;
+  /**
+   * The current page: since when its WebGL context is lost and the timer
+   * that reloads it, and since when it has not responded and the timer that
+   * reloads it; undefined while not so.
+   */
+  let contextLost:
+    | { readonly since: number; readonly timer: unknown }
+    | undefined;
+  let unresponsive:
+    | { readonly since: number; readonly timer: unknown }
+    | undefined;
   /**
    * The current window's page: the last hover `seq` taken from it, and
    * whether click-through is off because the cursor is over something.
    */
   let hover: { readonly seq: number; readonly over: boolean } = NO_HOVER;
+
+  /** A new page, or none: nothing lost, nothing unresponsive, no timer. */
+  function resetPage(): void {
+    if (contextLost !== undefined) {
+      clearTimer(contextLost.timer);
+      contextLost = undefined;
+    }
+    if (unresponsive !== undefined) {
+      clearTimer(unresponsive.timer);
+      unresponsive = undefined;
+    }
+  }
+
+  /**
+   * Takes one recovery (`kind`, because of `why`) within the limit. At the
+   * limit it stops everything, logs why as an error and answers false.
+   */
+  function takeRecovery(kind: Recovery['kind'], why: string): boolean {
+    const at = now();
+    recoveries = recoveries.filter(
+      (recovery) => at - recovery.at < CANVAS_REBUILD_WINDOW_MS,
+    );
+    if (recoveries.length < CANVAS_REBUILD_LIMIT) {
+      recoveries.push({ at, kind });
+      return true;
+    }
+    stopped = true;
+    resetPage();
+    const times = recoveries.length + 1;
+    const within = `within ${CANVAS_REBUILD_WINDOW_MS / 1000} s`;
+    logEvent(
+      'windows',
+      kind === 'rebuild' &&
+        recoveries.every((recovery) => recovery.kind === 'rebuild')
+        ? `canvas renderer gone ${times} times ${within}; not rebuilding it again (the app keeps running without a canvas)`
+        : `canvas needed a rebuild or reload ${times} times ${within}, the last because ${why}; not rebuilding or reloading it again (the app keeps running ${kind === 'rebuild' ? 'without a canvas' : 'with the canvas as it is'})`,
+      'error',
+    );
+    return false;
+  }
+
+  /**
+   * Runs `step` on a window's page (a reload, stopping its renderer); a
+   * throw is logged as an error, never thrown from a timer or listener.
+   */
+  function onPage(what: string, step: () => void): boolean {
+    try {
+      step();
+      return true;
+    } catch (error) {
+      logEvent(
+        'windows',
+        `${what} the canvas page failed: ${errorCode(error)}`,
+        'error',
+      );
+      return false;
+    }
+  }
+
+  /**
+   * A reload of `win` that could not be started: the window is rebuilt
+   * instead (outside the current call), within the limit.
+   */
+  function rebuildInstead(win: W): void {
+    if (reloadWhenGone === win) {
+      reloadWhenGone = undefined;
+    }
+    if (current !== win) {
+      return;
+    }
+    current = undefined;
+    resetPage();
+    logEvent(
+      'windows',
+      'the canvas page could not be reloaded; rebuilding the window instead',
+      'warn',
+    );
+    defer(() => {
+      rebuild(win, 'its page could not be reloaded');
+    });
+  }
+
+  /** The count for the run log, once a recovery is taken. */
+  function describeCount(): string {
+    return `recovery ${recoveries.length} of ${CANVAS_REBUILD_LIMIT} within ${CANVAS_REBUILD_WINDOW_MS / 1000} s, rebuilds and reloads count together`;
+  }
+
+  /**
+   * Reloads the page of `win` (still the live window), because of `why`;
+   * in a new renderer when `newRenderer` (its renderer is stopped first,
+   * and the page reloads once it is gone). Counts toward the limit.
+   */
+  function reload(win: W, why: string, newRenderer: boolean): void {
+    if (stopped || current !== win || win.isDestroyed()) {
+      return;
+    }
+    if (!takeRecovery('reload', why)) {
+      return;
+    }
+    resetPage();
+    recovered = win;
+    logEvent(
+      'windows',
+      `reloading the canvas page${newRenderer ? ' in a new renderer' : ''}: ${why} (${describeCount()})`,
+      'warn',
+    );
+    if (newRenderer) {
+      reloadWhenGone = win;
+      if (
+        !onPage('stopping the renderer of', () => {
+          win.webContents.forcefullyCrashRenderer();
+        })
+      ) {
+        rebuildInstead(win);
+      }
+      return;
+    }
+    if (
+      !onPage('reloading', () => {
+        win.webContents.reload();
+      })
+    ) {
+      rebuildInstead(win);
+    }
+  }
 
   function live(): W | undefined {
     if (current !== undefined && current.isDestroyed()) {
@@ -327,6 +558,7 @@ export function createCanvasWindows<W extends CanvasWindowHandle>({
     const win = createWindow(canvasWindowOptions(preload, at.bounds, platform));
     current = win;
     hover = NO_HOVER;
+    resetPage();
     setClickThrough(win, platform);
     logEvent('windows', `canvas window created on ${describePlacement(at)}`);
 
@@ -342,6 +574,7 @@ export function createCanvasWindows<W extends CanvasWindowHandle>({
     win.on('closed', () => {
       if (current === win) {
         current = undefined;
+        resetPage();
         logEvent('windows', 'canvas window closed');
       }
     });
@@ -358,12 +591,27 @@ export function createCanvasWindows<W extends CanvasWindowHandle>({
         );
       },
     );
-    // A page that stops responding cannot say the cursor left: with
-    // click-through off, the window covering the display would swallow
-    // every click. Click-through back on; seq kept, so the page's later
-    // requests still count.
     win.on('unresponsive', () => {
-      if (current !== win || !hover.over) {
+      if (current !== win) {
+        return;
+      }
+      // Reloaded in a new renderer unless it responds again in time; a
+      // repeat does not restart the wait. Once stopped, no wait.
+      if (unresponsive === undefined && !stopped) {
+        unresponsive = {
+          since: now(),
+          timer: setTimer(() => {
+            if (current === win && unresponsive !== undefined) {
+              reload(win, NOT_RESPONDING, true);
+            }
+          }, CANVAS_UNRESPONSIVE_RELOAD_MS),
+        };
+      }
+      // A page that stops responding cannot say the cursor left: with
+      // click-through off, the window covering the display would swallow
+      // every click. Click-through back on; seq kept, so the page's later
+      // requests still count.
+      if (!hover.over) {
         return;
       }
       hover = { seq: hover.seq, over: false };
@@ -374,12 +622,26 @@ export function createCanvasWindows<W extends CanvasWindowHandle>({
         'warn',
       );
     });
+    win.on('responsive', () => {
+      if (current !== win || unresponsive === undefined) {
+        return;
+      }
+      const { since, timer } = unresponsive;
+      clearTimer(timer);
+      unresponsive = undefined;
+      logEvent(
+        'windows',
+        `canvas page responding again after ${describeSeconds(now() - since)}; not reloading it`,
+      );
+    });
     // A new page (a reload) counts its seq from 1 again and has not said
     // the cursor is over anything: click-through back on, seq back to 0.
+    // Its WebGL context and responsiveness start over too.
     win.webContents.on('did-navigate', () => {
       if (current !== win) {
         return;
       }
+      resetPage();
       const wasOver = hover.over;
       hover = NO_HOVER;
       if (wasOver) {
@@ -388,6 +650,28 @@ export function createCanvasWindows<W extends CanvasWindowHandle>({
     });
     win.webContents.on('render-process-gone', (_event, details) => {
       if (current !== win) {
+        return;
+      }
+      resetPage();
+      // Stopped on purpose to reload the page in a new renderer.
+      if (reloadWhenGone === win) {
+        reloadWhenGone = undefined;
+        logEvent(
+          'windows',
+          `canvas renderer stopped (${details.reason}, exit code ${details.exitCode}); reloading its page`,
+        );
+        defer(() => {
+          if (
+            !stopped &&
+            current === win &&
+            !win.isDestroyed() &&
+            !onPage('reloading', () => {
+              win.webContents.reload();
+            })
+          ) {
+            rebuildInstead(win);
+          }
+        });
         return;
       }
       logEvent(
@@ -405,30 +689,19 @@ export function createCanvasWindows<W extends CanvasWindowHandle>({
     win.webContents.loadURL(overlayUrl(env)).catch(() => {});
   }
 
-  function rebuild(gone: W): void {
+  function rebuild(gone: W, why = 'its renderer went away'): void {
     if (!gone.isDestroyed()) {
       gone.destroy();
     }
     if (stopped || placement === undefined || live() !== undefined) {
       return;
     }
-    const at = now();
-    rebuilds = rebuilds.filter((time) => at - time < CANVAS_REBUILD_WINDOW_MS);
-    if (rebuilds.length >= CANVAS_REBUILD_LIMIT) {
-      stopped = true;
-      logEvent(
-        'windows',
-        `canvas renderer gone ${rebuilds.length + 1} times within ${CANVAS_REBUILD_WINDOW_MS / 1000} s; not rebuilding it again (the app keeps running without a canvas)`,
-        'error',
-      );
+    if (!takeRecovery('rebuild', why)) {
       return;
     }
-    rebuilds.push(at);
-    logEvent(
-      'windows',
-      `rebuilding the canvas window (${rebuilds.length} of ${CANVAS_REBUILD_LIMIT} within ${CANVAS_REBUILD_WINDOW_MS / 1000} s)`,
-    );
+    logEvent('windows', `rebuilding the canvas window (${describeCount()})`);
     create(placement);
+    recovered = current;
   }
 
   return {
@@ -453,6 +726,7 @@ export function createCanvasWindows<W extends CanvasWindowHandle>({
 
     stop() {
       stopped = true;
+      resetPage();
     },
 
     current: live,
@@ -478,6 +752,59 @@ export function createCanvasWindows<W extends CanvasWindowHandle>({
         setClickThrough(win, platform);
       }
     },
+
+    gpu(webContentsId, state) {
+      const win = windowOf(webContentsId);
+      if (win === undefined || stopped) {
+        return;
+      }
+      if (state === 'context-lost') {
+        // A repeat: still lost, still the first wait.
+        if (contextLost !== undefined) {
+          return;
+        }
+        contextLost = {
+          since: now(),
+          timer: setTimer(() => {
+            if (current === win && contextLost !== undefined) {
+              // Also unresponsive: a plain reload may never commit.
+              reload(win, CONTEXT_NOT_RESTORED, unresponsive !== undefined);
+            }
+          }, CANVAS_CONTEXT_RESTORE_MS),
+        };
+        logEvent(
+          'windows',
+          'canvas WebGL context lost; nothing is drawn until it is restored',
+          'warn',
+        );
+        return;
+      }
+      if (contextLost === undefined) {
+        return;
+      }
+      const { since, timer } = contextLost;
+      clearTimer(timer);
+      contextLost = undefined;
+      logEvent(
+        'windows',
+        `canvas WebGL context restored after ${describeSeconds(now() - since)}`,
+      );
+    },
+
+    ready(webContentsId, report) {
+      const win = windowOf(webContentsId);
+      if (win === undefined || recovered !== win) {
+        return;
+      }
+      if (report.ok) {
+        recovered = undefined;
+        return;
+      }
+      // Answered first, then reloaded.
+      defer(() => {
+        reload(win, NOT_INITIALISED, false);
+      });
+    },
   };
 }
 
@@ -493,10 +820,16 @@ export function logCanvasReady(report: CanvasReadyReport): void {
   logEvent('windows', `canvas failed to initialise: ${report.reason}`, 'error');
 }
 
-/** Registers `canvas:ready` (overlay only): each report goes to the run log. */
-export function registerCanvasReadyHandler(): void {
-  registerIpcHandler(canvasReady, CANVAS_RENDERERS, (_event, report) => {
+/**
+ * Registers `canvas:ready` (overlay only): each report goes to the run log,
+ * then to `canvas.ready` with the sending page's webContents id, when given.
+ */
+export function registerCanvasReadyHandler(
+  canvas?: Pick<CanvasWindows, 'ready'>,
+): void {
+  registerIpcHandler(canvasReady, CANVAS_RENDERERS, (event, report) => {
     logCanvasReady(report);
+    canvas?.ready(event.sender.id, report);
     return null;
   });
 }
@@ -510,6 +843,19 @@ export function registerCanvasHoverHandler(
 ): void {
   registerIpcHandler(canvasSetHover, CANVAS_RENDERERS, (event, hover) => {
     canvas.setHover(event.sender.id, hover);
+    return null;
+  });
+}
+
+/**
+ * Registers `canvas:gpu` (overlay only): each report goes to `canvas.gpu`
+ * with the sending page's webContents id.
+ */
+export function registerCanvasGpuHandler(
+  canvas: Pick<CanvasWindows, 'gpu'>,
+): void {
+  registerIpcHandler(canvasGpu, CANVAS_RENDERERS, (event, state) => {
+    canvas.gpu(event.sender.id, state);
     return null;
   });
 }
