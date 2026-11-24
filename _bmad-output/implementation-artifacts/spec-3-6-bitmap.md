@@ -179,6 +179,8 @@ context:
 - 2026-11-18 第二次接手（主流程記錄）：照省 token 規則，`context:` 拿掉 `spec-3-6-particles.md`（用得到的位置已在 Code Map）。接手分兩個開發代理依序做：
   - 第一棒：驗證既有實作（typecheck、改到的測試檔），補完 pixi-stage 用真 PixiJS 的測試與 `jsonBytes` 的 ImageBitmap 測試，單元測試補齊 I/O 矩陣。
   - 第二棒：作者文件、`test/e2e/bitmap.spec.ts` 與探針包，最後跑一次全套驗證。
+- 本機驗證（2026-11-19，第 3 輪修補後）：typecheck、lint、depcruise 通過；`CI=true npm test` 5434 通過、2 略過；`npm run e2e` 32 通過。
+- CI：commit `2c03120`（2026-11-24）後，GitHub Actions 的 unit（check）與 e2e 在 macOS、Windows 都通過（run 45310579583）。
 
 ## Spec Change Log
 

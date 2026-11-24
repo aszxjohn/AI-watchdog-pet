@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-03-2026 15:49
-last_updated: 11-19-2026 18:06
+last_updated: 11-24-2026 10:14
 project: gundam-pet
 project_key: NOKEY
 tracking_system: file-system
@@ -62,7 +62,7 @@ development_status:
   3-3-角色包管理頁: done
   3-4-池子與-session-分配: done
   3-5-角色包沙盒與載入鏈: done
-  3-6-世界節拍與統一繪圖: review
+  3-6-世界節拍與統一繪圖: done
   3-7-依狀態演出-後備與佔位: backlog
   3-8-名牌與狀態標記: backlog
   3-9-角色包當掉與換角色: backlog
