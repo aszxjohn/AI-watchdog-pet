@@ -11,11 +11,13 @@
  * - A placed actor is drawn when its state maps (world/states.ts: in the
  *   character's `states` or its `fallback`) and its pack's latest valid
  *   draw, made by the version installed, has it: its sprite commands,
- *   ordered by `z` (ties keep the pack's order), and its `particles`
- *   commands (its emitters, which particles.ts runs and pixi-stage.ts draws
- *   above its sprites). An empty list draws nothing but the actor is
- *   there. A state that does not map draws nothing of it (the placeholder
- *   is Story 3.7), nor does a draw that leaves it out.
+ *   ordered by `z` (ties keep the pack's order), its `bitmap` command, if
+ *   any (Story 3.6's last part: checkDraw lets one an actor through, which
+ *   pixi-stage.ts draws above its sprites), and its `particles` commands
+ *   (its emitters, which particles.ts runs and pixi-stage.ts draws above
+ *   the rest). An empty list draws nothing but the actor is there. A state
+ *   that does not map draws nothing of it (the placeholder is Story 3.7),
+ *   nor does a draw that leaves it out.
  * - Each drawn actor sits at its position, scaled by its 大小 (the `scale`
  *   fixed parameter), clipped to its manifest `bounds`. Actors are drawn
  *   by `y`, lower on the screen on top (ties keep StageView's order).
@@ -24,13 +26,18 @@
  *   `scaleX`, `scaleY` (a negative one flips it about that corner), turned
  *   by `rotation` about that corner, at `alpha`. Left-out fields take
  *   SPRITE_COMMAND_DEFAULTS.
+ * - A bitmap: its image's top-left corner at `x`, `y` in the actor's local
+ *   coordinates, drawn `width` x `height` base pixels (whatever the
+ *   image's own size).
  * - A drawn actor with at least one sprite on screen (its texture loaded:
- *   `ready`) takes the mouse over its manifest `hitbox` times its 大小, at
- *   its position, named by its session key; the one drawn on top comes
- *   last (pointer.ts gives the last one under the cursor). Any other actor
- *   takes no mouse: not drawn, an empty list, only particles, or only
- *   sprites whose textures are still loading or failed, so nothing
- *   invisible catches a click. Particles never change an actor's area.
+ *   `ready`), or with a bitmap while pixi-stage.ts has a bitmap texture of
+ *   it up (`bitmapReady`), takes the mouse over its manifest `hitbox`
+ *   times its 大小, at its position, named by its session key; the one
+ *   drawn on top comes last (pointer.ts gives the last one under the
+ *   cursor). Any other actor takes no mouse: not drawn, an empty list,
+ *   only particles, or only sprites whose textures are still loading or
+ *   failed, or only a bitmap not up yet, so nothing invisible catches a
+ *   click. Particles never change an actor's area.
  */
 import type { SessionKey } from '../../shared/detection-events';
 import {
@@ -41,6 +48,7 @@ import {
 import type { StageCharacter, StageView } from '../../shared/stage-view';
 import type { PackLook } from '../looks';
 import type { PackDraw } from '../pack-host/host';
+import type { ImageBitmapLike } from '../../shared/draw-size';
 import type {
   DrawnCommand,
   ParticlesCommand,
@@ -70,6 +78,16 @@ export interface SceneSprite {
   readonly alpha: number;
 }
 
+/** One bitmap to draw (Story 3.6's last part). */
+export interface SceneBitmap {
+  readonly image: ImageBitmapLike;
+  readonly x: number;
+  readonly y: number;
+  /** How wide and high it is drawn, in base pixels. */
+  readonly width: number;
+  readonly height: number;
+}
+
 /** One actor to draw. */
 export interface SceneActor {
   readonly actorId: string;
@@ -88,6 +106,8 @@ export interface SceneActor {
   readonly sprites: readonly SceneSprite[];
   /** Its emitters: the `particles` commands of its latest draw, in order. */
   readonly emitters: readonly ParticlesCommand[];
+  /** Its bitmap, when its latest draw has one (no key otherwise). */
+  readonly bitmap?: SceneBitmap;
 }
 
 /** What to draw this display frame. */
@@ -116,6 +136,11 @@ export interface SceneInput {
     asset: string,
     frame: string | undefined,
   ) => boolean;
+  /**
+   * Whether pixi-stage.ts has a bitmap texture of `actorId` up (from the
+   * previous frame); none by default.
+   */
+  readonly bitmapReady?: (actorId: string) => boolean;
   /**
    * Where the actors stand (world/layout.ts's row by default; Epic 4's
    * wandering gives its own).
@@ -153,6 +178,22 @@ export function sceneSprites(commands: readonly DrawnCommand[]): SceneSprite[] {
     .map(({ command }) => sceneSprite(command));
 }
 
+/** The bitmap command of `commands`, as a bitmap to draw, if it has one. */
+export function sceneBitmap(
+  commands: readonly DrawnCommand[],
+): SceneBitmap | undefined {
+  const command = commands.find((each) => each.type === 'bitmap');
+  return command === undefined
+    ? undefined
+    : {
+        image: command.image,
+        x: command.x,
+        y: command.y,
+        width: command.width,
+        height: command.height,
+      };
+}
+
 /** What takes the mouse for an actor: its `hitbox` × `scale` at its place. */
 export function hitAreaOf(
   actor: Pick<SceneActor, 'sessionKey' | 'x' | 'y' | 'scale'>,
@@ -187,6 +228,7 @@ export function buildScene({
   look,
   draw,
   ready,
+  bitmapReady = () => false,
   place = rowLayout,
 }: SceneInput): Scene {
   const { canvas } = view;
@@ -251,6 +293,7 @@ export function buildScene({
     if (commands === undefined) {
       continue;
     }
+    const bitmap = sceneBitmap(commands);
     drawn.push({
       actor: {
         actorId: actor.actorId,
@@ -263,6 +306,7 @@ export function buildScene({
         bounds: member.bounds,
         sprites: sceneSprites(commands),
         emitters: commands.filter((command) => command.type === 'particles'),
+        ...(bitmap === undefined ? {} : { bitmap }),
       },
       hitbox: character.hitbox,
     });
@@ -272,10 +316,12 @@ export function buildScene({
   return {
     actors: drawn.map(({ actor }) => actor),
     areas: drawn
-      .filter(({ actor }) =>
-        actor.sprites.some((sprite) =>
-          ready(actor.packId, actor.version, sprite.asset, sprite.frame),
-        ),
+      .filter(
+        ({ actor }) =>
+          actor.sprites.some((sprite) =>
+            ready(actor.packId, actor.version, sprite.asset, sprite.frame),
+          ) ||
+          (actor.bitmap !== undefined && bitmapReady(actor.actorId)),
       )
       .map(({ actor, hitbox }) => hitAreaOf(actor, hitbox)),
     missing,

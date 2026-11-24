@@ -4,7 +4,7 @@
  * `load` (with a fake window), and the Worker bootstrap's steps (with fake
  * scopes and a fake SES). The real SES boot is in build.test.ts.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sandboxCsp } from '../../src/sandbox/csp';
 import {
   checkInlineScript,
@@ -31,21 +31,32 @@ import {
   SES_UNKNOWN_INTRINSICS,
 } from '../../src/sandbox/lists';
 import {
+  bitmapBrandOf,
   boot,
+  canvasMakerOf,
   countConsole,
   createStage,
   formatLogArgs,
+  type OwnActor,
   removeApi,
   removeIntrinsic,
   run,
   seededRandom,
+  type StageBitmaps,
   type StageCallMessage,
 } from '../../src/sandbox/worker-bootstrap';
 import {
+  BITMAP_MAX_SIDE,
+  PACK_MESSAGE_MAX_BYTES,
   SANDBOX_OUTBOX_MAX,
   STAGE_LOG_MAX_LENGTH,
 } from '../../src/shared/constants';
 import { sandboxReportSchema } from '../../src/shared/sandbox';
+import {
+  FakeImageBitmap,
+  fakeOffscreenCanvas,
+  stubImageBitmap,
+} from '../helpers/fake-bitmaps';
 
 const SHA = Buffer.alloc(32, 1).toString('base64');
 
@@ -509,6 +520,46 @@ describe('the Worker bootstrap: removals', () => {
   });
 });
 
+/** Own actors by id, each with its character. */
+function ownOf(characters: Record<string, string>): Map<string, OwnActor> {
+  return new Map(
+    Object.entries(characters).map(([actorId, characterId]) => [
+      actorId,
+      { characterId },
+    ]),
+  );
+}
+
+/** The stage a pack gets, as far as these tests call it. */
+type TestStage = Record<string, unknown> & {
+  log(...args: unknown[]): void;
+  random(actorId: unknown): number;
+  canvas(actorId: unknown, width: unknown, height: unknown): object;
+  snapshot(actorId: unknown): unknown;
+  fire(actorId: unknown, shot: unknown): void;
+  hold(actorId: unknown, on: unknown): void;
+  face(actorId: unknown, direction: unknown): void;
+};
+
+/** A stage over a recording post, hardened by deep freeze. */
+function stageWith(
+  post: (call: StageCallMessage) => void = () => {},
+  ownActors: ReadonlyMap<string, OwnActor> = new Map(),
+  bitmaps?: StageBitmaps,
+): TestStage {
+  const harden = <T>(value: T): T => Object.freeze(value);
+  return createStage(harden, post, ownActors, bitmaps) as TestStage;
+}
+
+/** A list nested `depth` lists deep (itself the first): [[[…]]]. */
+function nestedLists(depth: number): unknown[] {
+  let list: unknown[] = [];
+  for (let i = 1; i < depth; i += 1) {
+    list = [list];
+  }
+  return list;
+}
+
 describe('the Worker bootstrap: stage', () => {
   it('formatLogArgs: strings as they are, other values as text or JSON, errors as name: message, joined by spaces', () => {
     const circular: Record<string, unknown> = {};
@@ -560,83 +611,492 @@ describe('the Worker bootstrap: stage', () => {
     }
   });
 
-  /** A stage over a recording post, hardened by deep freeze. */
-  function stageWith(
-    post: (call: StageCallMessage) => void = () => {},
-    ownActors: ReadonlySet<string> = new Set(),
-  ) {
-    const harden = <T>(value: T): T => Object.freeze(value);
-    return createStage(harden, post, ownActors) as Record<string, unknown> & {
-      log(...args: unknown[]): void;
-      random(actorId: unknown): number;
-      fire(actorId: unknown, shot: unknown): void;
-      hold(actorId: unknown, on: unknown): void;
-      face(actorId: unknown, direction: unknown): void;
-    };
-  }
-
-  it('has the author documentation’s methods, a null canvas, and is hardened', () => {
+  it('has the author documentation’s methods, canvas and snapshot among them, and is hardened', () => {
     const stage = stageWith();
 
     expect(Object.keys(stage)).toStrictEqual([
       'log',
       'random',
       'canvas',
+      'snapshot',
       'fire',
       'hold',
       'face',
     ]);
-    expect(stage.canvas).toBeNull();
+    expect(typeof stage.canvas).toBe('function');
+    expect(typeof stage.snapshot).toBe('function');
     expect(Object.isFrozen(stage)).toBe(true);
   });
 
-  it('log, fire, hold and face each send one stage.* call as the pack made it', () => {
+  it('log, fire, hold and face each send one stage.* call as the pack made it; a fire without its shot leaves target and object undefined, which cannot be copied: a TypeError, nothing sent', () => {
     const posted: StageCallMessage[] = [];
     const stage = stageWith((call) => posted.push(call));
 
     stage.log('hi', 2);
     stage.fire('a1', { target: 'a2', object: 'spark' });
-    stage.fire('a1', null);
+    expect(() => {
+      stage.fire('a1', null);
+    }).toThrow(TypeError);
     stage.hold('a1', true);
     stage.face('a1', 'left');
 
     expect(posted).toStrictEqual([
       { type: 'stage.log', text: 'hi 2' },
       { type: 'stage.fire', actorId: 'a1', target: 'a2', object: 'spark' },
-      {
-        type: 'stage.fire',
-        actorId: 'a1',
-        target: undefined,
-        object: undefined,
-      },
       { type: 'stage.hold', actorId: 'a1', on: true },
       { type: 'stage.face', actorId: 'a1', direction: 'left' },
     ]);
   });
 
-  it('a call whose arguments cannot be sent throws a TypeError of its own', () => {
-    const stage = stageWith(() => {
+  it('a call post cannot send throws a TypeError of its own, not post’s DOMException; one whose arguments cannot be copied never reaches post', () => {
+    const post = vi.fn(() => {
       throw new DOMException('could not be cloned', 'DataCloneError');
     });
+    const stage = stageWith(post);
 
-    expect(() => stage.hold('a1', () => 1)).toThrow(TypeError);
+    let thrown: unknown;
     try {
-      stage.hold('a1', () => 1);
+      stage.hold('a1', true);
     } catch (error) {
-      expect(error).not.toBeInstanceOf(DOMException);
+      thrown = error;
     }
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(thrown).toBeInstanceOf(TypeError);
+    expect(thrown).not.toBeInstanceOf(DOMException);
+
+    post.mockClear();
+    expect(() => stage.hold('a1', () => 1)).toThrow(TypeError);
+    expect(post).not.toHaveBeenCalled();
   });
 
   it("random answers only for the pack's own actors (none before Story 3.6), one seed per actor", () => {
     expect(() => stageWith().random('a1')).toThrow(TypeError);
     expect(() => stageWith().random(1)).toThrow(TypeError);
 
-    const stage = stageWith(() => {}, new Set(['a1']));
+    const stage = stageWith(() => {}, ownOf({ a1: 'probe-one' }));
     const seeded = seededRandom('a1');
     expect([stage.random('a1'), stage.random('a1')]).toStrictEqual([
       seeded(),
       seeded(),
     ]);
+  });
+});
+
+// The bitmap canvases (Story 3.6's last part), over a fake OffscreenCanvas:
+// a1 plays probe-one, which has advancedBitmap, a2 probe-two, which has not.
+describe('I/O matrix', () => {
+  function bitmapStage(fake = fakeOffscreenCanvas()) {
+    const ownActors = ownOf({ a1: 'probe-one', a2: 'probe-two' });
+    const makeCanvas = canvasMakerOf({ OffscreenCanvas: fake.OffscreenCanvas });
+    const stage = stageWith(() => {}, ownActors, {
+      characters: new Set(['probe-one']),
+      makeCanvas,
+    });
+    return { stage, fake, ownActors, makeCanvas };
+  }
+
+  it('只允許 2d: canvasMakerOf takes the canvas getter off the 2d context, so the context the pack gets leads to no canvas (nor its constructor, nor webgl)', () => {
+    const { stage, fake, makeCanvas } = bitmapStage();
+
+    expect(makeCanvas).toBeDefined();
+    const context = stage.canvas('a1', 64, 32) as Record<string, unknown>;
+    expect(context.canvas).toBeUndefined();
+    expect('canvas' in context).toBe(false);
+    expect(
+      Object.getOwnPropertyDescriptor(fake.contextPrototype, 'canvas'),
+    ).toBeUndefined();
+    // A 1 x 1 probe at boot, then the actor's: both by the kept constructor.
+    expect(fake.made.map((canvas) => [canvas.width, canvas.height])).toEqual([
+      [1, 1],
+      [64, 32],
+    ]);
+  });
+
+  it.each<[string, () => unknown]>([
+    [
+      'its canvas getter cannot be taken off',
+      () => fakeOffscreenCanvas({ lockedCanvasGetter: true }).OffscreenCanvas,
+    ],
+    [
+      'it gives no 2d context',
+      () => fakeOffscreenCanvas({ no2d: true }).OffscreenCanvas,
+    ],
+    [
+      'its constructor throws',
+      () =>
+        function Throwing() {
+          throw new Error('no canvas');
+        },
+    ],
+    ['it is not a constructor', () => 'OffscreenCanvas'],
+  ])(
+    '只允許 2d: no canvas maker when the OffscreenCanvas is there but %s; then stage.canvas throws a TypeError',
+    (_label, make) => {
+      const makeCanvas = canvasMakerOf({ OffscreenCanvas: make() });
+      expect(makeCanvas).toBeUndefined();
+
+      const stage = stageWith(() => {}, ownOf({ a1: 'probe-one' }), {
+        characters: new Set(['probe-one']),
+        makeCanvas,
+      });
+      expect(() => stage.canvas('a1', 8, 8)).toThrow(TypeError);
+    },
+  );
+
+  it('沒有 OffscreenCanvas: no canvas maker; stage.canvas throws a TypeError even for an actor whose character has advancedBitmap, and snapshot too', () => {
+    expect(canvasMakerOf({})).toBeUndefined();
+
+    const stage = stageWith(() => {}, ownOf({ a1: 'probe-one' }), {
+      characters: new Set(['probe-one']),
+    });
+    expect(() => stage.canvas('a1', 8, 8)).toThrow(TypeError);
+    expect(() => stage.snapshot('a1')).toThrow(TypeError);
+  });
+
+  it('bitmap 出現: stage.canvas makes the actor’s canvas at its first call and gives its context; the same size again gives the same context, uncleared; another size resizes it (cleared)', () => {
+    const { stage, fake, ownActors } = bitmapStage();
+
+    const first = stage.canvas('a1', 64, 64);
+    const canvas = fake.made[1];
+    expect(ownActors.get('a1')?.canvas?.context).toBe(first);
+    expect(stage.canvas('a1', 64, 64)).toBe(first);
+    expect(canvas?.clears).toBe(0);
+
+    expect(stage.canvas('a1', 128, 32)).toBe(first);
+    expect([canvas?.width, canvas?.height]).toStrictEqual([128, 32]);
+    expect(canvas?.clears).toBe(2);
+    expect(fake.made).toHaveLength(2);
+  });
+
+  it('bitmap 出現: stage.snapshot gives the ImageBitmap of what the canvas holds and clears it (once a frame: routing.test.ts has the frames)', () => {
+    const { stage, fake } = bitmapStage();
+    stage.canvas('a1', 48, 40);
+    const canvas = fake.made[1];
+
+    const first = stage.snapshot('a1');
+
+    // By identity: FakeImageBitmaps keep their size private.
+    expect(canvas?.bitmaps).toHaveLength(1);
+    expect(canvas?.bitmaps[0]).toBe(first);
+    expect(first).toMatchObject({ width: 48, height: 40 });
+    expect(canvas?.clears).toBe(1);
+  });
+
+  it.each<[string, (stage: TestStage) => unknown]>([
+    ['canvas for another pack’s actor', (stage) => stage.canvas('b1', 8, 8)],
+    ['canvas for no actor id', (stage) => stage.canvas(undefined, 8, 8)],
+    ['canvas 0 wide', (stage) => stage.canvas('a1', 0, 8)],
+    ['canvas 0 high', (stage) => stage.canvas('a1', 8, 0)],
+    [
+      `canvas wider than ${BITMAP_MAX_SIDE}`,
+      (stage) => stage.canvas('a1', BITMAP_MAX_SIDE + 1, 8),
+    ],
+    [
+      `canvas higher than ${BITMAP_MAX_SIDE}`,
+      (stage) => stage.canvas('a1', 8, BITMAP_MAX_SIDE + 1),
+    ],
+    ['canvas of a fractional size', (stage) => stage.canvas('a1', 8.5, 8)],
+    ['canvas of a size as a string', (stage) => stage.canvas('a1', '8', 8)],
+    [
+      'canvas of no size',
+      (stage) => Reflect.apply(stage.canvas, stage, ['a1']),
+    ],
+    ['snapshot before canvas', (stage) => stage.snapshot('a1')],
+    ['snapshot for another pack’s actor', (stage) => stage.snapshot('b1')],
+  ])('參數不對: %s throws a TypeError', (_label, call) => {
+    const { stage, fake } = bitmapStage();
+
+    expect(() => call(stage)).toThrow(TypeError);
+    // Only the probe: nothing was made.
+    expect(fake.made).toHaveLength(1);
+  });
+
+  it(`參數不對: 1 and ${BITMAP_MAX_SIDE} are sizes it takes`, () => {
+    const { stage, fake } = bitmapStage();
+
+    stage.canvas('a1', 1, BITMAP_MAX_SIDE);
+    expect([fake.made[1]?.width, fake.made[1]?.height]).toStrictEqual([
+      1,
+      BITMAP_MAX_SIDE,
+    ]);
+  });
+
+  it('沒宣告的角色: stage.canvas throws a TypeError for an actor whose character has no advancedBitmap; it has no canvas, so snapshot throws too', () => {
+    const { stage, fake } = bitmapStage();
+
+    expect(() => stage.canvas('a2', 8, 8)).toThrow(TypeError);
+    expect(() => stage.snapshot('a2')).toThrow(TypeError);
+    expect(fake.made).toHaveLength(1);
+  });
+
+  it('參數不對: a canvas that cannot be made or read throws a TypeError of the stage’s own', () => {
+    const throwing = stageWith(() => {}, ownOf({ a1: 'probe-one' }), {
+      characters: new Set(['probe-one']),
+      makeCanvas: () => {
+        throw new RangeError('out of memory');
+      },
+    });
+    expect(() => throwing.canvas('a1', 8, 8)).toThrow(TypeError);
+
+    const unreadable = stageWith(() => {}, ownOf({ a1: 'probe-one' }), {
+      characters: new Set(['probe-one']),
+      makeCanvas: () => ({
+        canvas: {
+          width: 8,
+          height: 8,
+          transferToImageBitmap: () => {
+            throw new DOMException('detached', 'InvalidStateError');
+          },
+        },
+        context: {},
+      }),
+    });
+    unreadable.canvas('a1', 8, 8);
+    expect(() => unreadable.snapshot('a1')).toThrow(TypeError);
+    try {
+      unreadable.snapshot('a1');
+    } catch (error) {
+      expect(error).not.toBeInstanceOf(DOMException);
+    }
+  });
+
+  it('snapshot 次數: a snapshot whose canvas cannot be read (transferToImageBitmap throws) is not counted: the next call in the same frame still gives a bitmap, and only the one after that is refused', () => {
+    let reads = 0;
+    const bitmap = new FakeImageBitmap(8, 8);
+    const stage = stageWith(() => {}, ownOf({ a1: 'probe-one' }), {
+      characters: new Set(['probe-one']),
+      makeCanvas: () => ({
+        canvas: {
+          width: 8,
+          height: 8,
+          transferToImageBitmap: () => {
+            reads += 1;
+            if (reads === 1) {
+              throw new DOMException('not now', 'InvalidStateError');
+            }
+            return bitmap;
+          },
+        },
+        context: {},
+      }),
+    });
+    stage.canvas('a1', 8, 8);
+
+    expect(() => stage.snapshot('a1')).toThrow(TypeError);
+    expect(stage.snapshot('a1')).toBe(bitmap);
+    expect(() => stage.snapshot('a1')).toThrow(TypeError);
+    // The refused third call never reached the canvas.
+    expect(reads).toBe(2);
+  });
+});
+
+// What a stage.* call may carry (Story 3.6's last part, review 2): the
+// call is copied into plain data, and an ImageBitmap is told by the brand
+// check of ImageBitmap's `width` getter (bitmapBrandOf). FakeImageBitmap
+// keeps its size private, so its `width` getter checks the brand too.
+describe('I/O matrix', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Runs `change` with FakeImageBitmap's prototype changed as a pack could. */
+  function withForgedGetter(change: () => void): void {
+    const width = Object.getOwnPropertyDescriptor(
+      FakeImageBitmap.prototype,
+      'width',
+    ) as PropertyDescriptor;
+    try {
+      // A getter that answers for anything, and an instanceof that says no.
+      Object.defineProperty(FakeImageBitmap.prototype, 'width', {
+        get: () => 8,
+        configurable: true,
+      });
+      Object.defineProperty(FakeImageBitmap, Symbol.hasInstance, {
+        value: () => false,
+        configurable: true,
+      });
+      change();
+    } finally {
+      Object.defineProperty(FakeImageBitmap.prototype, 'width', width);
+      Reflect.deleteProperty(FakeImageBitmap, Symbol.hasInstance);
+    }
+  }
+
+  it('藏圖的寫法: bitmapBrandOf tells an ImageBitmap by its width getter, kept when it is called: one whose prototype was changed (to Object.prototype, to null) or that was closed is one, even once the getter on the prototype and instanceof are forged; a look-alike on its prototype, a Proxy of one, a plain object or a primitive is not', () => {
+    stubImageBitmap();
+    const isBitmap = bitmapBrandOf(globalThis);
+    const image = new FakeImageBitmap();
+    const plain = Object.setPrototypeOf(
+      new FakeImageBitmap(),
+      Object.prototype,
+    );
+    const bare = Object.setPrototypeOf(new FakeImageBitmap(), null);
+    const closed = new FakeImageBitmap();
+    closed.close();
+
+    withForgedGetter(() => {
+      const lookAlike = Object.create(FakeImageBitmap.prototype) as object;
+      expect(image instanceof FakeImageBitmap).toBe(false);
+      expect((lookAlike as { width: number }).width).toBe(8);
+      for (const value of [image, plain, bare, closed]) {
+        expect(isBitmap(value)).toBe(true);
+      }
+      for (const value of [
+        lookAlike,
+        new Proxy(image, {}),
+        { width: 8, height: 8, close() {} },
+        {},
+        [],
+        null,
+        undefined,
+        8,
+        'ImageBitmap',
+      ]) {
+        expect(isBitmap(value)).toBe(false);
+      }
+    });
+  });
+
+  it.each<[string, () => object]>([
+    ['no ImageBitmap', () => ({})],
+    ['an ImageBitmap that is not a function', () => ({ ImageBitmap: {} })],
+    [
+      'an ImageBitmap without a width getter',
+      () => ({ ImageBitmap: class NoWidth {} }),
+    ],
+  ])('藏圖的寫法: a scope with %s tells no ImageBitmap', (_label, scope) => {
+    stubImageBitmap();
+    const isBitmap = bitmapBrandOf(scope());
+
+    expect(isBitmap(new FakeImageBitmap())).toBe(false);
+    expect(isBitmap({})).toBe(false);
+  });
+
+  it('stage.* 帶圖: fire, hold or face with an ImageBitmap among its arguments (its prototype changed or not), or with a value that cannot be copied (undefined, a function, a Map, a cycle, nested too deep, too large, also in UTF-8 bytes only), throws a TypeError of the stage’s own at the call, and nothing is posted', () => {
+    stubImageBitmap();
+    const posted: StageCallMessage[] = [];
+    const stage = stageWith((call) => posted.push(call), new Map(), {
+      characters: new Set(),
+      isBitmap: bitmapBrandOf(globalThis),
+    });
+    const image = new FakeImageBitmap();
+    const disguised = Object.setPrototypeOf(
+      new FakeImageBitmap(),
+      Object.prototype,
+    ) as object;
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    const calls: [string, () => void][] = [
+      ['fire, image as target', () => stage.fire('a1', { target: image })],
+      [
+        'fire, disguised image as object',
+        () => stage.fire('a1', { target: 'a2', object: disguised }),
+      ],
+      ['hold, image as on', () => stage.hold('a1', image)],
+      ['hold, image as actorId', () => stage.hold(image, true)],
+      ['face, disguised image', () => stage.face('a1', disguised)],
+      ['face, image deep in a list', () => stage.face('a1', [{ image }])],
+      ['hold, undefined', () => stage.hold('a1', undefined)],
+      ['hold, a function', () => stage.hold('a1', () => true)],
+      ['face, a Map', () => stage.face('a1', new Map([['x', image]]))],
+      ['hold, a cycle', () => stage.hold('a1', cycle)],
+      [
+        'face, too large',
+        () => stage.face('a1', 'x'.repeat(PACK_MESSAGE_MAX_BYTES)),
+      ],
+      [
+        // 40000 characters, under the limit; 80000 bytes in UTF-8, over it.
+        'face, too large in UTF-8 bytes only',
+        () => stage.face('a1', 'é'.repeat(40_000)),
+      ],
+      ['hold, nested too deep', () => stage.hold('a1', nestedLists(30_000))],
+    ];
+
+    for (const [label, call] of calls) {
+      let thrown: unknown;
+      try {
+        call();
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown, label).toBeInstanceOf(TypeError);
+      expect(thrown, label).not.toBeInstanceOf(DOMException);
+    }
+    expect(posted).toStrictEqual([]);
+    expect(image.closes).toBe(0);
+  });
+
+  it('stage.* 帶圖: what is posted is a copy, read once: a getter runs once, and the argument changed after the call changes nothing posted', () => {
+    const posted: StageCallMessage[] = [];
+    const stage = stageWith((call) => posted.push(call));
+    let reads = 0;
+    const shot = {
+      get target() {
+        reads += 1;
+        return reads === 1 ? 'a2' : 'a3';
+      },
+      object: 'spark',
+    };
+    const on = { deep: [1, 'two'] };
+
+    stage.fire('a1', shot);
+    stage.hold('a1', on);
+    on.deep.push(3);
+
+    expect(reads).toBe(1);
+    expect(posted).toStrictEqual([
+      { type: 'stage.fire', actorId: 'a1', target: 'a2', object: 'spark' },
+      { type: 'stage.hold', actorId: 'a1', on: { deep: [1, 'two'] } },
+    ]);
+    expect(posted[1]?.on).not.toBe(on);
+  });
+
+  it('stage.* 帶圖: boot keeps the brand check before lockdown(), and gives it to the stage and in its outcome: a width getter forged after (as the pack could, once its code runs) fools neither', () => {
+    const width = Object.getOwnPropertyDescriptor(
+      FakeImageBitmap.prototype,
+      'width',
+    ) as PropertyDescriptor;
+    const disguised = Object.setPrototypeOf(
+      new FakeImageBitmap(),
+      Object.prototype,
+    ) as object;
+    const posted: StageCallMessage[] = [];
+    let thrown: unknown;
+    try {
+      const ses = fakeSes({
+        lockdown: () => {
+          Object.defineProperty(FakeImageBitmap.prototype, 'width', {
+            get: () => 8,
+            configurable: true,
+          });
+        },
+        evaluate: () => (stage: TestStage) => {
+          try {
+            stage.hold('a1', disguised);
+          } catch (error) {
+            thrown = error;
+          }
+          return {};
+        },
+      });
+      ses.scope.ImageBitmap = FakeImageBitmap;
+
+      const outcome = boot('ENTRY', {
+        scope: ses.scope,
+        counter: { lines: () => 0 },
+        post: (call) => posted.push(call),
+      });
+
+      expect(outcome.report).toMatchObject({ type: 'sandbox.ready' });
+      expect(thrown).toBeInstanceOf(TypeError);
+      expect(posted).toStrictEqual([]);
+      expect(outcome.isBitmap?.(disguised)).toBe(true);
+      expect(
+        outcome.isBitmap?.(Object.create(FakeImageBitmap.prototype) as object),
+      ).toBe(false);
+    } finally {
+      Object.defineProperty(FakeImageBitmap.prototype, 'width', width);
+    }
   });
 });
 
@@ -868,6 +1328,87 @@ describe('I/O matrix', () => {
   });
 });
 
+// The boot with a 2d canvas (Story 3.6's last part), over a fake SES.
+describe('I/O matrix', () => {
+  const counter = () => ({ lines: () => 0 });
+
+  it('只允許 2d: boot takes the 2d context’s canvas getter off before lockdown(), not as one of the removals; the factory’s stage makes canvases for an actor whose character has advancedBitmap', () => {
+    const fake = fakeOffscreenCanvas();
+    let getterAtLockdown: boolean | undefined;
+    let made: unknown;
+    const ses = fakeSes({
+      lockdown: () => {
+        getterAtLockdown = 'canvas' in fake.contextPrototype;
+      },
+      evaluate: () => (stage: TestStage) => {
+        made = stage.canvas('a1', 16, 16);
+        return {};
+      },
+    });
+    ses.scope.OffscreenCanvas = fake.OffscreenCanvas;
+
+    const outcome = boot('ENTRY', {
+      scope: ses.scope,
+      counter: counter(),
+      post: () => {},
+      ownActors: ownOf({ a1: 'probe-one' }),
+      bitmapCharacters: new Set(['probe-one']),
+    });
+
+    expect(getterAtLockdown).toBe(false);
+    expect(outcome.report).toMatchObject({ type: 'sandbox.ready' });
+    expect(
+      (
+        outcome.report as unknown as { removals: { name: string }[] }
+      ).removals.map((removal) => removal.name),
+    ).toStrictEqual([...REMOVED_WORKER_APIS, ...SES_UNKNOWN_INTRINSICS]);
+    expect(made).toBeDefined();
+    expect('canvas' in (made as object)).toBe(false);
+  });
+
+  it.each<[string, (scope: Record<string, unknown>) => void]>([
+    ['no OffscreenCanvas', () => {}],
+    [
+      'a canvas getter that cannot be taken off',
+      (scope) => {
+        scope.OffscreenCanvas = fakeOffscreenCanvas({
+          lockedCanvasGetter: true,
+        }).OffscreenCanvas;
+      },
+    ],
+  ])(
+    '沒有 OffscreenCanvas: a Worker with %s boots as before (ready, same removals); its stage.canvas throws a TypeError',
+    (_label, prepare) => {
+      let thrown: unknown;
+      const ses = fakeSes({
+        evaluate: () => (stage: TestStage) => {
+          try {
+            stage.canvas('a1', 16, 16);
+          } catch (error) {
+            thrown = error;
+          }
+          return {};
+        },
+      });
+      prepare(ses.scope);
+
+      const outcome = boot('ENTRY', {
+        scope: ses.scope,
+        counter: counter(),
+        post: () => {},
+        ownActors: ownOf({ a1: 'probe-one' }),
+        bitmapCharacters: new Set(['probe-one']),
+      });
+
+      expect(outcome.report).toMatchObject({
+        type: 'sandbox.ready',
+        consoleLines: 0,
+      });
+      expect(thrown).toBeInstanceOf(TypeError);
+    },
+  );
+});
+
 /** A fake Worker global scope for run(): listeners and a console. */
 function fakeWorker(evaluate?: (source: string) => unknown) {
   const ses = fakeSes({ evaluate });
@@ -988,5 +1529,69 @@ describe('the Worker bootstrap: run', () => {
     run('ENTRY', worker.scope);
 
     expect(thrown).toBeInstanceOf(TypeError);
+  });
+
+  it('a call nested too deep to clone throws a TypeError at the call, before the port is there, and is not kept for it: only the calls after it are sent', () => {
+    let thrown: unknown;
+    const worker = fakeWorker(
+      () =>
+        (stage: {
+          hold(actorId: string, on: unknown): void;
+          log(text: string): void;
+        }) => {
+          try {
+            stage.hold('a1', nestedLists(30_000));
+          } catch (error) {
+            thrown = error;
+          }
+          stage.log('after');
+          return {};
+        },
+    );
+    countConsole(worker.scope);
+    run('ENTRY', worker.scope);
+    const sent: unknown[] = [];
+
+    worker.emit('message', {
+      data: { type: 'port' },
+      ports: [{ postMessage: (message: unknown) => sent.push(message) }],
+    });
+
+    expect(thrown).toBeInstanceOf(TypeError);
+    expect(sent).toStrictEqual([
+      expect.objectContaining({ type: 'sandbox.ready' }),
+      { type: 'stage.log', text: 'after' },
+    ]);
+  });
+
+  it('a call made before the port waits as the copy made at the call: its getter is not read again, and a change to its argument after the call is not sent', () => {
+    let reads = 0;
+    const on = { deep: [1] };
+    const worker = fakeWorker(
+      () => (stage: { hold(actorId: string, on: unknown): void }) => {
+        stage.hold('a1', {
+          get on() {
+            reads += 1;
+            return on;
+          },
+        });
+        on.deep.push(2);
+        return {};
+      },
+    );
+    countConsole(worker.scope);
+    run('ENTRY', worker.scope);
+    on.deep.push(3);
+    const sent: unknown[] = [];
+
+    worker.emit('message', {
+      data: { type: 'port' },
+      ports: [{ postMessage: (message: unknown) => sent.push(message) }],
+    });
+
+    expect(reads).toBe(1);
+    expect(sent.slice(1)).toStrictEqual([
+      { type: 'stage.hold', actorId: 'a1', on: { on: { deep: [1] } } },
+    ]);
   });
 });

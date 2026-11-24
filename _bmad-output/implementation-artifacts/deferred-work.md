@@ -286,3 +286,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-6-particles.md`
   summary: Story 3.6（下之三）bitmap 繪圖指令：`stage.canvas(actorId, width, height)` 回傳該 actor 的 2d context（只給 `advancedBitmap` 角色，尺寸 1～`BITMAP_MAX_SIDE` 512 的整數，否則丟 `TypeError`）、`stage.snapshot(actorId)` 回傳 ImageBitmap；Worker 送 `draw` 時把 ImageBitmap 放進 transfer list；`draw-size` 把 ImageBitmap 當固定小物件計算；overlay 檢查 `advancedBitmap`、`instanceof ImageBitmap`、寬高、每 actor 每則 1 張、每 actor 1 秒滑動視窗最多 `BITMAP_MAX_PER_SECOND` 30 張，違規整則丟棄並 `close()`；renderer 用 `new ImageSource({ resource, autoGarbageCollect: false })`，新圖畫上去後才 `close()` 舊圖
   evidence: 使用者 2026-11-18 在粒子與 bitmap 合寫的規格約 4,500 token 時選擇拆開，先做粒子（契約測試包已在用）。可行性小實驗已確認可行（刪除清單與 `lockdown()` 後 Worker 仍有 `OffscreenCanvas`；ImageBitmap 從 opaque origin 的 Worker transfer 到 overlay，PixiJS 8.22 畫出來顏色正確、沒有 SecurityError；256×256 一張約 1 ms），實驗檔在 scratchpad 的 `spike-bitmap/`（會被清掉，結論以此為準）。實驗指出的坑：原始 ctx 的 `canvas` 能拿到 `OffscreenCanvas` 建構式並開 webgl2，所以 bootstrap 要在 `lockdown()` 前移除 `OffscreenCanvasRenderingContext2D.prototype` 的 `canvas` getter，包只拿得到 2d context；`advancedBitmap` 的 characterId 清單由 pack-host 在 `init` 前用沙盒內部訊息交給 bootstrap；`Texture.from` 會進全域快取；`transferToImageBitmap()` 後 canvas 變空，包每格要整張重畫；已 `close()` 的 bitmap 重新上傳會安靜地變空白。也一併處理 `spec-3-6-tick-and-draw.md` 那筆「`jsonBytes` 遇 ImageBitmap 回 null」。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-6-bitmap.md`
+  summary: 包可以跨格囤積 `stage.snapshot` 的 ImageBitmap（每格每 actor 一張、留著不送），佔用大量記憶體；目前沒有每包的記憶體上限。
+  evidence: 2026-11-19 審查 E5。`stage.snapshot` 改成每格每 actor 一次後，產生速度有了上限，但留著不送的圖仍會累積（512×512 一張約 1 MiB）。這跟包自己配置大陣列同類，原本就沒有限制，適合跟 3.7～3.9 的失敗判定一起處理。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-6-bitmap.md`
+  summary: 限制每個 actor 留著沒送出的 `stage.snapshot` 圖（例如最多 4 張，再拍就 close 最舊的），避免包囤圖吃掉 Worker 外的記憶體。
+  evidence: 2026-11-19 第 2 輪審查 B8、E5。ImageBitmap 的像素不在 JS heap（在 Blink 或 GPU），之後若加 JS heap 類的上限也算不到它；512×512 一張約 1 MiB，每秒每 actor 可拍 30 張。使用者當天選擇先不管，跟 3.7～3.9 的失敗判定一起處理。

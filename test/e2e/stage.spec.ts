@@ -36,7 +36,9 @@ import {
   LAUNCH_TIMEOUT_MS,
   launchStage,
   makeDirs,
+  readOverlayData,
   readRunLog,
+  readStageView,
   removeDirs,
   waitForLine,
   WINDOW_TIMEOUT_MS,
@@ -210,42 +212,12 @@ test.afterAll(async () => {
 
 /** The StageView snapshot the panels see. */
 function panelsSnapshot(): Promise<StageViewSnapshot> {
-  return panels.evaluate(
-    () =>
-      new Promise<StageViewSnapshot>((resolve, reject) => {
-        const { awp } = globalThis as unknown as { awp: PanelsApi };
-        let done = false;
-        let stop: (() => void) | undefined;
-        const finish = (): void => {
-          done = true;
-          queueMicrotask(() => stop?.());
-        };
-        stop = awp.stageView.subscribe(
-          (snapshot) => {
-            if (!done) {
-              finish();
-              resolve(snapshot);
-            }
-          },
-          (error) => {
-            if (!done) {
-              finish();
-              reject(new Error(error.code));
-            }
-          },
-        );
-      }),
-  );
+  return readStageView(panels);
 }
 
 /** The overlay body's data attributes. */
 function overlayData(): Promise<Record<string, string | undefined>> {
-  return overlay.evaluate(() => {
-    const { document } = globalThis as unknown as {
-      document: { body: { dataset: Record<string, string | undefined> } };
-    };
-    return { ...document.body.dataset };
-  });
+  return readOverlayData(overlay);
 }
 
 test.describe('I/O matrix', () => {

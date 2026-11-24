@@ -136,6 +136,8 @@ context:
   - **作者文件 8.1：** 列出各 preset 的基準速率與壽命；`tint`、`rate`、`x`／`y` 只影響之後發出的粒子；停止中的發射器也算在每個 actor 16 個之內。
   - 驗證（只跑涵蓋改動的部分）：typecheck、lint、`test/overlay/{particles,pixi-stage,context-loss}.test.ts`（59 個通過）、`test/e2e/stage.spec.ts`（6 個通過）。
 
+- CI：commit `70c6d04`（2026-11-18）後，GitHub Actions 的 unit（check）與 e2e 在 macOS、Windows 都通過（run 44243830617）。
+
 ## Spec Change Log
 
 ## Review Triage Log

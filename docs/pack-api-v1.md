@@ -428,23 +428,43 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
 - 同一個 `emitterId` 換了 `preset`，視同舊的停止、新的開始。停止後又出現同一個 `emitterId`，也是新的發射器。
 - 停止中、還在淡出的發射器也算數：一個 actor 同時最多 16 個發射器，超過時最舊的停止中發射器連同它的粒子立刻移除（每格換新 `emitterId` 的包，舊粒子會提早消失）。
 - actor 離場、這一則沒畫它（漏回、狀態對應不到），或包的沙盒被銷毀、失敗時，它的發射器與粒子立刻移除。
-- 粒子畫在 actor 的所有 `sprite` 之上，跟著 actor 的位置與固定參數「大小」縮放，超出 `bounds` 的部分一樣被裁掉。粒子不影響滑鼠命中範圍（只看 `sprite` 與 manifest `hitbox`）。
+- 粒子畫在 actor 的所有 `sprite` 之上，跟著 actor 的位置與固定參數「大小」縮放，超出 `bounds` 的部分一樣被裁掉。粒子不影響滑鼠命中範圍（只看有沒有畫出 `sprite` 或 `bitmap`，範圍是 manifest `hitbox`）。
 - 粒子的時間跟著舞台的畫面更新走：系統睡眠或鎖定、畫面暫停時，粒子停在原地，恢復後接著跑，不會一次噴出一大把。
 
 **上限（定案）：** 一則 `draw` 最多 16 個 `particles` 指令（所有 actor 合計），超過時整則丟棄並記錄包 id。每個發射器同時最多 64 顆粒子，滿了就暫停發射，等有粒子消失再繼續；這種情況 `draw` 不會被丟棄。
 
-**`bitmap`**：包自己畫的點陣圖，只限 `advancedBitmap` 的角色。
+**`bitmap`**：包自己畫的點陣圖，只限 manifest 宣告 `advancedBitmap: true` 的角色。圖用 `stage.canvas` 畫、用 `stage.snapshot` 取得（見 8.2）。
 
 | 欄位 | 規則 |
 |---|---|
-| `image` | `ImageBitmap` |
-| `x`、`y` | 本地座標 |
-| `width`、`height` | 大於 0 |
+| `image` | `stage.snapshot(actorId)` 回傳的 `ImageBitmap` |
+| `x`、`y` | 圖的左上角，本地座標 |
+| `width`、`height` | 畫出來的寬高，單位是基準像素，大於 0。跟圖本身的像素數無關，舞台會縮放 |
 
-選填欄位不用時，**整個 key 都不要寫**。值是 `undefined` 或 `null` 時，這則 `draw` 不合法，會整則被拒絕（`undefined` 會跟著訊息送到舞台，不會自動消失）：
+**bitmap 的規則（定案）：**
+
+- **上限：** 圖的寬、高最多 512 像素。一則 `draw` 裡每個 actor 最多 1 張，同一張 `ImageBitmap` 也只能出現在一條指令。每個 actor 每秒最多 36 張（1 秒的滑動視窗，以舞台收到 `draw` 的時間計）。節拍是每秒 30 格，多出的 6 張留給時間抖動：舞台卡頓時回覆會擠在一起，所以每格送一張碰不到這個上限。任一條不符合，或角色沒有 `advancedBitmap`、`image` 不是 `ImageBitmap`，整則 `draw` 丟棄並記錄包 id，這則裡的圖全部作廢。另外，一則 `draw` 裡不重複的圖比這包的 actor 多時，那一格根本不會送出（見 8.2）。
+- **每格都要整張重畫：** `stage.snapshot` 取走畫布的內容後，畫布就清空了。下一格要從頭畫完整張，再 snapshot 一次。
+- **一張圖只能送一次：** 送出後圖就交給舞台，包手上的那個 `ImageBitmap` 變成 0×0。把同一張再放進之後的 `draw`，那則 `draw` 送不出去，視為這格沒有 `draw`（記錄包 id 與 `draw-not-cloneable`），下一格照常。
+- **圖也照抄本的規則：** 圖要放在抄得了的地方才會送出（見下面的「送出的是抄本」）。圖藏在 `Map`、`Set` 等抄不了的地方，整則 `draw` 不送出（`draw-not-cloneable`）。Worker 不送的那則 `draw`（抄不了、超過上限、圖比 actor 多等），裡面的圖沒有被送走，仍在包手上：下一格可以再放進 `draw` 送出，不用的話自己呼叫它的 `close()`。
+- **顯示多久：** 舞台一直顯示最後一則有效 `draw` 裡的那張圖，直到下一則有效的 `draw` 換上新圖。下一則 `draw` 裡這個 actor 沒有 `bitmap`、actor 離場、這一則沒畫它（漏回、狀態對應不到），或包的沙盒被銷毀、失敗時，圖就不再顯示。要持續顯示，每一則 `draw` 都要帶一張新的。
+- **層次與縮放：** 畫在這個 actor 的所有 `sprite` 之上、粒子之下，跟著 actor 的位置與固定參數「大小」縮放，超出 `bounds` 的部分裁掉。放大縮小時以線性內插取樣。
+- **解析度：** `width`、`height` 是基準像素，舞台還會再乘上「大小」與螢幕的縮放比例，以線性內插放大，所以圖的像素比最後畫出來的少時會模糊。包拿不到「大小」與螢幕的縮放比例，沒辦法照實際倍率決定畫布大小。想在高解析度螢幕上也清楚，就把畫布開成 `width`、`height` 的 2 倍：例如 `width` 100、`height` 60 的圖，用 200×120 像素的畫布畫。畫布每邊最多 512 像素，所以兩邊用同一個倍率 `min(2, 512 / width, 512 / height)`，乘出來的邊長取整數、至少 1（例如 `Math.max(1, Math.round(width * 倍率))`），圖才不會變形：`width` 300、`height` 100 的圖，倍率是 512 / 300，畫布開 512×171。`stage.canvas` 只收整數。
+- **滑鼠：** 圖顯示出來之後，這個 actor 跟畫了 `sprite` 時一樣接住滑鼠，範圍仍是 manifest `hitbox` 乘上「大小」。剛送出、還沒顯示的那一格還不算。
+
+**送出的是抄本（定案）：** `frame` 回傳之後，Worker 把回傳值從頭讀一次（每個位置只讀一次，送出的就是抄到的內容；同一個物件被引用兩次會各讀一次），抄成一份新的純資料，檢查與送給舞台的都是這份抄本。抄得了的只有以下幾種：
+
+- `null`、布林、有限的數字、字串。
+- 陣列：抄索引 0 到 `length - 1` 的元素。陣列有索引以外的自有屬性（含不可列舉的、symbol key 的）或有空位時，不是忽略那些屬性，而是整則不送。
+- 原型是 `Object.prototype` 或 `null` 的物件：只抄它自己的、可列舉的字串 key（symbol key 不抄）。
+- `stage.snapshot` 回傳的 `ImageBitmap`：圖本身放進抄本，以 transfer 送出。Worker 認的是圖本身，改掉它的原型也一樣認得。
+
+其他的值都抄不了，例如 `undefined`、`NaN`、`Infinity`、函式、`Map`、`Set`、typed array、`Date`、`Promise` 等其他物件，以及有索引以外屬性（或有空位）的陣列；讀取時丟例外的 getter 也算；陣列、物件一層包一層超過 64 層（回傳值本身算第 1 層）也算抄不了。`draw` 裡只要有一個抄不了的值，或 `frame` 沒有回傳值，Worker 就不送這則 `draw`，記錄包 id 與 `draw-not-cloneable`，這格視為沒有 `draw`，下一格照常。抄的途中超過位元組上限（64 KiB）就停下，不送出，記錄 `draw-too-large`，就算也超過深度上限也是記這個；有循環參照的回傳值會一直抄到超過位元組上限，也是這樣。
+
+選填欄位不用時，**整個 key 都不要寫**。值是 `null` 時，這則 `draw` 不合法，舞台會整則丟棄；值是 `undefined` 時，抄不了，Worker 根本不送這則 `draw`（`draw-not-cloneable`）。兩種都視為這格沒有 `draw`：
 
 ```js
-// 錯：busy 為 false 時 rotation 是 undefined，整則 draw 被拒絕
+// 錯：busy 為 false 時 rotation 是 undefined，這則 draw 不會送出（draw-not-cloneable）
 const bad = {
   type: 'sprite', asset: 'probe-two-sheet', frame: 'eyes-open', x: -25, y: -96,
   rotation: busy ? 0.08 : undefined,
@@ -463,8 +483,7 @@ if (busy) {
 - 只能畫這則 `frame` 的己方 actor。出現別的 `actorId`，整則 `draw` 會被丟棄。
 - `sprite` 的 `asset` 不在 `assets`、spritesheet 沒給 `frame` 或格名稱不存在、單張圖給了 `frame`，整則 `draw` 會被丟棄。
 - 指令或 `draw` 有多出來的欄位，就不合法。
-- 每則 `draw` 的指令數、位元組數、發射器數，以及 `bitmap` 的尺寸與每秒張數都有上限（舞台常數）。目前一則 `draw` 最多 256 個指令（所有 actor 合計）、64 KiB（JSON 大小）、16 個發射器（`particles` 指令，所有 actor 合計）。超過時整則丟棄，並記錄包 id；這也是執行失敗的條件之一（見 8.4）。
-- 目前的舞台還不畫 `bitmap`：這種指令會被略過（每包記錄一次），同一則 `draw` 的其他指令照畫。
+- 每則 `draw` 的指令數、位元組數、發射器數，以及 `bitmap` 的尺寸與每秒張數都有上限（舞台常數）。目前一則 `draw` 最多 256 個指令（所有 actor 合計）、64 KiB（JSON 大小；`bitmap` 的 `image` 算成 `{}`，也就是 2 bytes）、16 個發射器（`particles` 指令，所有 actor 合計）；`bitmap` 的上限見上面的「bitmap 的規則」。超過時整則丟棄，並記錄包 id；這也是執行失敗的條件之一（見 8.4）。
 - 素材由舞台從 `pack://<packId>/<version>/<path>` 載入並快取（每個版本各自快取，換版本就重新載入）。除了 `bitmap`，包不傳任何圖檔資料。
 
 **spritesheet 的 JSON（定案）：** PixiJS／TexturePacker 的「JSON Hash」格式，舞台載入時檢查，只讀以下欄位，其他的都忽略：
@@ -483,12 +502,33 @@ if (busy) {
 |---|---|
 | `stage.random(actorId)` | 亂數，每個 actor 各自一個種子。回傳值的範圍還沒定案（第 11 節） |
 | `stage.log(…)` | 寫入運行紀錄，自動帶上包 id。有限速，超過的會被丟掉 |
-| `stage.canvas` | 只限 `advancedBitmap` 的角色：取得 OffscreenCanvas 的 2d context，畫好後用 `bitmap` 指令送出 |
+| `stage.canvas(actorId, width, height)` | 只限 `advancedBitmap` 的角色：取得這個 actor 的畫布的 2d context（見下） |
+| `stage.snapshot(actorId)` | 把這個 actor 的畫布內容變成 `ImageBitmap`，放進 `bitmap` 指令送出（見下） |
 | `stage.fire(fromActorId, { target, object })` | 發射飛行物件；`object` 是 `projectiles` 的 key |
 | `stage.hold(actorId, on)` | 讓己方角色停在原地或恢復遊走 |
 | `stage.face(actorId, 'left' \| 'right')` | 讓己方角色轉向 |
 
 `fire`、`hold`、`face` 在世界中的行為在 Epic 4 才加入，在那之前不要依賴它們。
+
+**`stage.fire`、`stage.hold`、`stage.face` 的參數（定案）：** 參數也照 8.1「送出的是抄本」的規則，在呼叫的當下抄成純資料再送出（`stage.fire` 只取第二個參數的 `target` 與 `object`）。以下情況當場丟 `TypeError`，什麼都不送出：
+
+- 參數含 `ImageBitmap`。圖只能放在 `bitmap` 指令裡送。
+- 參數含抄不了的值，例如 `undefined`（包括沒給的參數）、函式、`Map`，或巢狀超過 8.1 的深度上限（送出的訊息本身算第 1 層，參數從第 2 層算起）。
+- 參數有循環參照。
+- 抄出來超過一則訊息的大小上限（64 KiB，以 JSON 的 UTF-8 位元組計，非 ASCII 字元一個算 2～4 bytes）。
+
+`stage.log` 的參數會先轉成文字，不受這條影響。
+
+**`stage.canvas` 與 `stage.snapshot`（定案）：**
+
+- `stage.canvas(actorId, width, height)` 回傳這個 actor 專用畫布的 2d context。第一次呼叫時建立畫布；之後尺寸一樣就回傳同一個 context，尺寸不同就改成新尺寸。改尺寸會清空畫布，也會把 2d 的狀態（transform、`fillStyle`、`font` 等）重設成預設值，改完要重新設定。`width`、`height` 是 1～512 的整數，單位是像素。
+- `stage.snapshot(actorId)` 把畫布目前的內容變成 `ImageBitmap` 回傳，畫布隨即清空。每一格的用法是：`stage.canvas` → 整張畫完 → `stage.snapshot` → 放進這格的 `bitmap` 指令（規則見 8.1）。
+- **每格每個 actor 一次：** 同一個 actor 在收到下一則 `frame` 之前只能呼叫一次 `stage.snapshot`，第二次丟 `TypeError`；收到下一則 `frame` 後可以再呼叫。
+- **一則最多幾張：** 送出前，Worker 會數抄本（8.1「送出的是抄本」）裡不重複的 `ImageBitmap`，連藏在指令以外其他欄位的也算；藏在 `Map` 等抄不了的地方時，整則根本不送（`draw-not-cloneable`）。比這包目前的 actor 多時，這則 `draw` 不送出，跟指令數超過上限一樣整則丟棄並記錄包 id；下一格照常收到 `frame`。
+- **只有 2d：** 拿到的 context 的 `canvas` 屬性是 `undefined`，從 context 拿不到畫布本身，也拿不到 `OffscreenCanvas`，所以開不了 webgl、webgl2。Compartment 裡也沒有 `OffscreenCanvas`（第 10 節的原則）。
+- **context 是宿主物件：** `stage.canvas` 回傳的 context，以及它的方法回傳的物件（`getTransform()` 的 `DOMMatrix`、`getImageData()` 的 `ImageData`、漸層、圖樣等），都是瀏覽器提供的宿主物件，是第 10 節原則的例外。它們可能帶出 Compartment 裡沒有的東西（例如 `DOMMatrix` 的 `toFloat32Array()` 回傳 `Float32Array`）；只拿它們來畫圖，不要依賴這些額外的東西。
+- **丟 `TypeError` 的情況：** `actorId` 不是這包的 actor（別包的、不存在的）；角色沒有 `advancedBitmap`；`width`、`height` 不是 1～512 的整數；還沒呼叫過 `stage.canvas` 就 `stage.snapshot`；同一格對同一個 actor 第二次 `stage.snapshot`；舞台無法建立或讀取畫布。
+- **畫布跟著 actor：** actor 離場（`despawn`）時它的畫布一起釋放。收到 `init`（沙盒重建後），或同一個 `actorId` 又收到 `spawn` 時，舊的畫布也會釋放。之後要重新呼叫 `stage.canvas`：用舊的 context 畫的東西不會出現，直接 `stage.snapshot` 會丟 `TypeError`。
 
 ### 8.3 節拍
 
@@ -580,6 +620,6 @@ if (busy) {
   - 角色處在舞台畫佔位的狀態時（3.2 的第 3 種情況），`frame` 裡這隻 actor 收到的是哪個狀態。
   - 訊息到達的順序，例如同一個 tick 的 `spawn`、`params`、`meta` 與 `frame` 誰先誰後。
 - **handlers：** 哪些處理函式必須提供，以及 `handlers` 有不認得的鍵時怎麼處理。範例包六種都有寫，鍵也只用訊息名稱。
-- **`draw`：** `bitmap` 的上限數值（尺寸與每秒張數），以及 `drawTimeoutMs`、心跳逾時、`sandboxIdleMs` 等時間數值。
+- **`draw`：** `drawTimeoutMs`、心跳逾時、`sandboxIdleMs` 等時間數值。
 
-已定案、移到正文的：`draw` 漏掉己方 actor 的處理、sprite 的座標與像素換算、spritesheet JSON 的欄位、粒子 preset 的清單與 `params`、發射器與粒子數的上限（都在 8.1）。圖片格式也已定案：v1.0 只收 PNG（第 1 節）。
+已定案、移到正文的：`draw` 漏掉己方 actor 的處理、sprite 的座標與像素換算、spritesheet JSON 的欄位、粒子 preset 的清單與 `params`、發射器與粒子數的上限、`bitmap` 的上限與規則（都在 8.1）；`stage.canvas` 與 `stage.snapshot` 的呼叫方式（8.2）。圖片格式也已定案：v1.0 只收 PNG（第 1 節）。

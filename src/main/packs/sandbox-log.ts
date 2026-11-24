@@ -99,11 +99,6 @@ export function packLogLine(entry: PackLogEntry): {
         message: `${pack}: dropped ${messages(entry.count)} from its sandbox (${entry.reason})`,
         level: 'warn',
       };
-    case 'commands-skipped':
-      return {
-        message: `${pack}: its draws have ${entry.command} commands, which the stage does not draw yet; the rest is drawn`,
-        level: 'info',
-      };
     case 'not-drawn':
       return {
         message: `${pack}: not drawn${entry.asset === undefined ? '' : ` (asset ${entry.asset})`}: ${NOT_DRAWN_TEXTS[entry.reason]}`,

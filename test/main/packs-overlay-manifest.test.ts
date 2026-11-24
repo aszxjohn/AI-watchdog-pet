@@ -250,11 +250,6 @@ describe('readPackManifest', () => {
 describe('packLogLine (Story 3.6)', () => {
   it.each<[PackLogEntry, string, string]>([
     [
-      { kind: 'commands-skipped', packId: 'sample-pack', command: 'bitmap' },
-      'pack sample-pack: its draws have bitmap commands, which the stage does not draw yet; the rest is drawn',
-      'info',
-    ],
-    [
       { kind: 'not-drawn', packId: 'sample-pack', reason: 'character-missing' },
       "pack sample-pack: not drawn: an actor plays a character the stage cannot find (no effective values for it, or not in the pack's manifest)",
       'warn',

@@ -45,15 +45,25 @@
  *   out by stage-messages.ts from what it sent before: `init` first, then
  *   `despawn`, `params`, `spawn`, `meta` as things change, and a `frame`
  *   unless the previous one is still unanswered (no queue: a slow pack
- *   only skips ticks, and no other pack waits for it).
+ *   only skips ticks, and no other pack waits for it). Before the `init`,
+ *   a pack with characters with `advancedBitmap` gets their ids, for its
+ *   bootstrap alone (SandboxBitmapCharactersMessage, Story 3.6's last
+ *   part).
  * - A message of `type: 'draw'` answers the unanswered `frame` when its
  *   `seq` is that frame's (any other is `stale-draw`), and is then checked
- *   (draw-rules.ts); one that passes is the pack's latest valid draw,
- *   which the renderer draws every display frame (drawOf()) until the next
- *   one passes. Command types not drawn yet (`bitmap`) are left out with
- *   one line per sandbox and type. The bootstrap's `sandbox.no-draw` answers the frame
- *   too, and counts as a drop of its reason. Drops go through the same
- *   per-reason log limit as above.
+ *   (draw-rules.ts, with each of that frame's actors' character as the
+ *   stage had told the pack, and each actor's window of
+ *   BITMAP_MAX_PER_SECOND, which counts the bitmaps of every draw that
+ *   passes); one that passes is the pack's latest valid draw, which the
+ *   renderer draws every display frame (drawOf()) until the next one
+ *   passes. The bootstrap's `sandbox.no-draw` answers the frame too, and
+ *   counts as a drop of its reason. Drops go through the same per-reason
+ *   log limit as above.
+ * - Every ImageBitmap of a message that is not kept (a `draw` dropped for
+ *   any reason, a `stage.*` call dropped, or anything that comes once its
+ *   sandbox is gone) is closed at once. The bitmaps of a draw kept are the
+ *   renderer's to close once shown; one replaced before it was shown goes
+ *   to the garbage collector.
  * - A sandbox destroyed or failed takes its latest draw and its unanswered
  *   frame with it.
  *
@@ -75,6 +85,8 @@ import type { PackEntryResult } from '../../shared/packs';
 import {
   type PackLogEntry,
   type PackMessageDropReason,
+  type SandboxBitmapCharactersMessage,
+  sandboxBitmapCharactersMessage,
   SANDBOX_REPORT_PREFIX,
   type SandboxDestroyReason,
   type SandboxFailureReason,
@@ -83,13 +95,18 @@ import {
   sandboxLoadMessage,
   sandboxReportSchema,
   type SandboxSkipReason,
-  type SkippedDrawCommand,
 } from '../../shared/sandbox';
 import type { StageView } from '../../shared/stage-view';
 import { cutText } from '../../shared/text';
 import type { Looks } from '../looks';
 import type { WorldTick } from '../world/world';
-import { checkDraw, type DrawnActors } from './draw-rules';
+import {
+  type BitmapWindow,
+  checkDraw,
+  closeBitmaps,
+  createBitmapWindow,
+  type DrawnActors,
+} from './draw-rules';
 import { createPackLog } from './log';
 import {
   actorsByPack,
@@ -113,6 +130,12 @@ export interface SandboxFrameHandlers {
   onWorkerError(): void;
 }
 
+/**
+ * What pack-host posts on its end of a sandbox's port: the stage messages
+ * (Story 3.6), and its own to the bootstrap (Story 3.6's last part).
+ */
+export type SandboxPost = StageMessage | SandboxBitmapCharactersMessage;
+
 /** One sandbox iframe. */
 export interface SandboxFrame {
   /**
@@ -121,10 +144,10 @@ export interface SandboxFrame {
    */
   hand(message: SandboxLoadMessage): void;
   /**
-   * Posts one stage message on pack-host's end of the port (Story 3.6);
-   * nothing before hand(). Throws when it cannot be sent.
+   * Posts one message on pack-host's end of the port (Story 3.6); nothing
+   * before hand(). Throws when it cannot be sent.
    */
-  post(message: StageMessage): void;
+  post(message: SandboxPost): void;
   /** Removes the iframe (its Worker goes with it) and closes the port. */
   remove(): void;
 }
@@ -174,8 +197,8 @@ export interface PackDraw {
   /** The version of the pack that drew it. */
   readonly version: string;
   /**
-   * Each actor's sprite and particles commands; an actor left out is not
-   * drawn.
+   * Each actor's sprite, particles and bitmap commands; an actor left out
+   * is not drawn.
    */
   readonly actors: DrawnActors;
 }
@@ -212,8 +235,13 @@ interface Sandbox {
   readonly stage: PackStageState;
   /** The pack's latest valid draw. */
   draw: PackDraw | null;
-  /** The command types already logged as skipped. */
-  readonly skipped: Set<SkippedDrawCommand>;
+  /**
+   * The character of each actor of the unanswered `frame`, as the stage
+   * had told the pack when it sent it.
+   */
+  frameCharacters: ReadonlyMap<string, string>;
+  /** Each actor's bitmaps of the draws that passed, over a sliding window. */
+  readonly bitmaps: BitmapWindow;
 }
 
 /** Why a pack with an actor has no sandbox; `sticky` until its actors leave. */
@@ -463,6 +491,7 @@ export function createPackHost({
       sandbox.stage.inFlight = null;
     }
     if (!sandbox.messages.take()) {
+      closeBitmaps(data);
       drop(sandbox, 'rate-limited');
       return;
     }
@@ -474,25 +503,33 @@ export function createPackHost({
       look === undefined ||
       look.version !== sandbox.version
     ) {
+      closeBitmaps(data);
       drop(sandbox, 'stale-draw');
       return;
     }
-    const check = checkDraw(data, inFlight.actors, look);
+    const characters = sandbox.frameCharacters;
+    const check = checkDraw(data, inFlight.actors, look, {
+      characterOf: (actorId) => characters.get(actorId),
+      bitmapAllowance: (actorId) => sandbox.bitmaps.allowance(actorId),
+    });
     if (!check.ok) {
+      closeBitmaps(data);
       drop(sandbox, check.reason);
       return;
     }
-    for (const command of check.skipped) {
-      if (!sandbox.skipped.has(command)) {
-        sandbox.skipped.add(command);
-        log({ kind: 'commands-skipped', packId: sandbox.packId, command });
-      }
-    }
+    sandbox.bitmaps.take(
+      [...check.actors]
+        .filter(([, commands]) =>
+          commands.some((command) => command.type === 'bitmap'),
+        )
+        .map(([actorId]) => actorId),
+    );
     sandbox.draw = { version: sandbox.version, actors: check.actors };
   }
 
   function receive(sandbox: Sandbox, data: unknown): void {
     if (sandboxes.get(sandbox.packId) !== sandbox || sandbox.frame === null) {
+      closeBitmaps(data);
       return;
     }
     if (isReport(data)) {
@@ -504,6 +541,7 @@ export function createPackHost({
       return;
     }
     if (!sandbox.messages.take()) {
+      closeBitmaps(data);
       drop(sandbox, 'rate-limited');
       return;
     }
@@ -512,6 +550,8 @@ export function createPackHost({
       owners.get(sandbox.packId) ?? NO_ACTORS,
     );
     if (!check.ok) {
+      // A snapshot passed to stage.fire, hold or face: never a valid call.
+      closeBitmaps(data);
       drop(sandbox, check.reason);
       return;
     }
@@ -557,7 +597,8 @@ export function createPackHost({
       drops: new Map(),
       stage: newPackStageState(),
       draw: null,
-      skipped: new Set(),
+      frameCharacters: new Map(),
+      bitmaps: createBitmapWindow(() => clock.now()),
     };
     sandboxes.set(packId, sandbox);
     let result: IpcResult<PackEntryResult> | undefined;
@@ -609,7 +650,7 @@ export function createPackHost({
   }
 
   /** Posts `messages` to `sandbox` in order; a failure fails the sandbox. */
-  function post(sandbox: Sandbox, messages: readonly StageMessage[]): void {
+  function post(sandbox: Sandbox, messages: readonly SandboxPost[]): void {
     for (const message of messages) {
       const { frame } = sandbox;
       if (frame === null || sandbox.phase !== 'ready') {
@@ -685,9 +726,18 @@ export function createPackHost({
         if (look === undefined || look.version !== sandbox.version) {
           continue;
         }
-        post(
-          sandbox,
-          composeTick(sandbox.stage, {
+        const messages: SandboxPost[] = [];
+        if (!sandbox.stage.inited) {
+          const bitmapCharacters = look.manifest.characters
+            .filter((character) => character.advancedBitmap === true)
+            .map((character) => character.id);
+          if (bitmapCharacters.length > 0) {
+            messages.push(sandboxBitmapCharactersMessage(bitmapCharacters));
+          }
+        }
+        const before = sandbox.stage.inFlight;
+        messages.push(
+          ...composeTick(sandbox.stage, {
             packId: sandbox.packId,
             actors: latest.actors,
             characters: latest.characters,
@@ -696,6 +746,18 @@ export function createPackHost({
             events,
           }),
         );
+        const sent = sandbox.stage.inFlight;
+        if (sent !== null && sent !== before) {
+          // A new frame: its actors' characters as the pack knows them.
+          sandbox.frameCharacters = new Map(
+            [...sent.actors].flatMap((actorId) => {
+              const characterId =
+                sandbox.stage.actors.get(actorId)?.characterId;
+              return characterId === undefined ? [] : [[actorId, characterId]];
+            }),
+          );
+        }
+        post(sandbox, messages);
       }
     },
 

@@ -27,7 +27,9 @@
  *   window's size (its ResizePlugin would render on a resize); nothing
  *   takes the mouse (no hit areas, so a cursor over a character gets
  *   click-through back); the data attributes say `context=lost` and
- *   nothing drawn, no sprite and no particle.
+ *   nothing drawn, no sprite, no bitmap and no particle. The packs'
+ *   bitmaps stay as they are (none closed): PixiJS uploads them again from
+ *   their ImageBitmaps once the context is back.
  * - Restored: PixiJS follows the window's size again, the world follows
  *   StageView again, and the canvas follows the view (follow: the render
  *   loop and the next draw).
@@ -199,6 +201,7 @@ export function createContextStage<V extends WorldView>({
       input.setAreas([]);
       show('drawnActors', '0');
       show('drawnSprites', '0');
+      show('drawnBitmaps', '0');
       show('particleEmitters', '0');
       show('liveParticles', '0');
       show('drawnEmitters', '0');

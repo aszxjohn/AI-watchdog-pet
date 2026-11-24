@@ -24,9 +24,10 @@ import { z } from './zod-setup';
  * 3. The Worker bootstrap reports on the port how it went (SandboxReport);
  *    the pack's `stage.*` calls come on the same port.
  * 4. From then on (Story 3.6) the overlay sends the pack its stage messages
- *    on that port, and the bootstrap answers each `frame` with the pack's
- *    `draw`, or with `sandbox.no-draw` when the pack gave none it could
- *    send.
+ *    on that port (before `init`, the bootstrap alone may get one
+ *    SandboxBitmapCharactersMessage), and the bootstrap answers each
+ *    `frame` with the pack's `draw`, its ImageBitmaps transferred, or with
+ *    `sandbox.no-draw` when the pack gave none it could send.
  * 5. The overlay writes what happened to the run log (`packs:log`,
  *    PackLogEntry).
  *
@@ -56,6 +57,26 @@ export function sandboxLoadMessage(source: string): SandboxLoadMessage {
 /** What the iframe posts its Worker, once, with the overlay's port. */
 export interface SandboxPortMessage {
   readonly type: 'port';
+}
+
+/**
+ * What pack-host posts the Worker on the port before the pack's `init`
+ * (Story 3.6's last part), when the pack has characters with
+ * `advancedBitmap`: their ids, which `stage.canvas` then answers for. Its
+ * `type` starts with SANDBOX_REPORT_PREFIX, so the bootstrap takes it
+ * before routing the stage's messages and the pack never sees it; one
+ * with any other key is ignored.
+ */
+export interface SandboxBitmapCharactersMessage {
+  readonly type: 'sandbox.bitmap-characters';
+  readonly characterIds: readonly string[];
+}
+
+/** The SandboxBitmapCharactersMessage for `characterIds`. */
+export function sandboxBitmapCharactersMessage(
+  characterIds: readonly string[],
+): SandboxBitmapCharactersMessage {
+  return { type: 'sandbox.bitmap-characters', characterIds: [...characterIds] };
 }
 
 /**
@@ -159,12 +180,16 @@ export const SANDBOX_FAULTS = ['error', 'unhandled-rejection'] as const;
 /**
  * Why the bootstrap answered a `frame` with no `draw` (Story 3.6): the
  * pack's handlers have no `frame` function (`no-frame-handler`), reading
- * or calling it threw (`frame-threw`), what it returned cannot be sent
- * (`draw-not-cloneable`: a function, a promise…), the `draw` would be over
- * DRAW_MAX_BYTES (`draw-too-large`) or DRAW_MAX_COMMANDS
- * (`draw-too-many-commands`), measured before it is posted; or the
- * `frame` itself does not fit the pack API's schema, its `seq` readable
- * (`invalid-frame`: the pack never sees it).
+ * or calling it threw (`frame-threw`), it returned nothing or what it
+ * returned cannot be copied or sent (`draw-not-cloneable`: an undefined,
+ * a function, a Map, a promise, lists nested too deep, a bitmap sent
+ * before…), the `draw` would be over DRAW_MAX_BYTES (`draw-too-large`)
+ * or DRAW_MAX_COMMANDS, or hold more different ImageBitmaps than the
+ * pack has own actors
+ * (`draw-too-many-commands`; the bitmaps since Story 3.6's last part),
+ * measured before it is posted; or the `frame` itself does not fit the
+ * pack API's schema, its `seq` readable (`invalid-frame`: the pack never
+ * sees it).
  */
 export const SANDBOX_NO_DRAW_REASONS = [
   'no-frame-handler',
@@ -177,7 +202,11 @@ export const SANDBOX_NO_DRAW_REASONS = [
 
 export type SandboxNoDrawReason = (typeof SANDBOX_NO_DRAW_REASONS)[number];
 
-/** The start of every SandboxReport's `type` (a `stage.*` call never has it). */
+/**
+ * The start of every SandboxReport's `type` (a `stage.*` call never has
+ * it), and of pack-host's own messages to the bootstrap (a stage message
+ * never has it).
+ */
 export const SANDBOX_REPORT_PREFIX = 'sandbox.';
 
 /**
@@ -274,8 +303,14 @@ export type SandboxDestroyReason = (typeof SANDBOX_DESTROY_REASONS)[number];
  * `frame` on an image, or missing from or not in its spritesheet
  * (`unknown-frame`), a `seq` that is not the `frame` the pack is answering
  * (`stale-draw`), more than PARTICLE_EMITTERS_MAX `particles` commands
- * (`too-many-emitters`, Story 3.6's last part); and the bootstrap's
- * SandboxNoDrawReason for a `frame` that got no `draw`.
+ * (`too-many-emitters`, Story 3.6's second last part); a `bitmap` for an
+ * actor whose character has no `advancedBitmap` (`bitmap-not-allowed`),
+ * whose `image` is not an ImageBitmap (`bitmap-not-image`), wider or
+ * higher than BITMAP_MAX_SIDE (`bitmap-too-large`), or one too many: a
+ * second for one actor, one image in two commands, or over
+ * BITMAP_MAX_PER_SECOND for its actor (`too-many-bitmaps`; these four
+ * since Story 3.6's last part); and the bootstrap's SandboxNoDrawReason
+ * for a `frame` that got no `draw`.
  */
 export const PACK_MESSAGE_DROP_REASONS = [
   'rate-limited',
@@ -289,19 +324,14 @@ export const PACK_MESSAGE_DROP_REASONS = [
   'unknown-frame',
   'stale-draw',
   'too-many-emitters',
+  'bitmap-not-allowed',
+  'bitmap-not-image',
+  'bitmap-too-large',
+  'too-many-bitmaps',
   ...SANDBOX_NO_DRAW_REASONS,
 ] as const;
 
 export type PackMessageDropReason = (typeof PACK_MESSAGE_DROP_REASONS)[number];
-
-/**
- * The draw commands the stage does not draw yet (Story 3.6): it skips them
- * and draws the rest of the `draw` (particles are drawn since Story 3.6's
- * second last part; bitmaps come with its last part).
- */
-export const SKIPPED_DRAW_COMMANDS = ['bitmap'] as const;
-
-export type SkippedDrawCommand = (typeof SKIPPED_DRAW_COMMANDS)[number];
 
 /**
  * Why the overlay draws none of a pack's actors, or not all of their
@@ -332,9 +362,6 @@ export type PackNotDrawnReason = (typeof PACK_NOT_DRAWN_REASONS)[number];
  * - `sandbox-skipped`: it has an actor but gets no sandbox;
  * - `messages-dropped`: `count` messages dropped for `reason` since the
  *   last such line;
- * - `commands-skipped` (Story 3.6): its `draw`s have `command` commands
- *   (only `bitmap` now), which the stage skips (once per sandbox and
- *   command type);
  * - `not-drawn` (Story 3.6): its actors, or some of their sprites, are not
  *   drawn, and why (once per pack and reason, until that changes).
  */
@@ -373,11 +400,6 @@ export const packLogEntrySchema = z.discriminatedUnion('kind', [
     packId: packIdSchema,
     reason: z.enum(PACK_MESSAGE_DROP_REASONS),
     count: z.int().positive(),
-  }),
-  z.strictObject({
-    kind: z.literal('commands-skipped'),
-    packId: packIdSchema,
-    command: z.enum(SKIPPED_DRAW_COMMANDS),
   }),
   z.strictObject({
     kind: z.literal('not-drawn'),

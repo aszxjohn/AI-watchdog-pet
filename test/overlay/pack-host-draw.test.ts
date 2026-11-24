@@ -4,12 +4,15 @@
  * iframes, a fake main, fake looks and a fake clock, what each tick posts
  * to a ready sandbox, which draws it keeps, and what it logs.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { packLook, type PackLook } from '../../src/overlay/looks';
 import {
+  BITMAP_WINDOW_MS,
   checkDraw,
+  closeBitmaps,
   countDrawCommands,
   countEmitters,
+  createBitmapWindow,
   type DrawCheckLook,
 } from '../../src/overlay/pack-host/draw-rules';
 import {
@@ -17,12 +20,17 @@ import {
   type PackHostApi,
   type SandboxFrameHandlers,
 } from '../../src/overlay/pack-host/host';
+import { bitmapCharactersOf } from '../../src/sandbox/worker-bootstrap';
 import {
+  BITMAP_MAX_PER_SECOND,
+  BITMAP_MAX_SIDE,
   DRAW_MAX_BYTES,
   DRAW_MAX_COMMANDS,
   PACK_DROP_LOG_INTERVAL_MS,
   PACK_MESSAGE_RATE_LIMIT,
   PARTICLE_EMITTERS_MAX,
+  SANDBOX_IDLE_MS,
+  TICK_HZ,
 } from '../../src/shared/constants';
 import {
   manifestSchema,
@@ -34,9 +42,11 @@ import type { StageActor } from '../../src/shared/pool';
 import {
   type PackLogEntry,
   packLogEntrySchema,
+  sandboxBitmapCharactersMessage,
 } from '../../src/shared/sandbox';
 import type { StageCharacters, StageView } from '../../src/shared/stage-view';
 import { contractManifest } from '../helpers/awpet';
+import { FakeImageBitmap, stubImageBitmap } from '../helpers/fake-bitmaps';
 import { fakeClock } from '../helpers/fake-clock';
 
 const MANIFEST: PackManifest = manifestSchema.parse(contractManifest());
@@ -68,6 +78,25 @@ function lookOf(packId: string, version = '1.0.0'): PackLook {
 }
 
 const LOOK: DrawCheckLook = lookOf('alpha-pack');
+
+/** The contract pack's look, its probe-one with advancedBitmap. */
+function bitmapLookOf(packId: string, version = '1.0.0'): PackLook {
+  return packLook(
+    packId,
+    version,
+    {
+      ...MANIFEST,
+      id: packId,
+      version,
+      characters: MANIFEST.characters.map((character) =>
+        character.id === 'probe-one'
+          ? { ...character, advancedBitmap: true }
+          : character,
+      ),
+    },
+    { 'probe-two-sheet': SHEET },
+  );
+}
 
 const SPRITE = { type: 'sprite', asset: 'probe-one-plain', x: -30, y: -110 };
 const FRAMED = {
@@ -112,7 +141,6 @@ describe('I/O matrix', () => {
         ['a1', [SPRITE]],
         ['a2', [FRAMED, { ...FRAMED, frame: 'eyes-shut' }]],
       ]),
-      skipped: new Set(),
     });
   });
 
@@ -191,23 +219,6 @@ describe('I/O matrix', () => {
     expect(checkDraw(data, FRAME_ACTORS, LOOK)).toStrictEqual({
       ok: false,
       reason,
-    });
-  });
-
-  it('bitmap 照舊: bitmap commands are left out and named; the rest, particles too, is kept in the pack’s order', () => {
-    expect(
-      checkDraw(
-        draw({ a1: [PARTICLES, SPRITE], a2: [BITMAP] }),
-        FRAME_ACTORS,
-        LOOK,
-      ),
-    ).toStrictEqual({
-      ok: true,
-      actors: new Map([
-        ['a1', [PARTICLES, SPRITE]],
-        ['a2', []],
-      ]),
-      skipped: new Set(['bitmap']),
     });
   });
 
@@ -393,7 +404,13 @@ interface FakeFrame {
   removed: boolean;
 }
 
-function setup(options: { looks?: boolean } = {}) {
+function setup(
+  options: {
+    looks?: boolean;
+    /** ALPHA's probe-one has advancedBitmap (bitmapLookOf). */
+    bitmap?: boolean;
+  } = {},
+) {
   const clock = fakeClock();
   const logs: PackLogEntry[] = [];
   const frames = new Map<string, FakeFrame>();
@@ -422,7 +439,10 @@ function setup(options: { looks?: boolean } = {}) {
     options.looks === false
       ? []
       : [
-          [ALPHA, lookOf(ALPHA)],
+          [
+            ALPHA,
+            options.bitmap === true ? bitmapLookOf(ALPHA) : lookOf(ALPHA),
+          ],
           [BRAVO, lookOf(BRAVO)],
         ],
   );
@@ -435,7 +455,11 @@ function setup(options: { looks?: boolean } = {}) {
         return {
           hand() {},
           post(message) {
-            expect(stageMessageSchema.safeParse(message).success).toBe(true);
+            if (!stageMessageSchema.safeParse(message).success) {
+              // pack-host's own message, exactly as the bootstrap takes it:
+              // `type` and a list of strings `characterIds`, nothing else.
+              expect(bitmapCharactersOf(message)).toBeDefined();
+            }
             frame.posted.push(structuredClone(message));
           },
           remove() {
@@ -787,27 +811,6 @@ describe('I/O matrix', () => {
     },
   );
 
-  it('bitmap 照舊: bitmaps are left out of the draw, the rest (particles too) is drawn, and bitmap is logged once per pack', async () => {
-    const t = setup();
-    await showReady(t, [actor('a1', ALPHA)]);
-    const alpha = frameOf(t, ALPHA);
-    t.logs.length = 0;
-    for (let seq = 0; seq < 3; seq += 1) {
-      t.host.tick({ t: seq * 33, events: [] });
-      alpha.handlers.onMessage(
-        draw({ a1: [PARTICLES, SPRITE, ...(seq === 2 ? [BITMAP] : [])] }, seq),
-      );
-    }
-
-    expect(t.host.drawOf(ALPHA)?.actors.get('a1')).toStrictEqual([
-      PARTICLES,
-      SPRITE,
-    ]);
-    expect(t.logs).toStrictEqual([
-      { kind: 'commands-skipped', packId: ALPHA, command: 'bitmap' },
-    ]);
-  });
-
   it('漏回: a valid draw that leaves an actor out replaces the latest one; that actor has no commands in it', async () => {
     const t = setup();
     await showReady(t, [actor('a1', ALPHA), actor('a2', ALPHA)]);
@@ -865,5 +868,653 @@ describe('I/O matrix', () => {
       packs: { installed: [stagePack(ALPHA, '1.1.0'), stagePack(BRAVO)] },
     });
     expect(t.host.drawOf(ALPHA)).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bitmaps (Story 3.6's last part). FakeImageBitmap is the global
+// ImageBitmap here; a1 plays probe-one, which has advancedBitmap in
+// BITMAP_LOOK, and a2 probe-two, which has not.
+
+const BITMAP_LOOK: DrawCheckLook = bitmapLookOf(ALPHA);
+
+const CHARACTERS: Readonly<Record<string, string>> = {
+  a1: 'probe-one',
+  a2: 'probe-two',
+};
+
+function bitmapOf(image: object, more: Record<string, unknown> = {}) {
+  return {
+    type: 'bitmap',
+    image,
+    x: -32,
+    y: -100,
+    width: 64,
+    height: 64,
+    ...more,
+  };
+}
+
+/** checkDraw with BITMAP_LOOK, the characters above and `allowance`. */
+function checkBitmaps(
+  data: unknown,
+  allowance: (actorId: string) => number = () => BITMAP_MAX_PER_SECOND,
+) {
+  return checkDraw(data, FRAME_ACTORS, BITMAP_LOOK, {
+    characterOf: (actorId) => CHARACTERS[actorId],
+    bitmapAllowance: allowance,
+  });
+}
+
+describe('I/O matrix', () => {
+  beforeEach(() => {
+    stubImageBitmap();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('bitmap 出現: a bitmap of an actor whose character has advancedBitmap passes, kept with the actor’s other commands in the pack’s order', () => {
+    const image = new FakeImageBitmap(64, 64);
+    const bitmap = bitmapOf(image);
+
+    const check = checkBitmaps(
+      draw({ a1: [SPRITE, bitmap, PARTICLES], a2: [SPRITE] }),
+    );
+
+    expect(check).toStrictEqual({
+      ok: true,
+      actors: new Map([
+        ['a1', [SPRITE, bitmap, PARTICLES]],
+        ['a2', [SPRITE]],
+      ]),
+    });
+    expect(check.ok && check.actors.get('a1')?.[1]).toMatchObject({ image });
+    expect(
+      check.ok &&
+        (check.actors.get('a1')?.[1] as { image: unknown } | undefined)?.image,
+    ).toBe(image);
+  });
+
+  it(`位元組: an ImageBitmap counts as {} (2 bytes) in the ${DRAW_MAX_BYTES}-byte limit`, () => {
+    const bitmap = bitmapOf(
+      new FakeImageBitmap(BITMAP_MAX_SIDE, BITMAP_MAX_SIDE),
+    );
+    // A sprite's frame name has no length limit of its own (on a single
+    // image it fails later, as unknown-frame).
+    const at = (length: number) =>
+      draw({ a1: [bitmap, { ...SPRITE, frame: 'x'.repeat(length) }] });
+    const bytes = (data: unknown) =>
+      JSON.stringify(data, (_key, value: unknown) =>
+        value instanceof FakeImageBitmap ? {} : value,
+      ).length;
+    const pad = DRAW_MAX_BYTES - bytes(at(0));
+    expect(bytes(at(pad))).toBe(DRAW_MAX_BYTES);
+
+    // The bytes have passed: its frame fails later.
+    expect(checkBitmaps(at(pad))).toStrictEqual({
+      ok: false,
+      reason: 'unknown-frame',
+    });
+    expect(checkBitmaps(at(pad + 1))).toStrictEqual({
+      ok: false,
+      reason: 'too-large',
+    });
+  });
+
+  it.each<
+    [string, Record<string, unknown>, (actorId: string) => string | undefined]
+  >([
+    [
+      'a character without advancedBitmap',
+      { a2: [bitmapOf(new FakeImageBitmap())] },
+      (id) => CHARACTERS[id],
+    ],
+    [
+      'an actor whose character the frame did not name',
+      { a1: [bitmapOf(new FakeImageBitmap())] },
+      () => undefined,
+    ],
+    [
+      'a character the manifest does not have',
+      { a1: [bitmapOf(new FakeImageBitmap())] },
+      () => 'probe-three',
+    ],
+  ])(
+    '沒宣告的角色: a bitmap for %s drops the draw whole (bitmap-not-allowed)',
+    (_label, actors, characterOf) => {
+      expect(
+        checkDraw(draw(actors), FRAME_ACTORS, BITMAP_LOOK, { characterOf }),
+      ).toStrictEqual({ ok: false, reason: 'bitmap-not-allowed' });
+    },
+  );
+
+  it('沒宣告的角色: without the frame’s characters (checkDraw’s default) no bitmap is allowed', () => {
+    expect(
+      checkDraw(
+        draw({ a1: [bitmapOf(new FakeImageBitmap())] }),
+        FRAME_ACTORS,
+        BITMAP_LOOK,
+      ),
+    ).toStrictEqual({ ok: false, reason: 'bitmap-not-allowed' });
+  });
+
+  it('不是 ImageBitmap: a plain object as image drops the draw whole (bitmap-not-image); one that is not plain data at all is invalid first', () => {
+    expect(checkBitmaps(draw({ a1: [bitmapOf({})] }))).toStrictEqual({
+      ok: false,
+      reason: 'bitmap-not-image',
+    });
+    expect(
+      checkBitmaps(
+        draw({ a1: [bitmapOf({ width: 8, height: 8, close() {} })] }),
+      ),
+    ).toStrictEqual({ ok: false, reason: 'invalid' });
+    expect(checkBitmaps(draw({ a1: [bitmapOf(new Map())] }))).toStrictEqual({
+      ok: false,
+      reason: 'invalid',
+    });
+  });
+
+  it(`尺寸: an ImageBitmap wider or higher than ${BITMAP_MAX_SIDE} drops the draw whole (bitmap-too-large); ${BITMAP_MAX_SIDE} itself passes`, () => {
+    for (const [width, height] of [
+      [BITMAP_MAX_SIDE + 1, 1],
+      [1, BITMAP_MAX_SIDE + 1],
+    ]) {
+      expect(
+        checkBitmaps(
+          draw({ a1: [bitmapOf(new FakeImageBitmap(width, height))] }),
+        ),
+      ).toStrictEqual({ ok: false, reason: 'bitmap-too-large' });
+    }
+    expect(
+      checkBitmaps(
+        draw({
+          a1: [bitmapOf(new FakeImageBitmap(BITMAP_MAX_SIDE, BITMAP_MAX_SIDE))],
+        }),
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('張數: two bitmaps for one actor, or one image in two commands, drop the draw whole (too-many-bitmaps)', () => {
+    const one = new FakeImageBitmap();
+    expect(
+      checkBitmaps(
+        draw({ a1: [bitmapOf(one), bitmapOf(new FakeImageBitmap())] }),
+      ),
+    ).toStrictEqual({ ok: false, reason: 'too-many-bitmaps' });
+    const both = bitmapLookOf(ALPHA);
+    expect(
+      checkDraw(
+        draw({ a1: [bitmapOf(one)], a2: [bitmapOf(one)] }),
+        FRAME_ACTORS,
+        both,
+        {
+          // Both actors' characters may: only the shared image is wrong.
+          characterOf: () => 'probe-one',
+        },
+      ),
+    ).toStrictEqual({ ok: false, reason: 'too-many-bitmaps' });
+  });
+
+  it('張數: a bitmap of an actor with no allowance left (its window of BITMAP_MAX_PER_SECOND) drops the draw whole (too-many-bitmaps); the allowance is asked for that actor', () => {
+    const asked: string[] = [];
+    expect(
+      checkBitmaps(
+        draw({ a1: [bitmapOf(new FakeImageBitmap())] }),
+        (actorId: string) => {
+          asked.push(actorId);
+          return 0;
+        },
+      ),
+    ).toStrictEqual({ ok: false, reason: 'too-many-bitmaps' });
+    expect(asked).toStrictEqual(['a1']);
+    expect(
+      checkBitmaps(draw({ a1: [bitmapOf(new FakeImageBitmap())] }), () => 1).ok,
+    ).toBe(true);
+  });
+
+  it('the bitmap checks are the per-command step: invalid, too-many-emitters and not-own-actor come first; among an actor’s commands the first that fails decides', () => {
+    const image = new FakeImageBitmap();
+    expect(checkBitmaps(draw({ a2: [bitmapOf(image)], b1: [] }))).toStrictEqual(
+      { ok: false, reason: 'not-own-actor' },
+    );
+    expect(
+      checkBitmaps(draw({ a2: [bitmapOf(image), { type: 'sprite' }] })),
+    ).toStrictEqual({ ok: false, reason: 'invalid' });
+    expect(
+      checkBitmaps(
+        draw({ a2: [bitmapOf(image), ...emitters(PARTICLE_EMITTERS_MAX + 1)] }),
+      ),
+    ).toStrictEqual({ ok: false, reason: 'too-many-emitters' });
+    expect(
+      checkBitmaps(
+        draw({ a1: [{ ...SPRITE, asset: 'nothing-here' }, bitmapOf({})] }),
+      ),
+    ).toStrictEqual({ ok: false, reason: 'unknown-asset' });
+    expect(
+      checkBitmaps(
+        draw({ a1: [bitmapOf({}), { ...SPRITE, asset: 'nothing-here' }] }),
+      ),
+    ).toStrictEqual({ ok: false, reason: 'bitmap-not-image' });
+  });
+
+  it('closeBitmaps closes every ImageBitmap anywhere in a message once, in lists, objects, Maps and Sets, cycles included', () => {
+    const images = Array.from({ length: 5 }, () => new FakeImageBitmap());
+    const cycle: Record<string, unknown> = { image: images[4] };
+    cycle.self = cycle;
+    closeBitmaps({
+      type: 'draw',
+      actors: {
+        a1: [bitmapOf(images[0] as object), bitmapOf(images[0] as object)],
+      },
+      deep: [[{ x: images[1] }]],
+      map: new Map<unknown, unknown>([[images[2], 1]]),
+      set: new Set([images[3]]),
+      cycle,
+      bytes: new Uint8Array(4),
+    });
+    expect(images.map((image) => image.closes)).toStrictEqual([1, 1, 1, 1, 1]);
+    closeBitmaps(null);
+    closeBitmaps('draw');
+  });
+});
+
+describe('the bitmap window', () => {
+  it(`counts each actor’s bitmaps of the last ${BITMAP_WINDOW_MS} ms (one second): ${BITMAP_MAX_PER_SECOND} (the ${TICK_HZ} ticks a second and 6 more for jitter) in it leave no allowance; as they leave it, it comes back`, () => {
+    const clock = fakeClock();
+    const window = createBitmapWindow(clock.monotonic);
+    expect(BITMAP_WINDOW_MS).toBe(1000);
+    expect(BITMAP_MAX_PER_SECOND).toBe(TICK_HZ + 6);
+
+    for (let i = 0; i < BITMAP_MAX_PER_SECOND; i += 1) {
+      expect(window.allowance('a1')).toBe(BITMAP_MAX_PER_SECOND - i);
+      window.take(['a1']);
+      clock.advance(10);
+    }
+    expect(window.allowance('a1')).toBe(0);
+    expect(window.allowance('a2')).toBe(BITMAP_MAX_PER_SECOND);
+
+    // The first was taken BITMAP_MAX_PER_SECOND * 10 ms ago: it leaves the
+    // window exactly BITMAP_WINDOW_MS after it was taken.
+    const since = BITMAP_MAX_PER_SECOND * 10;
+    clock.advance(BITMAP_WINDOW_MS - since - 1);
+    expect(window.allowance('a1')).toBe(0);
+    clock.advance(1);
+    expect(window.allowance('a1')).toBe(1);
+    clock.advance(BITMAP_WINDOW_MS);
+    expect(window.allowance('a1')).toBe(BITMAP_MAX_PER_SECOND);
+  });
+
+  it('a pack drawing one every tick, its answers coming back as late as a tick, is never out of allowance', () => {
+    const clock = fakeClock();
+    const window = createBitmapWindow(clock.monotonic);
+    let at = 0;
+    for (let tick = 0; tick < 10 * TICK_HZ; tick += 1) {
+      // Each answer comes 1 to 30 ms after its tick, on no pattern.
+      const due = (tick * 1000) / TICK_HZ + 1 + ((tick * 7919) % 30);
+      clock.advance(Math.max(0, due - at));
+      at = Math.max(at, due);
+      expect(window.allowance('a1'), `tick ${tick}`).toBeGreaterThan(0);
+      window.take(['a1']);
+    }
+  });
+});
+
+describe('I/O matrix', () => {
+  beforeEach(() => {
+    stubImageBitmap();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** A ready ALPHA (bitmap look) with a1 (probe-one) and a2 (probe-two), its first frame out. */
+  async function bitmapHost() {
+    const t = setup({ bitmap: true });
+    await showReady(t, [actor('a1', ALPHA), actor('a2', ALPHA, 'probe-two')]);
+    t.host.tick({ t: 0, events: [] });
+    return { ...t, alpha: frameOf(t, ALPHA) };
+  }
+
+  it('沒宣告的角色: before its init a pack with advancedBitmap characters gets their ids, for its bootstrap alone, once; a pack without gets nothing more', async () => {
+    const t = await bitmapHost();
+
+    expect(t.alpha.posted[0]).toStrictEqual(
+      sandboxBitmapCharactersMessage(['probe-one']),
+    );
+    expect(types(t.alpha)).toStrictEqual([
+      'sandbox.bitmap-characters',
+      'init',
+      'frame',
+    ]);
+    t.alpha.handlers.onMessage(draw({}, 0));
+    t.host.tick({ t: 33, events: [] });
+    expect(
+      types(t.alpha).filter((type) => type.startsWith('sandbox.')),
+    ).toHaveLength(1);
+  });
+
+  it('bitmap 出現: a draw with a bitmap that passes is the latest draw, its ImageBitmap open', async () => {
+    const t = await bitmapHost();
+    const image = new FakeImageBitmap(64, 64);
+
+    t.alpha.handlers.onMessage(
+      draw({ a1: [bitmapOf(image)], a2: [SPRITE] }, 0),
+    );
+
+    expect(t.host.drawOf(ALPHA)?.actors.get('a1')).toStrictEqual([
+      bitmapOf(image),
+    ]);
+    expect(image.closes).toBe(0);
+    expect(
+      t.logs.filter((entry) => entry.kind === 'messages-dropped'),
+    ).toStrictEqual([]);
+  });
+
+  it.each<[string, (images: FakeImageBitmap[]) => unknown, string]>([
+    [
+      'a bitmap for probe-two (沒宣告的角色)',
+      ([one]) => ({ a2: [bitmapOf(one as object)] }),
+      'bitmap-not-allowed',
+    ],
+    [
+      'a plain object as image (不是 ImageBitmap)',
+      () => ({ a1: [bitmapOf({})] }),
+      'bitmap-not-image',
+    ],
+    [
+      `a bitmap wider than ${BITMAP_MAX_SIDE} (尺寸)`,
+      () => ({ a1: [bitmapOf(new FakeImageBitmap(BITMAP_MAX_SIDE + 1, 8))] }),
+      'bitmap-too-large',
+    ],
+    [
+      'two bitmaps for one actor (張數)',
+      ([one, two]) => ({
+        a1: [bitmapOf(one as object), bitmapOf(two as object)],
+      }),
+      'too-many-bitmaps',
+    ],
+    [
+      'a sprite of an unknown asset beside a bitmap',
+      ([one]) => ({
+        a1: [bitmapOf(one as object)],
+        a2: [{ ...SPRITE, asset: 'elsewhere' }],
+      }),
+      'unknown-asset',
+    ],
+  ])(
+    '不合規: a draw with %s is dropped whole with one line naming the pack, and every ImageBitmap in it closed',
+    async (_label, actors, reason) => {
+      const t = await bitmapHost();
+      const images = [new FakeImageBitmap(), new FakeImageBitmap()];
+      const data = draw(actors(images) as Record<string, unknown>, 0);
+      const inside = [
+        ...JSON.stringify(data, (_key, value: unknown) =>
+          value instanceof FakeImageBitmap
+            ? `#${images.indexOf(value)}`
+            : value,
+        ).matchAll(/"#(\d)"/g),
+      ].map((match) => Number(match[1]));
+      t.logs.length = 0;
+
+      t.alpha.handlers.onMessage(data);
+
+      expect(t.logs).toStrictEqual([
+        { kind: 'messages-dropped', packId: ALPHA, reason, count: 1 },
+      ]);
+      expect(t.host.drawOf(ALPHA)).toBeUndefined();
+      for (const index of new Set(inside)) {
+        expect(images[index]?.closes).toBe(1);
+      }
+    },
+  );
+
+  it('張數: one image in two actors’ commands drops the draw, closing it once', async () => {
+    const t = setup({ bitmap: true });
+    await showReady(t, [actor('a1', ALPHA), actor('a3', ALPHA)]);
+    t.host.tick({ t: 0, events: [] });
+    const image = new FakeImageBitmap();
+
+    frameOf(t, ALPHA).handlers.onMessage(
+      draw({ a1: [bitmapOf(image)], a3: [bitmapOf(image)] }, 0),
+    );
+
+    expect(t.logs.at(-1)).toMatchObject({ reason: 'too-many-bitmaps' });
+    expect(image.closes).toBe(1);
+  });
+
+  it('不合規: a draw refused for the message rate, or stale, has its ImageBitmaps closed too', async () => {
+    const t = await bitmapHost();
+    const stale = new FakeImageBitmap();
+    t.alpha.handlers.onMessage(draw({ a1: [bitmapOf(stale)] }, 9));
+    expect(stale.closes).toBe(1);
+
+    for (let i = 0; i < PACK_MESSAGE_RATE_LIMIT; i += 1) {
+      t.alpha.handlers.onMessage({
+        type: 'stage.hold',
+        actorId: 'a1',
+        on: true,
+      });
+    }
+    const limited = new FakeImageBitmap();
+    t.alpha.handlers.onMessage(draw({ a1: [bitmapOf(limited)] }, 0));
+    expect(limited.closes).toBe(1);
+    expect(
+      t.logs
+        .filter((entry) => entry.kind === 'messages-dropped')
+        .map((entry) => (entry as { reason: string }).reason),
+    ).toStrictEqual(['stale-draw', 'rate-limited']);
+  });
+
+  it('不合規: a message that comes once its sandbox failed or was removed has its ImageBitmaps closed', async () => {
+    const t = await bitmapHost();
+    t.alpha.handlers.onMessage({ type: 'sandbox.fault', fault: 'error' });
+    const late = new FakeImageBitmap();
+
+    t.alpha.handlers.onMessage(draw({ a1: [bitmapOf(late)] }, 0));
+
+    expect(late.closes).toBe(1);
+  });
+
+  it(`張數: ${BITMAP_MAX_PER_SECOND} bitmaps of one actor within the window pass; one more drops the draw (too-many-bitmaps) and is closed; another actor is counted apart; once the window moved on, they pass again`, async () => {
+    const t = setup({ bitmap: true });
+    // a1 and a3 both play probe-one, which has advancedBitmap.
+    await showReady(t, [actor('a1', ALPHA), actor('a3', ALPHA)]);
+    t.host.tick({ t: 0, events: [] });
+    const alpha = frameOf(t, ALPHA);
+    let seq = 0;
+    /** Answers the frame in flight with `actors`; the next tick is 10 ms on. */
+    const answer = (actors: Record<string, unknown>): void => {
+      alpha.handlers.onMessage(draw(actors, seq));
+      seq += 1;
+      t.clock.advance(10);
+      t.host.tick({ t: seq * 10, events: [] });
+    };
+    const imageOf = (actorId: string): unknown =>
+      (t.host.drawOf(ALPHA)?.actors.get(actorId)?.[0] as { image?: unknown })
+        ?.image;
+    const kept: FakeImageBitmap[] = [];
+    for (let i = 0; i < BITMAP_MAX_PER_SECOND; i += 1) {
+      const image = new FakeImageBitmap();
+      kept.push(image);
+      answer({ a1: [bitmapOf(image)], a3: [] });
+      expect(imageOf('a1')).toBe(image);
+    }
+    t.logs.length = 0;
+    const over = new FakeImageBitmap();
+    answer({ a1: [bitmapOf(over)], a3: [] });
+
+    expect(t.logs).toStrictEqual([
+      {
+        kind: 'messages-dropped',
+        packId: ALPHA,
+        reason: 'too-many-bitmaps',
+        count: 1,
+      },
+    ]);
+    expect(over.closes).toBe(1);
+    expect(kept.every((image) => image.closes === 0)).toBe(true);
+    expect(imageOf('a1')).toBe(kept.at(-1));
+
+    // a3, in the same window: none of a1's count for it.
+    const other = new FakeImageBitmap();
+    answer({ a1: [], a3: [bitmapOf(other)] });
+    expect(imageOf('a3')).toBe(other);
+    expect(other.closes).toBe(0);
+
+    // The dropped one does not count; the window moves on.
+    t.clock.advance(BITMAP_WINDOW_MS);
+    const again = new FakeImageBitmap();
+    answer({ a1: [bitmapOf(again)], a3: [] });
+    expect(imageOf('a1')).toBe(again);
+    expect(again.closes).toBe(0);
+  });
+
+  it('抖動: a pack drawing a bitmap every tick, its answers bunched up by a stall (the second taken about 2 ticks late, the ticks after it at once, then back on the grid), is never judged too-many-bitmaps', async () => {
+    const t = await bitmapHost();
+    // The first frame went out now: the times below count from it.
+    const start = t.clock.monotonic();
+    const period = 1000 / TICK_HZ;
+    const at = (ms: number): void => {
+      t.clock.advance(start + ms - t.clock.monotonic());
+    };
+    const sent: FakeImageBitmap[] = [];
+    /** Answers the frame in flight at `ms` with a fresh bitmap for a1. */
+    const answerAt = (ms: number): void => {
+      at(ms);
+      const out = t.alpha.posted.findLast(
+        (message) => (message as { type: string }).type === 'frame',
+      ) as { seq: number };
+      const image = new FakeImageBitmap();
+      sent.push(image);
+      t.alpha.handlers.onMessage(
+        draw({ a1: [bitmapOf(image)], a2: [] }, out.seq),
+      );
+      const shown = t.host.drawOf(ALPHA)?.actors.get('a1')?.[0] as
+        | { image?: unknown }
+        | undefined;
+      expect(shown?.image, `the answer at ${ms} ms`).toBe(image);
+    };
+    const tickAt = (ms: number): void => {
+      at(ms);
+      t.host.tick({ t: ms, events: [] });
+    };
+
+    answerAt(3);
+    tickAt(period);
+    // The stage stalls until 99 ms: no tick at 2 periods, and the answer
+    // to the second frame waits until then. The late tick keeps its grid
+    // (world.ts), so the next comes at once.
+    answerAt(99);
+    tickAt(99);
+    answerAt(101);
+    tickAt(101);
+    answerAt(103);
+    // Back on the grid, each answer 3 ms after its tick, for 3 seconds.
+    for (let tick = 4; tick <= 3 * TICK_HZ; tick += 1) {
+      tickAt(tick * period);
+      answerAt(tick * period + 3);
+    }
+
+    expect(sent).toHaveLength(3 * TICK_HZ + 1);
+    expect(
+      t.logs.filter((entry) => entry.kind === 'messages-dropped'),
+    ).toStrictEqual([]);
+    expect(sent.every((image) => image.closes === 0)).toBe(true);
+  });
+
+  it('不合規: an ImageBitmap passed in a stage.* call (dropped as invalid, or for the message rate) is closed at once', async () => {
+    const t = await bitmapHost();
+    const asHold = new FakeImageBitmap();
+    const asShot = new FakeImageBitmap();
+    t.alpha.handlers.onMessage({
+      type: 'stage.hold',
+      actorId: 'a1',
+      on: asHold,
+    });
+    t.alpha.handlers.onMessage({
+      type: 'stage.fire',
+      actorId: 'a1',
+      target: 'a2',
+      object: { image: asShot },
+    });
+    expect([asHold.closes, asShot.closes]).toStrictEqual([1, 1]);
+
+    // Two messages so far: the rest of the rate, then one over it.
+    for (let i = 2; i < PACK_MESSAGE_RATE_LIMIT; i += 1) {
+      t.alpha.handlers.onMessage({
+        type: 'stage.hold',
+        actorId: 'a1',
+        on: true,
+      });
+    }
+    const limited = new FakeImageBitmap();
+    t.alpha.handlers.onMessage({
+      type: 'stage.face',
+      actorId: 'a1',
+      direction: limited,
+    });
+    expect(limited.closes).toBe(1);
+    expect(
+      t.logs
+        .filter((entry) => entry.kind === 'messages-dropped')
+        .map((entry) => (entry as { reason: string }).reason),
+    ).toStrictEqual(['invalid', 'rate-limited']);
+  });
+
+  it('釋放: a kept draw replaced by the next before it was shown, or gone with its sandbox, is left to the renderer and the garbage collector: pack-host closes none of its bitmaps', async () => {
+    const t = await bitmapHost();
+    const first = new FakeImageBitmap();
+    const second = new FakeImageBitmap();
+    t.alpha.handlers.onMessage(draw({ a1: [bitmapOf(first)] }, 0));
+    t.host.tick({ t: 33, events: [] });
+
+    t.alpha.handlers.onMessage(draw({ a1: [bitmapOf(second)] }, 1));
+    expect(t.host.drawOf(ALPHA)?.actors.get('a1')).toStrictEqual([
+      bitmapOf(second),
+    ]);
+    expect([first.closes, second.closes]).toStrictEqual([0, 0]);
+
+    t.alpha.handlers.onMessage({ type: 'sandbox.fault', fault: 'error' });
+    expect(t.host.drawOf(ALPHA)).toBeUndefined();
+    expect([first.closes, second.closes]).toStrictEqual([0, 0]);
+  });
+
+  it('沒宣告的角色: a sandbox made again (its actors left, it went idle, one came back) gets the bitmap characters again, before its init', async () => {
+    const t = await bitmapHost();
+    t.host.onView(view([]));
+    t.clock.advance(SANDBOX_IDLE_MS);
+    expect(t.alpha.removed).toBe(true);
+
+    await showReady(t, [actor('a3', ALPHA)]);
+    const again = frameOf(t, ALPHA);
+    expect(again).not.toBe(t.alpha);
+    t.host.tick({ t: SANDBOX_IDLE_MS, events: [] });
+
+    expect(types(again)).toStrictEqual([
+      'sandbox.bitmap-characters',
+      'init',
+      'frame',
+    ]);
+    expect(again.posted[0]).toStrictEqual(
+      sandboxBitmapCharactersMessage(['probe-one']),
+    );
+  });
+
+  it('加入與移出: a bitmap for an actor that left after its frame is still allowed (its character as that frame had it)', async () => {
+    const t = await bitmapHost();
+    t.host.onView(view([actor('a2', ALPHA, 'probe-two')]));
+    t.host.tick({ t: 33, events: [{ type: 'leave', actorId: 'a1' }] });
+    expect(types(t.alpha).at(-1)).toBe('despawn');
+    const image = new FakeImageBitmap();
+
+    t.alpha.handlers.onMessage(draw({ a1: [bitmapOf(image)], a2: [] }, 0));
+
+    expect(t.host.drawOf(ALPHA)?.actors.get('a1')).toStrictEqual([
+      bitmapOf(image),
+    ]);
+    expect(image.closes).toBe(0);
   });
 });

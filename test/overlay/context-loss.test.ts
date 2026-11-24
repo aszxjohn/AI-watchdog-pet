@@ -372,6 +372,8 @@ describe('I/O matrix', () => {
       context: 'lost',
       drawnActors: '0',
       drawnSprites: '0',
+      // The bitmaps too (Story 3.6's last part).
+      drawnBitmaps: '0',
       // The particles too (Story 3.6's second last part).
       particleEmitters: '0',
       liveParticles: '0',

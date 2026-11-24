@@ -15,6 +15,7 @@ import type { PackDraw } from '../../src/overlay/pack-host/host';
 import { createMissingLog } from '../../src/overlay/renderer/missing-log';
 import {
   buildScene,
+  hitAreaOf,
   sceneSprite,
   sceneSprites,
   type SceneInput,
@@ -39,6 +40,7 @@ import type {
   StageView,
 } from '../../src/shared/stage-view';
 import { contractManifest } from '../helpers/awpet';
+import { FakeImageBitmap } from '../helpers/fake-bitmaps';
 
 const ALPHA = 'alpha-pack';
 const BRAVO = 'bravo-pack';
@@ -602,6 +604,102 @@ describe('I/O matrix', () => {
     expect(scene.areas.map((area) => area.key)).toStrictEqual([
       'claude-code:a2',
     ]);
+  });
+
+  it('bitmap 出現: a drawn actor carries its bitmap command (its image, x, y, width, height); its sprites and emitters are as without it; one without has no bitmap', () => {
+    const image = new FakeImageBitmap(64, 64);
+    const bitmap: DrawnCommand = {
+      type: 'bitmap',
+      image,
+      x: -32,
+      y: -100,
+      width: 60,
+      height: 90,
+    };
+    const scene = buildScene(
+      input({
+        actors: [actor('a1', `${ALPHA}/probe-one`)],
+        draws: { [ALPHA]: drawOf({ a1: [SPRITE, bitmap, SPARKLE] }) },
+      }),
+    );
+    const plain = buildScene(
+      input({
+        actors: [actor('a1', `${ALPHA}/probe-one`)],
+        draws: { [ALPHA]: drawOf({ a1: [SPRITE, SPARKLE] }) },
+      }),
+    );
+
+    expect(scene.actors[0]?.bitmap).toStrictEqual({
+      image,
+      x: -32,
+      y: -100,
+      width: 60,
+      height: 90,
+    });
+    expect(scene.actors[0]?.bitmap?.image).toBe(image);
+    const { bitmap: _bitmap, ...rest } = scene.actors[0] ?? {};
+    expect(rest).toStrictEqual(plain.actors[0]);
+    expect(plain.actors[0] !== undefined && 'bitmap' in plain.actors[0]).toBe(
+      false,
+    );
+  });
+
+  it('hit area: an actor with only a bitmap takes the mouse once its bitmap texture is up (bitmapReady), over its hitbox × 大小, not before; one with only particles still takes none', () => {
+    const bitmap: DrawnCommand = {
+      type: 'bitmap',
+      image: new FakeImageBitmap(),
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+    };
+    const actors = [
+      actor('a1', `${ALPHA}/probe-one`),
+      actor('a2', `${ALPHA}/probe-one`),
+    ];
+    const asked: string[] = [];
+    const build = (up: boolean) =>
+      buildScene({
+        ...input({
+          actors,
+          draws: { [ALPHA]: drawOf({ a1: [bitmap], a2: [SPARKLE] }) },
+        }),
+        bitmapReady: (actorId) => {
+          asked.push(actorId);
+          return up;
+        },
+      });
+
+    expect(build(false).areas).toStrictEqual([]);
+    const scene = build(true);
+    expect(asked).toStrictEqual(['a1', 'a1']);
+    const a1 = scene.actors.find((each) => each.actorId === 'a1');
+    expect(a1).toBeDefined();
+    expect(scene.areas).toStrictEqual([
+      hitAreaOf(a1 as NonNullable<typeof a1>, {
+        x: -30,
+        y: -110,
+        width: 60,
+        height: 110,
+      }),
+    ]);
+    // Without bitmapReady (its default): no texture is up.
+    expect(
+      buildScene(
+        input({ actors, draws: { [ALPHA]: drawOf({ a1: [bitmap] }) } }),
+      ).areas,
+    ).toStrictEqual([]);
+  });
+
+  it('hit area: a bitmap texture still up from before does not give an actor whose draw has no bitmap any more the mouse', () => {
+    const scene = buildScene({
+      ...input({
+        actors: [actor('a1', `${ALPHA}/probe-one`)],
+        draws: { [ALPHA]: drawOf({ a1: [SPARKLE] }) },
+      }),
+      bitmapReady: () => true,
+    });
+    expect(scene.areas).toStrictEqual([]);
   });
 
   it('no canvas placed yet: nothing is drawn', () => {

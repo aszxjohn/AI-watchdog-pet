@@ -12,16 +12,18 @@
  *   origin can only be `*`; what is posted is the entry source alone.
  * - The only message pack-host takes from an iframe's window is exactly
  *   `{ type: 'worker-error' }`, and only from a window of its own iframes.
- * - post() (Story 3.6) posts a stage message on the kept end, once hand()
- *   has made it; before that, or once removed, it posts nothing.
+ * - post() (Story 3.6) posts a message on the kept end, once hand() has
+ *   made it; before that, or once removed, it posts nothing.
  * - remove() closes the kept end and removes the iframe; the Worker goes
- *   with its document.
+ *   with its document. A message that still comes on the kept end after it
+ *   goes to no one: its ImageBitmaps are closed (Story 3.6's last part).
  */
 import {
   isSandboxFrameNotice,
   SANDBOX_DOCUMENT_URL,
   type SandboxLoadMessage,
 } from '../../shared/sandbox';
+import { closeBitmaps } from './draw-rules';
 import type { SandboxFrame, SandboxFrames } from './host';
 
 /** The parts of a MessagePort pack-host keeps. */
@@ -141,7 +143,9 @@ export function createDomSandboxFrames<T, F extends SandboxIframeElement<T>>({
           const channel = createChannel();
           port = channel.port1;
           port.addEventListener('message', (event) => {
-            if (!removed) {
+            if (removed) {
+              closeBitmaps(event.data);
+            } else {
               handlers.onMessage(event.data);
             }
           });

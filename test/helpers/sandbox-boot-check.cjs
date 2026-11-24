@@ -12,6 +12,10 @@
 // also hands the pack an `init` with one own actor and one other pack's,
 // then a `frame`, through the bootstrap's own routing (Story 3.6, after
 // lockdown, as in the Worker) and records what it answered (`replies`).
+// That own actor's character (probe-two) is told as one with
+// advancedBitmap (Story 3.6's last part), so a `stage.canvas` for it fails
+// only for want of an OffscreenCanvas, which neither Node nor Electron's
+// Node mode has (`offscreenCanvas` records its `typeof`).
 //
 //   <electron or node> sandbox-boot-check.cjs <bootstrap.js> <ses.js> <entry.js> <out.json> [print]
 const fs = require('node:fs');
@@ -38,10 +42,11 @@ try {
     console.log('a line before lockdown');
   }
   const posted = [];
-  const ownActors = new Set();
+  const ownActors = new Map();
   const outcome = worker.boot(fs.readFileSync(entryFile, 'utf8'), {
     counter,
     ownActors,
+    bitmapCharacters: new Set(['probe-two']),
     post: (call) => {
       posted.push(call);
     },
@@ -92,7 +97,8 @@ try {
     posted,
     consoleLines,
     replies,
-    ownActors: [...ownActors],
+    ownActors: [...ownActors.keys()],
+    offscreenCanvas: typeof OffscreenCanvas,
     electron: process.versions.electron ?? null,
   };
 } catch (error) {

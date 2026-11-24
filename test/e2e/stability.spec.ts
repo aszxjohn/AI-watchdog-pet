@@ -41,9 +41,11 @@ import {
   closeStage,
   LAUNCH_TIMEOUT_MS,
   launchStage,
+  loseOverlayContext,
   makeDirs,
   readRunLog,
   removeDirs,
+  restoreOverlayContext,
   waitForLine,
   WINDOW_TIMEOUT_MS,
   windowAt,
@@ -179,63 +181,13 @@ async function expectDrawn(): Promise<void> {
     .toBe('1');
 }
 
-/**
- * Loses the canvas's WebGL context with the page's WebGL API, keeping the
- * extension on the page's `window` (a test value, not the app's) so that
- * restoreContext() can bring it back: once lost, the context no longer
- * hands out extensions.
- */
-async function loseContext(): Promise<void> {
-  await overlay.evaluate(() => {
-    interface LoseContext {
-      loseContext(): void;
-      restoreContext(): void;
-    }
-    interface GlContext {
-      getExtension(name: string): unknown;
-    }
-    const page = globalThis as unknown as {
-      document: {
-        querySelector(selector: string): {
-          getContext(kind: string): GlContext | null;
-        } | null;
-      };
-      awpE2eLoseContext?: LoseContext;
-    };
-    const canvas = page.document.querySelector('body > canvas');
-    if (canvas === null) {
-      throw new Error('no canvas');
-    }
-    const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
-    const extension = gl?.getExtension('WEBGL_lose_context') as
-      | LoseContext
-      | null
-      | undefined;
-    if (extension === null || extension === undefined) {
-      throw new Error('no WEBGL_lose_context');
-    }
-    page.awpE2eLoseContext = extension;
-    extension.loseContext();
-  });
-}
-
-/** Restores the context loseContext() lost. */
-async function restoreContext(): Promise<void> {
-  await overlay.evaluate(() => {
-    const page = globalThis as unknown as {
-      awpE2eLoseContext?: { restoreContext(): void };
-    };
-    page.awpE2eLoseContext?.restoreContext();
-  });
-}
-
 test.describe('I/O matrix', () => {
   test('context lost 後還原: lost, nothing is drawn and main logs one line; restored, the character is drawn again and main logs one line; nothing is reloaded', async () => {
     await expectDrawn();
     expect((await overlayData()).context).toBe('ok');
     const readyBefore = countLines(CANVAS_READY);
 
-    await loseContext();
+    await loseOverlayContext(overlay);
 
     await waitForLine(dirs.logs, LOST, DRAWN_TIMEOUT_MS);
     await expect.poll(async () => (await overlayData()).context).toBe('lost');
@@ -243,7 +195,7 @@ test.describe('I/O matrix', () => {
     expect(lost.drawnActors).toBe('0');
     expect(lost.hitAreas).toBe('0');
 
-    await restoreContext();
+    await restoreOverlayContext(overlay);
 
     await waitForLine(dirs.logs, RESTORED, DRAWN_TIMEOUT_MS);
     await expect.poll(async () => (await overlayData()).context).toBe('ok');
@@ -261,7 +213,7 @@ test.describe('I/O matrix', () => {
     // run): wait for a new one, not that one.
     const lostBefore = countLines(LOST);
 
-    await loseContext();
+    await loseOverlayContext(overlay);
 
     // Before main's wait is over, the page draws nothing.
     await expect.poll(async () => (await overlayData()).context).toBe('lost');

@@ -25,7 +25,9 @@ import 'pixi.js/unsafe-eval';
 //   ticker's deltaMS); pixi-stage.ts draws them with textures painted on
 //   canvases made here. With no actor, or paused, the render loop stops
 //   after one last frame, which moves no particle: they stand still until
-//   it runs again;
+//   it runs again. The packs' bitmaps (Story 3.6's last part) are drawn
+//   from their ImageBitmaps as they come, and an actor with a bitmap
+//   texture up takes the mouse;
 // - PixiJS's resolution follows the canvas's display (`canvas.scaleFactor`,
 //   renderer/display.ts).
 // - While the canvas's WebGL context is lost (context-loss.ts, from its
@@ -34,9 +36,9 @@ import 'pixi.js/unsafe-eval';
 //   pauses (no `frame`), nothing takes the mouse, and main hears it on
 //   `canvas:gpu`; once it is back, drawing starts again from StageView now
 //   and each pack's last draw.
-// The body's data attributes say what was last drawn, how many emitters
-// and particles there are, how many areas take the mouse and whether the
-// context is lost, for DevTools.
+// The body's data attributes say what was last drawn (bitmaps included),
+// how many emitters and particles there are, how many areas take the
+// mouse and whether the context is lost, for DevTools.
 import './index.css';
 import { Application, Assets, Container, type Ticker } from 'pixi.js';
 import { PRELOAD_API_KEY } from '../shared/constants';
@@ -207,25 +209,28 @@ function drawFrame(dtMs = 0): void {
     return;
   }
   textures.sync(installedLooks(view));
+  const drawing = stage;
   const scene = buildScene({
     view,
     look: (packId) => looks?.get(packId),
     draw: (packId) => packHost.drawOf(packId),
     ready: (packId, version, asset, frame) =>
       textures.get(packId, version, asset, frame) !== undefined,
+    bitmapReady: (actorId) => drawing.bitmapShown(actorId),
   });
   reportMissing(scene.missing);
   particles.sync(scene.actors);
   particles.step(dtMs);
-  const counts = stage.draw(scene);
+  const counts = drawing.draw(scene);
   input.setAreas(scene.areas);
   show('drawnActors', String(counts.actors));
   show('drawnSprites', String(counts.sprites));
+  show('drawnBitmaps', String(counts.bitmaps));
   // What runs (particles.ts), and what of it is on screen (pixi-stage.ts).
   const live = particles.counts();
   show('particleEmitters', String(live.emitters));
   show('liveParticles', String(live.particles));
-  const onScreen = stage.particleCounts();
+  const onScreen = drawing.particleCounts();
   show('drawnEmitters', String(onScreen.emitters));
   show('drawnParticles', String(onScreen.particles));
   show('hitAreas', String(scene.areas.length));

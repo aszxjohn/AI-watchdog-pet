@@ -13,6 +13,19 @@
  * - Actors are put in the scene's order, bottom first.
  * - A sprite whose texture is not there (still loading, or failed) is
  *   hidden for that frame.
+ * - A bitmap (Story 3.6's last part): one more Sprite in the actor's
+ *   container, above its sprites and below its particles, top-left
+ *   anchored at the command's `x`, `y` and sized to its `width` x
+ *   `height`. Its texture is made from the ImageBitmap itself
+ *   (bitmapTexture: its own ImageSource, sampled linearly, outside
+ *   PixiJS's global cache and its texture garbage collection, so PixiJS
+ *   can upload it again once a lost WebGL context is back). An actor's
+ *   bitmap replaced by a new image, once the new one is put up, gone from
+ *   its draw, or the actor gone: the old texture is destroyed and its
+ *   ImageBitmap closed. An image shown is never closed; one closed (by
+ *   this stage) is never shown again; each is closed once. bitmapShown()
+ *   says whether an actor has a bitmap texture up (scene.ts gives it the
+ *   mouse then).
  * - Particles (Story 3.6's second last part): each emitter particles.ts
  *   runs for a drawn actor is one ParticleContainer in that actor's
  *   container, so it moves, scales and is clipped with it, above all its
@@ -52,6 +65,7 @@ import {
   type SpritesheetData,
   Texture,
 } from 'pixi.js';
+import type { ImageBitmapLike } from '../../shared/draw-size';
 import type {
   LocalBox,
   PackSpritesheet,
@@ -115,6 +129,24 @@ export function pixiTextures<I extends LoadedImage>(
       texture.destroy(base);
     },
   };
+}
+
+/**
+ * A texture of `image` (a bitmap a pack painted, Story 3.6's last part):
+ * its own ImageSource, sampled linearly, cached nowhere, and never
+ * unloaded by PixiJS's texture garbage collection (ImageSource's
+ * constructor turns that on whatever its options say, so it is turned off
+ * after).
+ */
+export function bitmapTexture(image: ImageBitmapLike): Texture {
+  const source = new ImageSource({
+    // An ImageBitmap in the overlay, which PixiJS takes.
+    resource: image as unknown as ImageResource,
+    scaleMode: TEXTURE_SCALE_MODE,
+    autoGarbageCollect: false,
+  });
+  source.autoGarbageCollect = false;
+  return new Texture({ source });
 }
 
 /** The width and height of a preset's texture, in pixels. */
@@ -358,11 +390,20 @@ function showParticles(
   });
 }
 
+/** An actor's bitmap on screen. */
+interface ShownBitmap {
+  readonly sprite: Sprite;
+  readonly image: ImageBitmapLike;
+  readonly texture: Texture;
+}
+
 /** One actor's display objects. */
 interface ActorNode {
   readonly container: Container;
   readonly mask: Graphics;
   readonly sprites: Sprite[];
+  /** Its bitmap, while it has one up. */
+  bitmap: ShownBitmap | null;
   /** Its emitters' containers, by EmitterView id, oldest first. */
   readonly emitters: Map<number, ParticleContainer<Particle>>;
   /** The bounds the mask was drawn for. */
@@ -373,6 +414,8 @@ interface ActorNode {
 export interface StageCounts {
   readonly actors: number;
   readonly sprites: number;
+  /** Bitmaps (Story 3.6's last part). */
+  readonly bitmaps: number;
 }
 
 /** The particles one draw() put on screen. */
@@ -391,7 +434,12 @@ export interface PixiStage {
   draw(scene: Scene): StageCounts;
   /** The particles the last draw() put on screen; none before any. */
   particleCounts(): StageParticleCounts;
-  /** Destroys every actor's display objects and the presets' textures. */
+  /** Whether `actorId` has a bitmap texture up since the last draw(). */
+  bitmapShown(actorId: string): boolean;
+  /**
+   * Destroys every actor's display objects (their bitmaps closed) and the
+   * presets' textures.
+   */
   destroy(): void;
 }
 
@@ -407,6 +455,8 @@ export function createPixiStage(
 ): PixiStage {
   const nodes = new Map<string, ActorNode>();
   let particleCounts: StageParticleCounts = { emitters: 0, particles: 0 };
+  /** The images this stage has closed: none is shown again or closed twice. */
+  const closed = new WeakSet<object>();
 
   function nodeOf(actorId: string): ActorNode {
     let node = nodes.get(actorId);
@@ -415,10 +465,86 @@ export function createPixiStage(
       const mask = new Graphics();
       container.addChild(mask);
       container.mask = mask;
-      node = { container, mask, sprites: [], emitters: new Map(), bounds: '' };
+      node = {
+        container,
+        mask,
+        sprites: [],
+        bitmap: null,
+        emitters: new Map(),
+        bounds: '',
+      };
       nodes.set(actorId, node);
     }
     return node;
+  }
+
+  /** Destroys `texture` with its source and closes `image`, once. */
+  function release(texture: Texture, image: ImageBitmapLike): void {
+    texture.destroy(true);
+    if (!closed.has(image)) {
+      closed.add(image);
+      try {
+        image.close();
+      } catch {
+        // Nothing more to free.
+      }
+    }
+  }
+
+  /** Takes `node`'s bitmap off the screen, released. */
+  function dropBitmap(node: ActorNode): void {
+    const shown = node.bitmap;
+    if (shown === null) {
+      return;
+    }
+    node.bitmap = null;
+    shown.sprite.destroy();
+    release(shown.texture, shown.image);
+  }
+
+  /**
+   * `node`'s bitmap as `bitmap` says (none: taken off), above its sprites;
+   * whether one is up.
+   */
+  function drawBitmap(
+    node: ActorNode,
+    bitmap: Scene['actors'][number]['bitmap'],
+  ): boolean {
+    if (bitmap === undefined || closed.has(bitmap.image)) {
+      dropBitmap(node);
+      return false;
+    }
+    let shown = node.bitmap;
+    if (shown === null || shown.image !== bitmap.image) {
+      const texture = bitmapTexture(bitmap.image);
+      let sprite = shown?.sprite;
+      if (sprite === undefined) {
+        sprite = new Sprite();
+        sprite.anchor.set(0);
+        // After the mask and the sprites, under the particles.
+        node.container.addChildAt(sprite, 1 + node.sprites.length);
+      }
+      sprite.texture = texture;
+      const before = shown;
+      shown = { sprite, image: bitmap.image, texture };
+      node.bitmap = shown;
+      // The new one is up: the old one goes.
+      if (before !== null) {
+        release(before.texture, before.image);
+      }
+    }
+    const { sprite } = shown;
+    sprite.position.set(bitmap.x, bitmap.y);
+    sprite.width = bitmap.width;
+    sprite.height = bitmap.height;
+    sprite.visible = true;
+    return true;
+  }
+
+  /** Destroys `node`, its bitmap released first. */
+  function destroyNode(node: ActorNode): void {
+    dropBitmap(node);
+    node.container.destroy({ children: true });
   }
 
   /**
@@ -462,6 +588,7 @@ export function createPixiStage(
       const drawn = new Set<string>();
       const order: Container[] = [];
       let sprites = 0;
+      let bitmaps = 0;
       let emitters = 0;
       let alive = 0;
       for (const actor of scene.actors) {
@@ -508,13 +635,16 @@ export function createPixiStage(
         for (const extra of node.sprites.splice(actor.sprites.length)) {
           extra.destroy();
         }
+        if (drawBitmap(node, actor.bitmap)) {
+          bitmaps += 1;
+        }
         alive += drawEmitters(node, actor.actorId, actor.bounds);
         emitters += node.emitters.size;
         order.push(node.container);
       }
       for (const [actorId, node] of nodes) {
         if (!drawn.has(actorId)) {
-          node.container.destroy({ children: true });
+          destroyNode(node);
           nodes.delete(actorId);
         }
       }
@@ -531,14 +661,16 @@ export function createPixiStage(
         }
       }
       particleCounts = { emitters, particles: alive };
-      return { actors: order.length, sprites };
+      return { actors: order.length, sprites, bitmaps };
     },
 
     particleCounts: () => particleCounts,
 
+    bitmapShown: (actorId) => (nodes.get(actorId)?.bitmap ?? null) !== null,
+
     destroy() {
       for (const node of nodes.values()) {
-        node.container.destroy({ children: true });
+        destroyNode(node);
       }
       nodes.clear();
       layer.removeChildren();

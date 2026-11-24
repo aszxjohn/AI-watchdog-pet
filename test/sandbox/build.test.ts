@@ -104,6 +104,7 @@ interface BootCheck {
     readonly consoleLines?: number;
     readonly replies?: readonly unknown[];
     readonly ownActors?: readonly string[];
+    readonly offscreenCanvas?: string;
     readonly electron?: string | null;
     readonly error?: unknown;
   };
@@ -421,6 +422,49 @@ describe('I/O matrix', () => {
       reason,
       consoleLines: 0,
     });
+  });
+
+  it('沒有 OffscreenCanvas: without one (Node has none), the boot goes as before and stage.canvas and stage.snapshot throw a TypeError, even for an own actor whose character has advancedBitmap', () => {
+    const run = bootCheck(
+      process.execPath,
+      writeEntry(
+        'canvas.js',
+        `(function (stage) {
+  function attempt(name, call) {
+    try { call(); stage.log(name + ': returned'); } catch (error) { stage.log(name + ': ' + error.name); }
+  }
+  return {
+    frame: function (message) {
+      var actorId = message.actors[0].actorId;
+      attempt('canvas', function () { return stage.canvas(actorId, 8, 8); });
+      attempt('snapshot', function () { return stage.snapshot(actorId); });
+      return {};
+    },
+  };
+});`,
+      ),
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toBe('');
+    expect(run.result.offscreenCanvas).toBe('undefined');
+    expect(run.result.report).toMatchObject({
+      type: 'sandbox.ready',
+      consoleLines: 0,
+    });
+    const report = sandboxReportSchema.parse(run.result.report);
+    expect(report.type === 'sandbox.ready' && report.removals).toHaveLength(
+      REMOVAL_NAMES.length,
+    );
+    expect(run.result.ownActors).toStrictEqual(['a1']);
+    expect(run.result.posted).toStrictEqual([
+      { type: 'stage.log', text: 'canvas: TypeError' },
+      { type: 'stage.log', text: 'snapshot: TypeError' },
+    ]);
+    expect(run.result.replies).toStrictEqual([
+      { type: 'draw', seq: 0, actors: {} },
+    ]);
   });
 
   it('入口: a stage.log in the factory goes out as a stage.log call, cut to its limit', () => {

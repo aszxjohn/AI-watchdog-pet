@@ -332,6 +332,29 @@ export const PARTICLES_PER_EMITTER_MAX = 64;
 export const PARTICLE_STEP_MAX_MS = 100;
 
 /**
+ * Largest width or height of a `bitmap` command's image, in pixels (Story
+ * 3.6's last part): `stage.canvas` makes canvases of 1 to this many pixels
+ * a side, and the overlay drops a `draw` whole when one of its bitmaps is
+ * larger (`bitmap-too-large`).
+ */
+export const BITMAP_MAX_SIDE = 512;
+
+/**
+ * Most bitmaps one actor may send in one second (Story 3.6's last part):
+ * the overlay keeps, per pack and actor, when it took each over a sliding
+ * window of one second (by when it received each `draw`), and drops a
+ * `draw` whole when one more would be over this (`too-many-bitmaps`). At
+ * most one a `draw`, and at most one `draw` a tick (TICK_HZ, 30 a
+ * second); the 6 more leave room for jitter: when the stage stalls, the
+ * answers come bunched up (a late tick is followed at once by the next on
+ * its grid), so a pack drawing a bitmap every tick stays within it. This
+ * holds because each pack has at most one `frame` in flight and the world
+ * never sends the ticks it missed: in any one second about 32 answers
+ * come at most. Should frames ever queue up instead, work this out again.
+ */
+export const BITMAP_MAX_PER_SECOND = TICK_HZ + 6;
+
+/**
  * Most events one pack's next `frame` carries (Story 3.6): while its
  * frames go unanswered the events wait, and only the latest this many are
  * kept.

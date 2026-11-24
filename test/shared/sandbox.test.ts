@@ -14,7 +14,6 @@ import {
   PACK_MESSAGE_DROP_REASONS,
   PACK_NOT_DRAWN_REASONS,
   SANDBOX_NO_DRAW_REASONS,
-  SKIPPED_DRAW_COMMANDS,
   packLogEntrySchema,
   packsLogInputSchema,
   SANDBOX_BOOT_FAILURES,
@@ -350,22 +349,18 @@ describe('Story 3.6: no-draw reports and the drawing lines', () => {
       'unknown-frame',
       'stale-draw',
       'too-many-emitters',
+      'bitmap-not-allowed',
+      'bitmap-not-image',
+      'bitmap-too-large',
+      'too-many-bitmaps',
       ...SANDBOX_NO_DRAW_REASONS,
     ]);
-    for (const codes of [
-      PACK_MESSAGE_DROP_REASONS,
-      SKIPPED_DRAW_COMMANDS,
-      PACK_NOT_DRAWN_REASONS,
-    ]) {
+    for (const codes of [PACK_MESSAGE_DROP_REASONS, PACK_NOT_DRAWN_REASONS]) {
       expect(new Set(codes).size).toBe(codes.length);
     }
   });
 
   it.each<[string, unknown]>([
-    [
-      'a skipped command type',
-      { kind: 'commands-skipped', packId: 'sample-pack', command: 'bitmap' },
-    ],
     [
       'a pack not drawn',
       { kind: 'not-drawn', packId: 'sample-pack', reason: 'character-missing' },
@@ -394,8 +389,8 @@ describe('Story 3.6: no-draw reports and the drawing lines', () => {
 
   it.each<[string, unknown]>([
     [
-      'a sprite command skipped',
-      { kind: 'commands-skipped', packId: 'sample-pack', command: 'sprite' },
+      'a skipped command type (none since Story 3.6: bitmaps are drawn)',
+      { kind: 'commands-skipped', packId: 'sample-pack', command: 'bitmap' },
     ],
     [
       'a particles command skipped (drawn since Story 3.6)',

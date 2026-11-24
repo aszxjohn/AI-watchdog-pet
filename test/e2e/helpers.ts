@@ -20,6 +20,8 @@ import type { AddressInfo, Socket } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { STAGE_LOG_MAX_LENGTH } from '../../src/shared/constants';
+import type { PanelsApi } from '../../src/shared/preload-api';
+import type { StageViewSnapshot } from '../../src/shared/stage-view';
 import {
   contractManifest,
   contractPackFiles,
@@ -451,6 +453,113 @@ export async function windowAt(
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
+}
+
+/** The StageView snapshot the panels window (`panels`) sees. */
+export function readStageView(panels: Page): Promise<StageViewSnapshot> {
+  return panels.evaluate(
+    () =>
+      new Promise<StageViewSnapshot>((resolve, reject) => {
+        const { awp } = globalThis as unknown as { awp: PanelsApi };
+        let done = false;
+        let stop: (() => void) | undefined;
+        const finish = (): void => {
+          done = true;
+          queueMicrotask(() => stop?.());
+        };
+        stop = awp.stageView.subscribe(
+          (snapshot) => {
+            if (!done) {
+              finish();
+              resolve(snapshot);
+            }
+          },
+          (error) => {
+            if (!done) {
+              finish();
+              reject(new Error(error.code));
+            }
+          },
+        );
+      }),
+  );
+}
+
+/**
+ * The overlay window's (`overlay`) body data attributes: what main.ts says
+ * was last drawn, for DevTools and these tests.
+ */
+export function readOverlayData(
+  overlay: Page,
+): Promise<Record<string, string | undefined>> {
+  return overlay.evaluate(() => {
+    const { document } = globalThis as unknown as {
+      document: { body: { dataset: Record<string, string | undefined> } };
+    };
+    return { ...document.body.dataset };
+  });
+}
+
+/**
+ * Loses the overlay canvas's WebGL context with the page's WebGL API (as a
+ * GPU reset would), keeping the extension on the page's `window` (a test
+ * value, not the app's) so that restoreOverlayContext() can bring it back:
+ * once lost, the context no longer hands out extensions.
+ */
+export async function loseOverlayContext(overlay: Page): Promise<void> {
+  await overlay.evaluate(() => {
+    interface LoseContext {
+      loseContext(): void;
+      restoreContext(): void;
+    }
+    interface GlContext {
+      getExtension(name: string): unknown;
+    }
+    const page = globalThis as unknown as {
+      document: {
+        querySelector(selector: string): {
+          getContext(kind: string): GlContext | null;
+        } | null;
+      };
+      awpE2eLoseContext?: LoseContext;
+    };
+    const canvas = page.document.querySelector('body > canvas');
+    if (canvas === null) {
+      throw new Error('no canvas');
+    }
+    const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+    const extension = gl?.getExtension('WEBGL_lose_context') as
+      | LoseContext
+      | null
+      | undefined;
+    if (extension === null || extension === undefined) {
+      throw new Error('no WEBGL_lose_context');
+    }
+    page.awpE2eLoseContext = extension;
+    extension.loseContext();
+  });
+}
+
+/**
+ * Restores the context loseOverlayContext() lost, and forgets the
+ * extension it kept. Throws when there is none (it was not called on this
+ * page, the page was reloaded since, or this restored it already), so a
+ * test does not wait in vain for a restore.
+ */
+export async function restoreOverlayContext(overlay: Page): Promise<void> {
+  await overlay.evaluate(() => {
+    const page = globalThis as unknown as {
+      awpE2eLoseContext?: { restoreContext(): void };
+    };
+    const extension = page.awpE2eLoseContext;
+    if (extension === undefined) {
+      throw new Error(
+        'no WEBGL_lose_context kept: call loseOverlayContext first',
+      );
+    }
+    extension.restoreContext();
+    delete page.awpE2eLoseContext;
+  });
 }
 
 /** One run log line. */

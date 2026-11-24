@@ -19,6 +19,7 @@ import type {
   ParticleView,
 } from '../../src/overlay/renderer/particles';
 import {
+  bitmapTexture,
   createPixiStage,
   type PaintCanvas,
   type PaintContext,
@@ -29,11 +30,16 @@ import {
   type StageParticles,
   TEXTURE_SCALE_MODE,
 } from '../../src/overlay/renderer/pixi-stage';
-import type { Scene, SceneActor } from '../../src/overlay/renderer/scene';
+import type {
+  Scene,
+  SceneActor,
+  SceneBitmap,
+} from '../../src/overlay/renderer/scene';
 import {
   PARTICLE_PRESETS,
   type ParticlePreset,
 } from '../../src/shared/pack-api';
+import { FakeImageBitmap } from '../helpers/fake-bitmaps';
 
 const BOUNDS = { x: -40, y: -130, width: 80, height: 130 };
 
@@ -134,7 +140,7 @@ describe('I/O matrix', () => {
       ]),
     );
 
-    expect(counts).toStrictEqual({ actors: 2, sprites: 2 });
+    expect(counts).toStrictEqual({ actors: 2, sprites: 2, bitmaps: 0 });
     expect(layer.children).toHaveLength(2);
     const [first, second] = layer.children as Container[];
     expect([first?.x, first?.y, first?.scale.x, first?.scale.y]).toStrictEqual([
@@ -199,7 +205,7 @@ describe('I/O matrix', () => {
       ]),
     );
 
-    expect(counts).toStrictEqual({ actors: 1, sprites: 0 });
+    expect(counts).toStrictEqual({ actors: 1, sprites: 0, bitmaps: 0 });
     expect(partsOf(layer.children[0] as Container).sprites[0]?.visible).toBe(
       false,
     );
@@ -495,7 +501,7 @@ describe('I/O matrix', () => {
 
     const counts = stage.draw(scene([sceneActor('a1')]));
 
-    expect(counts).toStrictEqual({ actors: 1, sprites: 0 });
+    expect(counts).toStrictEqual({ actors: 1, sprites: 0, bitmaps: 0 });
     expect(layer.children).toHaveLength(1);
   });
 });
@@ -611,5 +617,244 @@ describe('the textures', () => {
     expect(one.source.scaleMode).toBe('linear');
     expect(one.source).not.toBe(two.source);
     expect(backend.sizeOf(image)).toStrictEqual({ width: 4, height: 2 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bitmaps (Story 3.6's last part): FakeImageBitmap stands in for the
+// ImageBitmaps a pack sends; PixiJS takes it as an ImageSource's resource.
+
+function bitmapOf(
+  image: FakeImageBitmap,
+  overrides: Partial<SceneBitmap> = {},
+): SceneBitmap {
+  return { image, x: -32, y: -100, width: 60, height: 90, ...overrides };
+}
+
+/** What each child of an actor's container is. */
+function layout(container: Container, bitmap: Sprite | undefined): string[] {
+  return container.children.map((child) =>
+    child === container.mask
+      ? 'mask'
+      : child === bitmap
+        ? 'bitmap'
+        : child instanceof ParticleContainer
+          ? 'particles'
+          : child instanceof Sprite
+            ? 'sprite'
+            : 'other',
+  );
+}
+
+/** The Sprite showing `texture`'s source in `container`, if any. */
+function spriteOf(
+  container: Container,
+  image: FakeImageBitmap,
+): Sprite | undefined {
+  return container.children.find(
+    (child): child is Sprite =>
+      child instanceof Sprite && child.texture.source.resource === image,
+  );
+}
+
+describe('I/O matrix', () => {
+  it('bitmap 出現: an actor’s bitmap is one Sprite in its container (so it takes its 大小 and bounds mask), above its sprites and under its particles, top-left at x, y and width x height base pixels; counted as a bitmap', () => {
+    const { layer, stage, emitters } = setupParticles();
+    emitters.set('a1', [emitter(1, 'sparkle', [particle()])]);
+    const image = new FakeImageBitmap(64, 32);
+
+    const counts = stage.draw(
+      scene([
+        sceneActor('a1', {
+          scale: 1.5,
+          sprites: [SPRITE_COMMAND],
+          bitmap: bitmapOf(image),
+        }),
+      ]),
+    );
+
+    expect(counts).toStrictEqual({ actors: 1, sprites: 1, bitmaps: 1 });
+    const container = layer.children[0] as Container;
+    const sprite = spriteOf(container, image);
+    expect(sprite).toBeDefined();
+    expect(layout(container, sprite)).toStrictEqual([
+      'mask',
+      'sprite',
+      'bitmap',
+      'particles',
+    ]);
+    expect([sprite?.x, sprite?.y]).toStrictEqual([-32, -100]);
+    expect([sprite?.anchor.x, sprite?.anchor.y]).toStrictEqual([0, 0]);
+    expect([sprite?.width, sprite?.height]).toStrictEqual([60, 90]);
+    expect(sprite?.scale.x).toBeCloseTo(60 / 64);
+    expect(sprite?.scale.y).toBeCloseTo(90 / 32);
+    expect(sprite?.visible).toBe(true);
+    expect(container.scale.x).toBe(1.5);
+    expect(stage.bitmapShown('a1')).toBe(true);
+    expect(stage.bitmapShown('a2')).toBe(false);
+
+    // Sprites added later still go under it.
+    stage.draw(
+      scene([
+        sceneActor('a1', {
+          sprites: [SPRITE_COMMAND, SPRITE_COMMAND],
+          bitmap: bitmapOf(image),
+        }),
+      ]),
+    );
+    expect(layout(container, sprite)).toStrictEqual([
+      'mask',
+      'sprite',
+      'sprite',
+      'bitmap',
+      'particles',
+    ]);
+  });
+
+  it('bitmap 出現: its texture is its own ImageSource over the ImageBitmap, sampled linearly, outside the global cache and PixiJS’s texture garbage collection', () => {
+    const image = new FakeImageBitmap(16, 8);
+
+    const texture = bitmapTexture(image);
+
+    expect(texture.source).toBeInstanceOf(ImageSource);
+    expect(texture.source.resource).toBe(image);
+    expect(texture.source.autoGarbageCollect).toBe(false);
+    expect(texture.source.scaleMode).toBe(TEXTURE_SCALE_MODE);
+    expect([texture.width, texture.height]).toStrictEqual([16, 8]);
+    expect(bitmapTexture(image).source).not.toBe(texture.source);
+    expect(image.closes).toBe(0);
+  });
+
+  it('釋放: a new image is put up first; then the old texture is destroyed with its source and the old ImageBitmap closed; the one shown is not closed; the same image again changes nothing', () => {
+    const { layer, stage } = setup();
+    const first = new FakeImageBitmap();
+    // Another pixel size than the first's 8 x 8, drawn at another size.
+    const second = new FakeImageBitmap(32, 16);
+    stage.draw(scene([sceneActor('a1', { bitmap: bitmapOf(first) })]));
+    const container = layer.children[0] as Container;
+    const sprite = spriteOf(container, first);
+    const firstTexture = sprite?.texture;
+    const firstSource = firstTexture?.source;
+
+    stage.draw(scene([sceneActor('a1', { bitmap: bitmapOf(first) })]));
+    expect(sprite?.texture).toBe(firstTexture);
+    expect(first.closes).toBe(0);
+    expect([sprite?.width, sprite?.height]).toStrictEqual([60, 90]);
+    expect(sprite?.scale.x).toBeCloseTo(60 / 8);
+    expect(sprite?.scale.y).toBeCloseTo(90 / 8);
+    // What the sprite shows when the old image is closed.
+    let shownAtClose: unknown;
+    const closeFirst = first.close.bind(first);
+    first.close = () => {
+      shownAtClose = sprite?.texture.source.resource;
+      closeFirst();
+    };
+
+    stage.draw(
+      scene([
+        sceneActor('a1', {
+          bitmap: bitmapOf(second, { x: 5, width: 100, height: 40 }),
+        }),
+      ]),
+    );
+
+    // The same sprite, now over the new image, which was up before the old
+    // one was closed, at the new command's size over the new image's.
+    expect(shownAtClose).toBe(second);
+    expect(spriteOf(container, second)).toBe(sprite);
+    expect(sprite?.x).toBe(5);
+    expect([sprite?.width, sprite?.height]).toStrictEqual([100, 40]);
+    expect(sprite?.scale.x).toBeCloseTo(100 / 32);
+    expect(sprite?.scale.y).toBeCloseTo(40 / 16);
+    expect(firstTexture?.destroyed).toBe(true);
+    expect(firstSource?.destroyed).toBe(true);
+    expect(first.closes).toBe(1);
+    expect(second.closes).toBe(0);
+    expect(sprite?.texture.source.destroyed).toBe(false);
+  });
+
+  it('釋放: a bitmap gone from the actor’s draw, the actor gone, or the stage destroyed: its sprite and texture are destroyed and its ImageBitmap closed, once', () => {
+    const { layer, stage } = setup();
+    const gone = new FakeImageBitmap();
+    const left = new FakeImageBitmap();
+    const last = new FakeImageBitmap();
+    stage.draw(
+      scene([
+        sceneActor('a1', { bitmap: bitmapOf(gone) }),
+        sceneActor('a2', { bitmap: bitmapOf(left) }),
+      ]),
+    );
+    const a1 = layer.children[0] as Container;
+    const goneSprite = spriteOf(a1, gone);
+    const goneSource = goneSprite?.texture.source;
+    const leftSource = spriteOf(layer.children[1] as Container, left)?.texture
+      .source;
+
+    // a1 draws no bitmap now; a2 has left.
+    const counts = stage.draw(scene([sceneActor('a1')]));
+    expect(counts.bitmaps).toBe(0);
+    expect(goneSprite?.destroyed).toBe(true);
+    expect(layout(a1, undefined)).toStrictEqual(['mask']);
+    expect(goneSource?.destroyed).toBe(true);
+    expect(leftSource?.destroyed).toBe(true);
+    expect([gone.closes, left.closes]).toStrictEqual([1, 1]);
+    expect(stage.bitmapShown('a1')).toBe(false);
+
+    stage.draw(scene([sceneActor('a1', { bitmap: bitmapOf(last) })]));
+    const lastSprite = spriteOf(layer.children[0] as Container, last);
+    const lastTexture = lastSprite?.texture;
+    const lastSource = lastTexture?.source;
+    expect(last.closes).toBe(0);
+    stage.destroy();
+    expect(lastSprite?.destroyed).toBe(true);
+    expect(lastTexture?.destroyed).toBe(true);
+    expect(lastSource?.destroyed).toBe(true);
+    expect(last.closes).toBe(1);
+    expect([gone.closes, left.closes]).toStrictEqual([1, 1]);
+  });
+
+  it('釋放: an image this stage closed (its actor was not drawn for a frame, its draw unchanged) is never shown again nor closed twice; a new image is', () => {
+    const { layer, stage } = setup();
+    const image = new FakeImageBitmap();
+    stage.draw(scene([sceneActor('a1', { bitmap: bitmapOf(image) })]));
+    stage.draw(scene([]));
+    expect(image.closes).toBe(1);
+
+    const counts = stage.draw(
+      scene([sceneActor('a1', { bitmap: bitmapOf(image) })]),
+    );
+
+    expect(counts.bitmaps).toBe(0);
+    expect(image.closes).toBe(1);
+    expect(stage.bitmapShown('a1')).toBe(false);
+    expect(layout(layer.children[0] as Container, undefined)).toStrictEqual([
+      'mask',
+    ]);
+    const fresh = new FakeImageBitmap();
+    expect(
+      stage.draw(scene([sceneActor('a1', { bitmap: bitmapOf(fresh) })]))
+        .bitmaps,
+    ).toBe(1);
+  });
+
+  it('context 還原: the same scene drawn again, as once a lost context is back, keeps the same sprite, texture and source (PixiJS uploads it again from its ImageBitmap): nothing is destroyed or closed', () => {
+    const { layer, stage } = setup();
+    const image = new FakeImageBitmap();
+    const shown = scene([sceneActor('a1', { bitmap: bitmapOf(image) })]);
+    stage.draw(shown);
+    const sprite = spriteOf(layer.children[0] as Container, image);
+    const texture = sprite?.texture;
+
+    // Lost: nothing is drawn (main.ts does not call draw()); restored: the
+    // next frame draws the same.
+    const counts = stage.draw(shown);
+
+    expect(counts.bitmaps).toBe(1);
+    expect(spriteOf(layer.children[0] as Container, image)).toBe(sprite);
+    expect(sprite?.texture).toBe(texture);
+    expect(texture?.source.destroyed).toBe(false);
+    expect(texture?.source.resource).toBe(image);
+    expect(texture?.source.autoGarbageCollect).toBe(false);
+    expect(image.closes).toBe(0);
   });
 });

@@ -46,6 +46,7 @@ import {
   type SandboxLoadMessage,
 } from '../../src/shared/sandbox';
 import type { StageView } from '../../src/shared/stage-view';
+import { FakeImageBitmap, stubImageBitmap } from '../helpers/fake-bitmaps';
 import { fakeClock, type FakeClock } from '../helpers/fake-clock';
 
 const ALPHA = 'alpha-pack';
@@ -1164,6 +1165,60 @@ describe('the sandbox iframes (dom.ts)', () => {
     posted[0]?.[2][0]?.postMessage({ type: 'stage.log', text: 'late' });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it('不合規: a message that still comes on the kept end once removed goes to no one, and its ImageBitmaps are closed (Story 3.6’s last part)', () => {
+    stubImageBitmap();
+    try {
+      const doc = fakeDocument();
+      let deliver: ((event: { data: unknown }) => void) | undefined;
+      const frames = createDomSandboxFrames({
+        createIframe: () => doc.createIframe(),
+        attach: (iframe) => {
+          doc.attach(iframe as unknown as { attached: boolean });
+        },
+        window: doc.window,
+        // A port that still hands on what comes after close().
+        createChannel: () => ({
+          port1: {
+            postMessage() {},
+            addEventListener(
+              _type: 'message',
+              listener: (event: { data: unknown }) => void,
+            ) {
+              deliver = listener;
+            },
+            start() {},
+            close() {},
+          },
+          port2: {} as HandedPort,
+        }),
+      });
+      const onMessage = vi.fn();
+      const frame = frames.create({
+        onLoad: () => {},
+        onMessage,
+        onWorkerError: () => {},
+      });
+      frame.hand({ type: 'load', source: 'a' });
+      const kept = new FakeImageBitmap();
+      deliver?.({
+        data: { type: 'draw', seq: 0, actors: { a1: [{ image: kept }] } },
+      });
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(kept.closes).toBe(0);
+
+      frame.remove();
+      const late = new FakeImageBitmap();
+      deliver?.({
+        data: { type: 'draw', seq: 1, actors: { a1: [{ image: late }] } },
+      });
+
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(late.closes).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
