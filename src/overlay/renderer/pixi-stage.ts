@@ -1,5 +1,5 @@
 /**
- * overlay/renderer (Stories 3.6, 3.7): draws a Scene (scene.ts) with
+ * overlay/renderer (Stories 3.6, 3.7, 3.8): draws a Scene (scene.ts) with
  * PixiJS, on the overlay's one canvas, and makes the packs' textures.
  * PixiJS runs under Node too, so this is unit-tested there
  * (test/overlay/pixi-stage); only loading an image needs the browser, and
@@ -49,6 +49,26 @@
  *   still), and draw() returns that opacity (main.ts shows it, the e2e
  *   tests read it). It is destroyed when the actor is drawn otherwise
  *   again, or is gone.
+ * - The name tags and state badges (Story 3.8): each actor with a `badge`
+ *   has one Sprite in the badge layer (a Container main.ts puts above the
+ *   actors' layer, which takes no mouse), in the scene's order, so every
+ *   tag is above every character and a lower actor's tag above a higher
+ *   one's. Its bottom middle is at the actor's position plus its `anchor`
+ *   × its 大小, its top-left corner on a whole device pixel (the scene's
+ *   `resolution`), so its text stays sharp; it is not scaled by 大小 nor
+ *   clipped by `bounds`. It leaves that place only to stay inside the
+ *   canvas (the scene's `canvasWidth`; its top not above the canvas's) or,
+ *   placed in the scene's order, to move up a level at a time while it
+ *   would cover a tag placed before it (badges.ts's stackBadges). Its texture (badgeTextures) is badges.ts's
+ *   painting on a 2D canvas main.ts makes, `resolution` device pixels to
+ *   the DIP (its source's resolution, so it is drawn at its size in DIP),
+ *   sampled linearly, outside PixiJS's global cache, and made once per
+ *   content (name, state, confidence, resolution): actors showing the same
+ *   share it. Each draw() destroys the textures no tag used in it, with
+ *   their sources; a tag whose content changed takes its new texture at
+ *   once. The sprites are kept from frame to frame; an actor no longer
+ *   drawn, or drawn without a badge, has its sprite destroyed.
+ *   draw() counts the tags it put up (`badges`).
  * - Each preset's texture (particleTextures) is painted in white, from
  *   its PresetDef's shape, on a 2D canvas main.ts makes (not a render
  *   texture: PixiJS uploads the canvas again once a lost WebGL context is
@@ -83,6 +103,16 @@ import type {
   PackSpritesheet,
   ParticlePreset,
 } from '../../shared/pack-api';
+import {
+  type BadgeBox,
+  type BadgeCanvas,
+  type BadgeContent,
+  badgeKey,
+  badgeLayout,
+  measureWith,
+  paintBadge,
+  stackBadges,
+} from './badges';
 import {
   type EmitterView,
   PARTICLE_PRESET_DEFS,
@@ -343,6 +373,105 @@ export function particleTextures(
   };
 }
 
+/** A name tag's texture (Story 3.8), with the tag's size. */
+export interface BadgeTexture {
+  readonly texture: Texture;
+  /** The tag's size, DIP (badges.ts's layout). */
+  readonly width: number;
+  readonly height: number;
+}
+
+/** The name tags' textures (see the module comment). */
+export interface BadgeTextures {
+  /**
+   * The texture of `content` at `resolution`, made the first time it is
+   * asked for (and not swept since), shared by every tag of the same
+   * content.
+   */
+  get(content: BadgeContent, resolution: number): BadgeTexture;
+  /**
+   * Destroys every texture not asked for since the last sweep(), with its
+   * source.
+   */
+  sweep(): void;
+  /** How many textures there are now. */
+  count(): number;
+  /** Destroys every texture made, with its source. */
+  destroy(): void;
+}
+
+/** The name tags' textures, painted on canvases `createCanvas` makes. */
+export function badgeTextures(createCanvas: () => BadgeCanvas): BadgeTextures {
+  const made = new Map<string, BadgeTexture>();
+  const asked = new Set<string>();
+  return {
+    get(content, resolution) {
+      const key = badgeKey(content, resolution);
+      asked.add(key);
+      let badge = made.get(key);
+      if (badge === undefined) {
+        const canvas = createCanvas();
+        const context = canvas.getContext('2d');
+        // Without a 2D context nothing is measured or painted: a clear tag.
+        const layout = badgeLayout(
+          content,
+          context === null ? () => 0 : measureWith(context),
+        );
+        // Sizing the canvas clears it (and its context's state).
+        canvas.width = Math.ceil(layout.width * resolution);
+        canvas.height = Math.ceil(layout.height * resolution);
+        if (context !== null) {
+          paintBadge(context, layout, resolution);
+        }
+        badge = {
+          texture: new Texture({
+            source: new ImageSource({
+              // An HTMLCanvasElement in the overlay, which PixiJS takes.
+              resource: canvas as unknown as ImageResource,
+              resolution,
+              scaleMode: TEXTURE_SCALE_MODE,
+            }),
+          }),
+          width: layout.width,
+          height: layout.height,
+        };
+        made.set(key, badge);
+      }
+      return badge;
+    },
+    sweep() {
+      for (const [key, badge] of made) {
+        if (!asked.has(key)) {
+          badge.texture.destroy(true);
+          made.delete(key);
+        }
+      }
+      asked.clear();
+    },
+    count: () => made.size,
+    destroy() {
+      for (const badge of made.values()) {
+        badge.texture.destroy(true);
+      }
+      made.clear();
+      asked.clear();
+    },
+  };
+}
+
+/** Where pixi-stage draws the name tags and state badges (Story 3.8). */
+export interface StageBadges {
+  /** The badge layer: above the actors' layer, on the same stage. */
+  readonly layer: Container;
+  /** The tags' textures. */
+  readonly textures: BadgeTextures;
+}
+
+/** `value` (DIP) on the nearest whole device pixel at `resolution`. */
+function onDevicePixel(value: number, resolution: number): number {
+  return Math.round(value * resolution) / resolution;
+}
+
 /** What pixi-stage draws particles from (Story 3.6). */
 export interface StageParticles {
   /** `actorId`'s emitters (particles.ts), oldest first. */
@@ -446,6 +575,8 @@ export interface StageCounts {
    * the time it has been given), whether or not any was drawn.
    */
   readonly placeholderAlpha: number;
+  /** Name tags and state badges (Story 3.8). */
+  readonly badges: number;
 }
 
 /** The particles one draw() put on screen. */
@@ -469,10 +600,27 @@ export interface PixiStage {
   /** Whether `actorId` has a bitmap texture up since the last draw(). */
   bitmapShown(actorId: string): boolean;
   /**
-   * Destroys every actor's display objects (their bitmaps closed) and the
-   * presets' textures.
+   * Destroys every actor's display objects (their bitmaps closed), the
+   * name tags, the presets' textures and the tags'.
    */
   destroy(): void;
+}
+
+/**
+ * Makes `layer`'s children `order`, only when they differ: PixiJS redoes
+ * its render instructions after a change of children.
+ */
+function reorder(layer: Container, order: readonly Container[]): void {
+  const children = layer.children;
+  if (
+    children.length !== order.length ||
+    order.some((child, index) => children[index] !== child)
+  ) {
+    layer.removeChildren();
+    if (order.length > 0) {
+      layer.addChild(...order);
+    }
+  }
 }
 
 export function createPixiStage(
@@ -484,8 +632,14 @@ export function createPixiStage(
     frame: string | undefined,
   ) => Texture | undefined,
   particles: StageParticles,
+  badges: StageBadges,
 ): PixiStage {
   const nodes = new Map<string, ActorNode>();
+  /** Each name tag on screen (Story 3.8), by actor id. */
+  const tags = new Map<string, Sprite>();
+  // The tags take no mouse (canvas-input's areas are the characters').
+  badges.layer.eventMode = 'none';
+  badges.layer.interactiveChildren = false;
   let particleCounts: StageParticleCounts = { emitters: 0, particles: 0 };
   /** The images this stage has closed: none is shown again or closed twice. */
   const closed = new WeakSet<object>();
@@ -635,6 +789,40 @@ export function createPixiStage(
   }
 
   /**
+   * `actor`'s name tag, showing its badge now, at `resolution`, and where
+   * it is wanted (see the module comment); stackBadges() places it.
+   */
+  function drawTag(
+    actor: Scene['actors'][number],
+    badge: NonNullable<Scene['actors'][number]['badge']>,
+    resolution: number,
+  ): { readonly tag: Sprite; readonly wanted: BadgeBox } {
+    const shown = badges.textures.get(badge, resolution);
+    let tag = tags.get(actor.actorId);
+    if (tag === undefined) {
+      tag = new Sprite();
+      tag.anchor.set(0);
+      tag.eventMode = 'none';
+      tags.set(actor.actorId, tag);
+    }
+    if (tag.texture !== shown.texture) {
+      tag.texture = shown.texture;
+    }
+    // Its bottom middle at the anchor × 大小, its corner on a device pixel.
+    const middle = actor.x + badge.anchor.x * actor.scale;
+    const bottom = actor.y + badge.anchor.y * actor.scale;
+    return {
+      tag,
+      wanted: {
+        left: onDevicePixel(middle - shown.width / 2, resolution),
+        top: onDevicePixel(bottom - shown.height, resolution),
+        width: shown.width,
+        height: shown.height,
+      },
+    };
+  }
+
+  /**
    * `node`'s emitters as particles.ts has them now, above its sprites;
    * returns how many particles they hold.
    */
@@ -679,6 +867,11 @@ export function createPixiStage(
       const alpha = placeholderAlpha(elapsedMs);
       const drawn = new Set<string>();
       const order: Container[] = [];
+      /** The name tags, in the scene's order. */
+      const tagOrder: Sprite[] = [];
+      /** Where each of them is wanted, in the same order. */
+      const wanted: BadgeBox[] = [];
+      const tagged = new Set<string>();
       let sprites = 0;
       let bitmaps = 0;
       let placeholders = 0;
@@ -737,6 +930,12 @@ export function createPixiStage(
         alive += drawEmitters(node, actor.actorId, actor.bounds);
         emitters += node.emitters.size;
         order.push(node.container);
+        if (actor.badge !== undefined) {
+          tagged.add(actor.actorId);
+          const shown = drawTag(actor, actor.badge, scene.resolution);
+          tagOrder.push(shown.tag);
+          wanted.push(shown.wanted);
+        }
       }
       for (const [actorId, node] of nodes) {
         if (!drawn.has(actorId)) {
@@ -744,18 +943,21 @@ export function createPixiStage(
           nodes.delete(actorId);
         }
       }
-      // Rebuilt only when the order changed: PixiJS redoes its render
-      // instructions after a change of children.
-      const children = layer.children;
-      if (
-        children.length !== order.length ||
-        order.some((container, index) => children[index] !== container)
-      ) {
-        layer.removeChildren();
-        if (order.length > 0) {
-          layer.addChild(...order);
+      for (const [actorId, tag] of tags) {
+        if (!tagged.has(actorId)) {
+          tag.destroy();
+          tags.delete(actorId);
         }
       }
+      // No tag uses the others now.
+      badges.textures.sweep();
+      // In the canvas, none over another (whole DIP steps: still on pixels).
+      stackBadges(wanted, scene.canvasWidth).forEach(({ left, top }, index) => {
+        tagOrder[index]?.position.set(left, top);
+      });
+      // Each rebuilt only when its order changed.
+      reorder(layer, order);
+      reorder(badges.layer, tagOrder);
       particleCounts = { emitters, particles: alive };
       return {
         actors: order.length,
@@ -763,6 +965,7 @@ export function createPixiStage(
         bitmaps,
         placeholders,
         placeholderAlpha: alpha,
+        badges: tagOrder.length,
       };
     },
 
@@ -776,8 +979,14 @@ export function createPixiStage(
       }
       nodes.clear();
       layer.removeChildren();
+      for (const tag of tags.values()) {
+        tag.destroy();
+      }
+      tags.clear();
+      badges.layer.removeChildren();
       particleCounts = { emitters: 0, particles: 0 };
       particles.textures.destroy();
+      badges.textures.destroy();
     },
   };
 }

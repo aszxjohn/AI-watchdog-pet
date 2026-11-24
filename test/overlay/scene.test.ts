@@ -1,8 +1,8 @@
 /**
- * overlay/renderer (Stories 3.6, 3.7): what is drawn each display frame
- * (buildScene: placing, mapping, the latest draws, the placeholder,
- * clipping, order, the areas that take the mouse), the missing-character
- * log, and the texture store with a fake backend.
+ * overlay/renderer (Stories 3.6, 3.7, 3.8): what is drawn each display
+ * frame (buildScene: placing, mapping, the latest draws, the placeholder,
+ * the badges, clipping, order, the areas that take the mouse), the
+ * missing-character log, and the texture store with a fake backend.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { packLook, type PackLook } from '../../src/overlay/looks';
@@ -15,6 +15,7 @@ import type { PackDraw } from '../../src/overlay/pack-host/host';
 import { createMissingLog } from '../../src/overlay/renderer/missing-log';
 import { createParticleSystem } from '../../src/overlay/renderer/particles';
 import {
+  badgeContentOf,
   buildScene,
   hitAreaOf,
   particleActorsOf,
@@ -130,6 +131,9 @@ const SPRITE: SpriteCommand = {
 /** The contract pack's probe-one's hitbox (its manifest). */
 const PROBE_ONE_HITBOX = { x: -30, y: -110, width: 60, height: 110 };
 
+/** The contract pack's probe-one's anchor (its manifest). */
+const PROBE_ONE_ANCHOR = { x: 0, y: -124 };
+
 interface Setup {
   actors: StageActor[];
   characters?: StageCharacters;
@@ -202,6 +206,12 @@ describe('I/O matrix', () => {
         y: FEET,
         scale: 1,
         bounds: { x: -40, y: -130, width: 80, height: 130 },
+        badge: {
+          name: 'a1',
+          state: 'working',
+          confidence: 'exact',
+          anchor: PROBE_ONE_ANCHOR,
+        },
         sprites: [
           {
             asset: 'probe-one-plain',
@@ -280,6 +290,12 @@ describe('I/O matrix', () => {
       y: FEET,
       scale: 1,
       bounds: { x: -40, y: -130, width: 80, height: 130 },
+      badge: {
+        name: 'a1',
+        state: 'approval',
+        confidence: 'exact',
+        anchor: PROBE_ONE_ANCHOR,
+      },
       sprites: [],
       emitters: [],
       placeholder: PROBE_ONE_HITBOX,
@@ -980,14 +996,20 @@ describe('I/O matrix', () => {
       sprites: [sceneSprite(SPRITE)],
       emitters: [SPARKLE],
     });
-    const { placeholder: _placeholder, ...placed } =
-      inPlaceholder.actors[0] ?? {};
+    const {
+      placeholder: _placeholder,
+      badge: _approval,
+      ...placed
+    } = inPlaceholder.actors[0] ?? {};
     const {
       sprites: _sprites,
       emitters: _emitters,
+      badge: _working,
       ...same
     } = back.actors[0] ?? {};
-    // Same place, 大小 and bounds either way.
+    // Same place, 大小 and bounds either way; the badge shows the state.
+    expect(inPlaceholder.actors[0]?.badge?.state).toBe('approval');
+    expect(back.actors[0]?.badge?.state).toBe('working');
     expect({ ...placed, sprites: [], emitters: [] }).toStrictEqual({
       ...same,
       sprites: [],
@@ -1048,6 +1070,214 @@ describe('I/O matrix', () => {
     expect(particles.emittersOf('a1')).toStrictEqual([]);
     expect(particles.emittersOf('a2')).toHaveLength(1);
     expect(particles.emittersOf('a2')[0]?.active).toBe(true);
+  });
+});
+
+/** probe-one's and probe-two's characters, `badges` off for probe-two. */
+function badgesOffForProbeTwo(): StageCharacters {
+  return {
+    [`${ALPHA}/probe-one`]: { params: {}, fixed: fixed(1) },
+    [`${ALPHA}/probe-two`]: {
+      params: {},
+      fixed: { ...fixed(0.9), badges: false },
+    },
+  };
+}
+
+// Story 3.8: the name tag and state badge each drawn actor carries.
+describe('I/O matrix', () => {
+  it('出現: each drawn actor carries its badge: its session’s name, state and confidence, and its character’s manifest anchor (probe-two’s its own); the scene’s resolution is the canvas display’s scaleFactor, its canvasWidth the canvas’s width', () => {
+    const scene = buildScene(
+      input({
+        actors: [
+          {
+            ...actor('a1', `${ALPHA}/probe-one`, 'thinking'),
+            displayName: 'gundam-pet',
+          },
+          actor('a2', `${ALPHA}/probe-two`, 'waiting'),
+        ],
+        draws: { [ALPHA]: drawOf({ a1: [SPRITE], a2: [SPRITE] }) },
+      }),
+    );
+
+    expect(scene.actors.map((each) => each.badge)).toStrictEqual([
+      {
+        name: 'gundam-pet',
+        state: 'thinking',
+        confidence: 'exact',
+        anchor: PROBE_ONE_ANCHOR,
+      },
+      {
+        name: 'a2',
+        state: 'waiting',
+        confidence: 'exact',
+        anchor: { x: 0, y: -104 },
+      },
+    ]);
+    expect(scene.resolution).toBe(2);
+    // The canvas's width, which the badges are kept within.
+    expect(scene.canvasWidth).toBe(WORLD.width);
+  });
+
+  it('推測: an inferred state is carried as inferred; the same actor exact again is carried as exact', () => {
+    const draws = { [ALPHA]: drawOf({ a1: [SPRITE] }) };
+    const inferred = buildScene(
+      input({
+        actors: [
+          {
+            ...actor('a1', `${ALPHA}/probe-one`, 'approval'),
+            confidence: 'inferred',
+          },
+        ],
+        draws,
+      }),
+    );
+    const exact = buildScene(
+      input({
+        actors: [actor('a1', `${ALPHA}/probe-one`, 'approval')],
+        draws,
+      }),
+    );
+
+    expect(inferred.actors[0]?.badge).toMatchObject({
+      state: 'approval',
+      confidence: 'inferred',
+    });
+    expect(exact.actors[0]?.badge).toMatchObject({
+      state: 'approval',
+      confidence: 'exact',
+    });
+  });
+
+  it('佔位: an actor drawn as the placeholder carries its badge as any other; so does one whose draw gives it an empty list', () => {
+    const scene = buildScene(
+      input({
+        actors: [
+          actor('a1', `${ALPHA}/probe-one`, 'error'),
+          actor('a2', `${ALPHA}/probe-one`, 'working'),
+        ],
+        draws: { [ALPHA]: drawOf({ a2: [] }) },
+      }),
+    );
+
+    expect(
+      scene.actors.map((each) => [
+        each.actorId,
+        hasPlaceholder(each),
+        each.sprites.length,
+        each.badge?.state,
+      ]),
+    ).toStrictEqual([
+      ['a1', true, 0, 'error'],
+      ['a2', false, 0, 'working'],
+    ]);
+  });
+
+  it('不在場景: an actor its pack’s draw leaves out, or with no draw yet, is not drawn and carries no badge anywhere', () => {
+    const actors = [
+      actor('a1', `${ALPHA}/probe-one`),
+      actor('a2', `${ALPHA}/probe-one`),
+    ];
+    const leftOut = buildScene(
+      input({ actors, draws: { [ALPHA]: drawOf({ a1: [SPRITE] }) } }),
+    );
+    const noDraw = buildScene(input({ actors }));
+
+    expect(leftOut.actors.map((each) => each.actorId)).toStrictEqual(['a1']);
+    expect(noDraw.actors).toStrictEqual([]);
+  });
+
+  it('關閉: an actor whose character’s badges fixed parameter is off has no badge key, drawn or in the placeholder; the others keep theirs', () => {
+    const scene = buildScene(
+      input({
+        actors: [
+          actor('a1', `${ALPHA}/probe-one`),
+          actor('a2', `${ALPHA}/probe-two`),
+          // probe-two neither draws nor maps idle.
+          actor('a3', `${ALPHA}/probe-two`, 'idle'),
+        ],
+        characters: badgesOffForProbeTwo(),
+        draws: { [ALPHA]: drawOf({ a1: [SPRITE], a2: [SPRITE] }) },
+      }),
+    );
+
+    const byId = new Map(scene.actors.map((each) => [each.actorId, each]));
+    expect([...byId.keys()].sort()).toStrictEqual(['a1', 'a2', 'a3']);
+    expect('badge' in (byId.get('a1') ?? {})).toBe(true);
+    expect('badge' in (byId.get('a2') ?? {})).toBe(false);
+    expect('badge' in (byId.get('a3') ?? {})).toBe(false);
+    expect(hasPlaceholder(byId.get('a3'))).toBe(true);
+  });
+
+  it('改名: a display name that changed is the badge’s name in the next scene; its state and confidence too', () => {
+    const draws = { [ALPHA]: drawOf({ a1: [SPRITE] }) };
+    const build = (changes: Partial<StageActor>) =>
+      buildScene(
+        input({
+          actors: [{ ...actor('a1', `${ALPHA}/probe-one`), ...changes }],
+          draws,
+        }),
+      ).actors[0]?.badge;
+
+    expect(build({ displayName: 'before' })?.name).toBe('before');
+    expect(build({ displayName: 'after' })?.name).toBe('after');
+    expect(
+      build({ displayName: 'after', state: 'done', confidence: 'inferred' }),
+    ).toMatchObject({ name: 'after', state: 'done', confidence: 'inferred' });
+  });
+
+  it('沒名字: with no display name the badge shows the session key’s native id, everything after its first colon (as the sessions panel does)', () => {
+    const scene = buildScene(
+      input({
+        actors: [
+          actor('a1', `${ALPHA}/probe-one`, 'working', 'codex:019a-c3f0:part'),
+        ],
+        draws: { [ALPHA]: drawOf({ a1: [SPRITE] }) },
+      }),
+    );
+
+    expect(scene.actors[0]?.badge?.name).toBe('019a-c3f0:part');
+    expect(
+      badgeContentOf({
+        sessionKey: 'claude-code:abc',
+        state: 'idle',
+        confidence: 'exact',
+        displayName: null,
+      }),
+    ).toStrictEqual({ name: 'abc', state: 'idle', confidence: 'exact' });
+  });
+
+  it('滑鼠: the badges take no mouse: the areas are the same with them on or off', () => {
+    const actors = [
+      actor('a1', `${ALPHA}/probe-two`),
+      // The placeholder.
+      actor('a2', `${ALPHA}/probe-two`, 'idle'),
+    ];
+    const draws = { [ALPHA]: drawOf({ a1: [SPRITE] }) };
+    const on = buildScene(input({ actors, draws }));
+    const off = buildScene(
+      input({ actors, draws, characters: badgesOffForProbeTwo() }),
+    );
+
+    expect(on.actors.every((each) => each.badge !== undefined)).toBe(true);
+    expect(off.areas).toStrictEqual(on.areas);
+    expect(on.areas.map((area) => area.key)).toStrictEqual([
+      'claude-code:a1',
+      'claude-code:a2',
+    ]);
+  });
+
+  it('no actor, or no canvas placed yet: no badge, the resolution 1 and the canvas width 0', () => {
+    const none = buildScene(input({ actors: [] }));
+    const unplaced = buildScene(
+      input({ actors: [actor('a1', `${ALPHA}/probe-one`)], canvas: null }),
+    );
+
+    for (const scene of [none, unplaced]) {
+      expect(scene.actors).toStrictEqual([]);
+      expect(scene.resolution).toBe(1);
+      expect(scene.canvasWidth).toBe(0);
+    }
   });
 });
 

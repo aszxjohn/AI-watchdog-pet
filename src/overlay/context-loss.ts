@@ -28,7 +28,7 @@
  *   takes the mouse (no hit areas, so a cursor over a character gets
  *   click-through back); the data attributes say `context=lost` and
  *   nothing drawn, no sprite, no bitmap, no placeholder (its opacity
- *   `none`) and no particle.
+ *   `none`), no name tag and no particle.
  *   The packs' bitmaps stay as they are (none closed): PixiJS uploads them
  *   again from their ImageBitmaps once the context is back.
  * - Restored: PixiJS follows the window's size again, the world follows
@@ -205,6 +205,7 @@ export function createContextStage<V extends WorldView>({
       show('drawnBitmaps', '0');
       show('drawnPlaceholders', '0');
       show('placeholderAlpha', 'none');
+      show('drawnBadges', '0');
       show('particleEmitters', '0');
       show('liveParticles', '0');
       show('drawnEmitters', '0');

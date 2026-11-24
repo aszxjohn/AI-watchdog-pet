@@ -16,7 +16,8 @@
  * is done for 5 seconds, then waiting) and 佔位 (an API error, a state
  * probe-one neither draws nor maps, is drawn as the stage's placeholder,
  * whose opacity rises and falls, and which is drawn again once a lost
- * WebGL context is back); then 加入與移出 starts a new turn, which ends
+ * WebGL context is back); Story 3.8's name tag is counted with the actor
+ * (drawn, in the placeholder, gone); then 加入與移出 starts a new turn, which ends
  * the error (drawn by the pack again, no placeholder opacity), before the
  * session is released. Nothing is read from the screen (no screenshot,
  * no pixel), and nothing connects anywhere but the app itself.
@@ -404,6 +405,8 @@ test.describe('I/O matrix', () => {
         timeout: DRAWN_TIMEOUT_MS,
       })
       .toBe('1');
+    // With its name tag and state badge (Story 3.8: badges on by default).
+    expect((await overlayData()).drawnBadges).toBe('1');
     expect(
       readRunLog(dirs.logs).filter(
         (line) =>
@@ -614,12 +617,15 @@ test.describe('I/O matrix', () => {
       drawnSprites: first.drawnSprites,
       hitAreas: first.hitAreas,
       drawnActors: first.drawnActors,
+      drawnBadges: first.drawnBadges,
     }).toStrictEqual({
       particleEmitters: '0',
       drawnEmitters: '0',
       drawnSprites: '0',
       hitAreas: '1',
       drawnActors: '1',
+      // Its name tag and state badge, as any actor's (Story 3.8).
+      drawnBadges: '1',
     });
     expect(await stateNow()).toBe('error');
     // Unmapped, the probe gets the state itself.
@@ -689,7 +695,8 @@ test.describe('I/O matrix', () => {
         whileLost.placeholderAlpha,
         whileLost.drawnActors,
         whileLost.hitAreas,
-      ]).toStrictEqual(['0', 'none', '0', '0']);
+        whileLost.drawnBadges,
+      ]).toStrictEqual(['0', 'none', '0', '0', '0']);
 
       await restoreOverlayContext(overlay);
 
@@ -700,11 +707,16 @@ test.describe('I/O matrix', () => {
         .poll(
           async () => {
             const data = await overlayData();
-            return [data.context, data.drawnPlaceholders, data.hitAreas];
+            return [
+              data.context,
+              data.drawnPlaceholders,
+              data.hitAreas,
+              data.drawnBadges,
+            ];
           },
           { timeout: DRAWN_TIMEOUT_MS },
         )
-        .toStrictEqual(['ok', '1', '1']);
+        .toStrictEqual(['ok', '1', '1', '1']);
       expect(
         await stateNow(),
         `still error ${Date.now() - errorAt} ms after the error (errorHoldMs ${SETTINGS_DEFAULTS.errorHoldMs})`,
@@ -759,6 +771,8 @@ test.describe('I/O matrix', () => {
     expect((await overlayData()).drawnSprites).toBe('0');
     expect((await overlayData()).hitAreas).toBe('0');
     expect((await overlayData()).placeholderAlpha).toBe('none');
+    // Its name tag went with it (Story 3.8).
+    expect((await overlayData()).drawnBadges).toBe('0');
     // The despawn came: the probe wrote it back.
     expect(await told('despawn')).toMatchObject({ type: 'despawn' });
   });

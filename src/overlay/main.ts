@@ -30,7 +30,11 @@ import 'pixi.js/unsafe-eval';
 //   texture up takes the mouse. An actor whose state its character neither
 //   draws nor maps through `fallback` is drawn as the stage's placeholder
 //   (Story 3.7, renderer/placeholder.ts) instead of its pack's draw, takes
-//   the mouse, and its opacity moves on by the render loop's time too;
+//   the mouse, and its opacity moves on by the render loop's time too.
+//   Each actor drawn, its character's `badges` on, has its name tag and
+//   state badge (Story 3.8) at its `anchor`, in a layer above the
+//   characters', painted on canvases made here at the display's
+//   scaleFactor;
 // - PixiJS's resolution follows the canvas's display (`canvas.scaleFactor`,
 //   renderer/display.ts).
 // - While the canvas's WebGL context is lost (context-loss.ts, from its
@@ -39,11 +43,11 @@ import 'pixi.js/unsafe-eval';
 //   pauses (no `frame`), nothing takes the mouse, and main hears it on
 //   `canvas:gpu`; once it is back, drawing starts again from StageView now
 //   and each pack's last draw.
-// The body's data attributes say what was last drawn (bitmaps and
-// placeholders included, with the placeholders' opacity, `none` with no
-// placeholder), how many emitters and particles there are, how many areas
-// take the mouse and whether the context is lost, for DevTools and the e2e
-// tests.
+// The body's data attributes say what was last drawn (bitmaps,
+// placeholders and name tags included, with the placeholders' opacity,
+// `none` with no placeholder), how many emitters and particles there are,
+// how many areas take the mouse and whether the context is lost, for
+// DevTools and the e2e tests.
 import './index.css';
 import { Application, Assets, Container, type Ticker } from 'pixi.js';
 import { PRELOAD_API_KEY } from '../shared/constants';
@@ -59,6 +63,7 @@ import { createMissingLog } from './renderer/missing-log';
 import { capFrameRate, followResolution } from './renderer/display';
 import { createParticleSystem } from './renderer/particles';
 import {
+  badgeTextures,
   createPixiStage,
   particleTextures,
   pixiTextures,
@@ -234,6 +239,7 @@ function drawFrame(dtMs = 0): void {
   show('drawnSprites', String(counts.sprites));
   show('drawnBitmaps', String(counts.bitmaps));
   show('drawnPlaceholders', String(counts.placeholders));
+  show('drawnBadges', String(counts.badges));
   // The placeholders' opacity this frame (the e2e tests see it move).
   show(
     'placeholderAlpha',
@@ -315,7 +321,9 @@ async function initCanvas(): Promise<InitialisedCanvas> {
       'gl' in app.renderer ? app.renderer.gl.isContextLost() : false,
   });
   const layer = new Container();
-  app.stage.addChild(layer);
+  // The name tags (Story 3.8): above every character.
+  const badgeLayer = new Container();
+  app.stage.addChild(layer, badgeLayer);
   stage = createPixiStage(
     layer,
     (packId, version, asset, frame) =>
@@ -323,6 +331,10 @@ async function initCanvas(): Promise<InitialisedCanvas> {
     {
       emittersOf: (actorId) => particles.emittersOf(actorId),
       textures: particleTextures(() => document.createElement('canvas')),
+    },
+    {
+      layer: badgeLayer,
+      textures: badgeTextures(() => document.createElement('canvas')),
     },
   );
   // Before the render the Application adds itself (a lower priority).

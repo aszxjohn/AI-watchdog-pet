@@ -313,3 +313,6 @@
 - source_spec: none
   summary: Claude Code 的 transcript 被刪除（例如在 Claude 桌面 app 刪掉 session，資料夾留下 `<sessionId>.desktop-released.json`、`reason: "delete"`）時，偵測端立刻結束那個 session，讓它離開清單、收回角色，不要等 `sessionExpireMs`（預設 2 小時）過期
   evidence: 使用者 2026-11-24 實機看到：13:56 刪掉的 session 在面板上一直是「休息中」，而且佔著池子裡唯一的角色（其他 session 都已釋放），直到過期才會消失。原因是 `src/main/detection/adapters/jsonl/log-adapter.ts:76` 規定轉接器從不自己送 `session.end`，transcript 不見只會「forgetting a transcript」（同檔約 `:923`）。要改的話會動到 Epic 2 這條設計：決定是只認 `.desktop-released.json` 這個標記，還是任何 transcript 被刪都算結束，以及其他來源（Gemini、Cursor、Codex）要不要比照。使用者選擇記下來之後再排，不在 3.7 處理。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-8-badges.md`
+  summary: 「名牌畫在所有角色之上」只靠 `src/overlay/main.ts` 的 `app.stage.addChild(layer, badgeLayer)` 順序，沒有任何測試鎖住；順序寫反或 badgeLayer 掛到別處，所有測試照過，名牌會被角色或粒子蓋住
+  evidence: 2026-11-24 Story 3.8 審查 V2、B6（medium）。`pixi-stage.test.ts` 的兩個圖層沒有共同 parent，e2e 只讀 body data 屬性。要鎖住的話：讓 `createPixiStage` 自己在 `layer.parent` 上建立名牌圖層（再由 pixi-stage 單元測試斷言順序），或新增一個 DevTools data 屬性回報圖層順序。屬於圖層組裝方式的調整，不在 3.8 順手做。

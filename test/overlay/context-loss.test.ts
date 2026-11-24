@@ -377,6 +377,8 @@ describe('I/O matrix', () => {
       // The placeholders too (Story 3.7), with no opacity.
       drawnPlaceholders: '0',
       placeholderAlpha: 'none',
+      // The name tags too (Story 3.8).
+      drawnBadges: '0',
       // The particles too (Story 3.6's second last part).
       particleEmitters: '0',
       liveParticles: '0',
@@ -409,6 +411,24 @@ describe('I/O matrix', () => {
       { seq: 1, over: true },
       { seq: 2, over: false },
     ]);
+  });
+
+  it('context lost: with name tags shown (counted), lost sets drawnBadges to 0; restored, the canvas follows the view again, so the next draw counts them again', () => {
+    const t = stageSetup();
+    t.setView(view(['a1', 'a2']));
+    // What main.ts's drawFrame showed for two actors with their name tags.
+    t.shown.set('drawnActors', '2');
+    t.shown.set('drawnBadges', '2');
+
+    t.fire('webglcontextlost');
+
+    expect(t.shown.get('drawnBadges')).toBe('0');
+    expect(t.shown.get('drawnActors')).toBe('0');
+
+    t.fire('webglcontextrestored');
+
+    expect(t.shown.get('context')).toBe('ok');
+    expect(t.followed.at(-1)).toStrictEqual(view(['a1', 'a2']));
   });
 
   it('context lost 後還原: StageView changes while lost keep the world paused', () => {

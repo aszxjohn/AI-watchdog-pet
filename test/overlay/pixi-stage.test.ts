@@ -1,8 +1,9 @@
 /**
- * overlay/renderer/pixi-stage (Stories 3.6, 3.7), with PixiJS itself under
- * Node (no renderer, no DOM): the display objects a Scene becomes (the
- * placeholder's included), and the textures the backend makes
- * (spritesheet frames, sampling).
+ * overlay/renderer/pixi-stage (Stories 3.6, 3.7, 3.8), with PixiJS itself
+ * under Node (no renderer, no DOM): the display objects a Scene becomes
+ * (the placeholder's and the name tags' included), and the textures the
+ * backend makes (spritesheet frames, sampling, the name tags' on fake 2D
+ * canvases).
  */
 import {
   Container,
@@ -20,6 +21,15 @@ import type {
   ParticleView,
 } from '../../src/overlay/renderer/particles';
 import {
+  BADGE_DOT_GAP,
+  BADGE_DOT_RADIUS,
+  BADGE_LINE_HEIGHT,
+  BADGE_NAME_MAX_WIDTH,
+  BADGE_PADDING_X,
+  BADGE_PADDING_Y,
+  BADGE_STACK_GAP,
+} from '../../src/overlay/renderer/badges';
+import {
   PLACEHOLDER_ALPHA_MAX,
   PLACEHOLDER_ALPHA_MIN,
   PLACEHOLDER_COLOR,
@@ -28,6 +38,7 @@ import {
   placeholderShape,
 } from '../../src/overlay/renderer/placeholder';
 import {
+  badgeTextures,
   bitmapTexture,
   createPixiStage,
   type PaintCanvas,
@@ -36,18 +47,24 @@ import {
   particleTextures,
   pixiTextures,
   sheetTextures,
+  type StageBadges,
   type StageParticles,
   TEXTURE_SCALE_MODE,
 } from '../../src/overlay/renderer/pixi-stage';
 import type {
   Scene,
   SceneActor,
+  SceneBadge,
   SceneBitmap,
 } from '../../src/overlay/renderer/scene';
 import {
   PARTICLE_PRESETS,
   type ParticlePreset,
 } from '../../src/shared/pack-api';
+import {
+  FAKE_CHAR_WIDTH,
+  fakeBadgeCanvases,
+} from '../helpers/fake-badge-canvas';
 import { FakeImageBitmap } from '../helpers/fake-bitmaps';
 
 const BOUNDS = { x: -40, y: -130, width: 80, height: 130 };
@@ -71,8 +88,22 @@ function sceneActor(
   };
 }
 
-function scene(actors: SceneActor[]): Scene {
-  return { actors, areas: [], missing: new Set() };
+/** The world's width in these scenes, DIP. */
+const CANVAS_WIDTH = 1512;
+
+function scene(
+  actors: SceneActor[],
+  resolution = 1,
+  canvasWidth = CANVAS_WIDTH,
+): Scene {
+  return { actors, resolution, canvasWidth, areas: [], missing: new Set() };
+}
+
+/** Where the stage draws the name tags: its layer and textures. */
+function stageBadges(
+  canvases: ReturnType<typeof fakeBadgeCanvases> = fakeBadgeCanvases(),
+): StageBadges {
+  return { layer: new Container(), textures: badgeTextures(canvases.create) };
 }
 
 /** A texture of its own source, `width` × `height` pixels. */
@@ -95,6 +126,7 @@ function setup() {
       emittersOf: () => [],
       textures: particleTextures(fakeCanvases().create),
     },
+    stageBadges(),
   );
   return { layer, stage, textures };
 }
@@ -155,6 +187,7 @@ describe('I/O matrix', () => {
       bitmaps: 0,
       placeholders: 0,
       placeholderAlpha: placeholderAlpha(0),
+      badges: 0,
     });
     expect(layer.children).toHaveLength(2);
     const [first, second] = layer.children as Container[];
@@ -226,6 +259,7 @@ describe('I/O matrix', () => {
       bitmaps: 0,
       placeholders: 0,
       placeholderAlpha: placeholderAlpha(0),
+      badges: 0,
     });
     expect(partsOf(layer.children[0] as Container).sprites[0]?.visible).toBe(
       false,
@@ -337,7 +371,7 @@ function setupParticles() {
     textures: particleTextures(canvases.create),
   };
   const sprite = textureOf();
-  const stage = createPixiStage(layer, () => sprite, particles);
+  const stage = createPixiStage(layer, () => sprite, particles, stageBadges());
   return { layer, stage, emitters, particles, canvases };
 }
 
@@ -528,6 +562,7 @@ describe('I/O matrix', () => {
       bitmaps: 0,
       placeholders: 0,
       placeholderAlpha: placeholderAlpha(0),
+      badges: 0,
     });
     expect(layer.children).toHaveLength(1);
   });
@@ -706,6 +741,7 @@ describe('I/O matrix', () => {
       bitmaps: 1,
       placeholders: 0,
       placeholderAlpha: placeholderAlpha(0),
+      badges: 0,
     });
     const container = layer.children[0] as Container;
     const sprite = spriteOf(container, image);
@@ -959,6 +995,7 @@ describe('I/O matrix', () => {
       bitmaps: 0,
       placeholders: 1,
       placeholderAlpha: placeholderAlpha(0),
+      badges: 0,
     });
     const container = layer.children[0] as Container;
     expect(layoutOf(container)).toStrictEqual(['mask', 'placeholder']);
@@ -1058,6 +1095,7 @@ describe('I/O matrix', () => {
     expect(counts).toMatchObject({
       placeholders: 0,
       placeholderAlpha: placeholderAlpha(500),
+      badges: 0,
     });
   });
 
@@ -1098,6 +1136,7 @@ describe('I/O matrix', () => {
       bitmaps: 0,
       placeholders: 0,
       placeholderAlpha: placeholderAlpha(0),
+      badges: 0,
     });
     expect(graphics?.destroyed).toBe(true);
     expect(layer.children[0]).toBe(container);
@@ -1143,6 +1182,7 @@ describe('I/O matrix', () => {
       bitmaps: 0,
       placeholders: 1,
       placeholderAlpha: placeholderAlpha(0),
+      badges: 0,
     });
     expect(sprite?.destroyed).toBe(true);
     expect(bitmapSprite?.destroyed).toBe(true);
@@ -1180,5 +1220,536 @@ describe('I/O matrix', () => {
     expect(two?.destroyed).toBe(false);
     stage.destroy();
     expect(two?.destroyed).toBe(true);
+  });
+});
+
+// Story 3.8: the name tags and state badges.
+
+/** A badge for probe-one: name 'gundam-pet', working, exact. */
+function badgeOf(overrides: Partial<SceneBadge> = {}): SceneBadge {
+  return {
+    name: 'gundam-pet',
+    state: 'working',
+    confidence: 'exact',
+    anchor: { x: 0, y: -124 },
+    ...overrides,
+  };
+}
+
+/**
+ * The size of badgeOf()'s tag with the fake canvases' measuring
+ * (FAKE_CHAR_WIDTH DIP a code point): its name, gundam-pet, is its widest
+ * line; two lines high.
+ */
+const TAG = {
+  width: 10 * FAKE_CHAR_WIDTH + BADGE_PADDING_X * 2,
+  height: BADGE_PADDING_Y * 2 + BADGE_LINE_HEIGHT * 2,
+};
+
+/** A pixi-stage drawing name tags on fake canvases. */
+function setupBadges() {
+  const layer = new Container();
+  const canvases = fakeBadgeCanvases();
+  const badges = stageBadges(canvases);
+  const sprite = textureOf();
+  const stage = createPixiStage(
+    layer,
+    () => sprite,
+    {
+      emittersOf: () => [],
+      textures: particleTextures(fakeCanvases().create),
+    },
+    badges,
+  );
+  return { layer, stage, badges, canvases };
+}
+
+/** A name wider than BADGE_NAME_MAX_WIDTH: its tag is as wide as one gets. */
+const WIDE_NAME = 'x'.repeat(
+  Math.ceil(BADGE_NAME_MAX_WIDTH / FAKE_CHAR_WIDTH) + 10,
+);
+
+/** One level up: a tag's height and the gap. */
+const LEVEL = TAG.height + BADGE_STACK_GAP;
+
+/** A tag's box, as stackBadges has it. */
+interface Box {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Each tag's box, in the badge layer's order. */
+function boxesOf(badges: StageBadges): Box[] {
+  return tagsIn(badges).map((tag) => ({
+    left: tag.x,
+    top: tag.y,
+    width: tag.width,
+    height: tag.height,
+  }));
+}
+
+/**
+ * Where `box`'s tag is wanted, right above the anchor of an actor at `x`
+ * (y 800, anchor 0, -124, 大小 1).
+ */
+function wantedAt(
+  x: number,
+  box: Box | undefined,
+): { left: number; top: number } {
+  const width = box?.width ?? NaN;
+  return { left: x - width / 2, top: 800 - 124 - TAG.height };
+}
+
+/** Whether two boxes overlap (touching edges do not). */
+function overlap(a: Box | undefined, b: Box | undefined): boolean {
+  if (a === undefined || b === undefined) {
+    return true;
+  }
+  return (
+    a.left < b.left + b.width &&
+    b.left < a.left + a.width &&
+    a.top < b.top + b.height &&
+    b.top < a.top + a.height
+  );
+}
+
+/** The tags in the badge layer, in order. */
+function tagsIn(badges: StageBadges): Sprite[] {
+  return badges.layer.children as Sprite[];
+}
+
+describe('I/O matrix', () => {
+  it('出現: an actor with a badge has one Sprite in the badge layer, its bottom middle at its position plus anchor × 大小, at the tag’s size in DIP whatever its 大小, not in its container (so neither scaled nor clipped); counted as a badge', () => {
+    const { layer, stage, badges } = setupBadges();
+
+    const counts = stage.draw(
+      scene(
+        [
+          sceneActor('a1', {
+            x: 100,
+            y: 800,
+            scale: 1.5,
+            sprites: [SPRITE_COMMAND],
+            badge: badgeOf(),
+          }),
+        ],
+        2,
+      ),
+    );
+
+    expect(counts).toMatchObject({ actors: 1, sprites: 1, badges: 1 });
+    const [tag] = tagsIn(badges);
+    expect(tag).toBeInstanceOf(Sprite);
+    expect(tag?.parent).toBe(badges.layer);
+    expect([tag?.anchor.x, tag?.anchor.y]).toStrictEqual([0, 0]);
+    expect([tag?.scale.x, tag?.scale.y]).toStrictEqual([1, 1]);
+    expect([tag?.width, tag?.height]).toStrictEqual([TAG.width, TAG.height]);
+    // Bottom middle: x 100 + 0 × 1.5, y 800 - 124 × 1.5.
+    expect([
+      (tag?.x ?? 0) + TAG.width / 2,
+      (tag?.y ?? 0) + TAG.height,
+    ]).toStrictEqual([100, 800 - 124 * 1.5]);
+    // The actor's container holds its mask and sprite only.
+    const container = layer.children[0] as Container;
+    expect(container.children).toHaveLength(2);
+    expect(container.children).not.toContain(tag);
+    expect(tag?.mask ?? null).toBeNull();
+  });
+
+  it('出現: an anchor off the middle is scaled by 大小 too: the bottom middle at x + anchor.x × 大小, y + anchor.y × 大小', () => {
+    const { stage, badges } = setupBadges();
+    stage.draw(
+      scene([
+        sceneActor('a1', {
+          x: 100,
+          y: 800,
+          scale: 1.5,
+          badge: badgeOf({ anchor: { x: 10, y: -124 } }),
+        }),
+      ]),
+    );
+
+    const [tag] = tagsIn(badges);
+    expect([
+      (tag?.x ?? 0) + TAG.width / 2,
+      (tag?.y ?? 0) + TAG.height,
+    ]).toStrictEqual([100 + 10 * 1.5, 800 - 124 * 1.5]);
+  });
+
+  it('名牌互疊: two neighbours (centres 96 DIP apart) whose tags are wider than that: the first stays right above its anchor, the second goes up one level (its height and BADGE_STACK_GAP); neither overlaps the other', () => {
+    const { stage, badges } = setupBadges();
+    stage.draw(
+      scene([
+        sceneActor('a1', { x: 1000, badge: badgeOf({ name: WIDE_NAME }) }),
+        sceneActor('a2', { x: 1096, badge: badgeOf({ name: WIDE_NAME }) }),
+      ]),
+    );
+
+    const [one, two] = boxesOf(badges);
+    expect(one?.width).toBeGreaterThan(96);
+    expect(one).toMatchObject(wantedAt(1000, one));
+    expect(two).toMatchObject({
+      left: wantedAt(1096, two).left,
+      top: wantedAt(1096, two).top - LEVEL,
+    });
+    expect(overlap(one, two)).toBe(false);
+  });
+
+  it('名牌互疊: two tags far apart both stay right above their anchors', () => {
+    const { stage, badges } = setupBadges();
+    stage.draw(
+      scene([
+        sceneActor('a1', { x: 600, badge: badgeOf({ name: WIDE_NAME }) }),
+        sceneActor('a2', { x: 1000, badge: badgeOf({ name: WIDE_NAME }) }),
+      ]),
+    );
+
+    const [one, two] = boxesOf(badges);
+    expect(one).toMatchObject(wantedAt(600, one));
+    expect(two).toMatchObject(wantedAt(1000, two));
+  });
+
+  it('名牌互疊: three in a row 96 DIP apart: levels 0, 1, 0 (the third clears the first); packed closer, 0, 1, 2; no two overlap either way', () => {
+    const { stage, badges } = setupBadges();
+    const row = (gap: number) => {
+      stage.draw(
+        scene(
+          [0, 1, 2].map((index) =>
+            sceneActor(`a${index}`, {
+              x: 800 + index * gap,
+              badge: badgeOf({ name: WIDE_NAME }),
+            }),
+          ),
+        ),
+      );
+      const boxes = boxesOf(badges);
+      for (const [a, b] of [
+        [0, 1],
+        [0, 2],
+        [1, 2],
+      ] as const) {
+        expect(overlap(boxes[a], boxes[b])).toBe(false);
+      }
+      return boxes.map(
+        (box, index) =>
+          (wantedAt(800 + index * gap, box).top - (box?.top ?? NaN)) / LEVEL,
+      );
+    };
+
+    expect(row(96)).toStrictEqual([0, 1, 0]);
+    expect(row(30)).toStrictEqual([0, 1, 2]);
+  });
+
+  it('邊緣: the rightmost actor (its origin 64 DIP from the right edge) has its wide tag moved left to end at the canvas’s right edge; one at the left edge starts at 0; one whose tag would go above the canvas has its top at 0', () => {
+    const { stage, badges } = setupBadges();
+    stage.draw(
+      scene([
+        sceneActor('a1', {
+          x: CANVAS_WIDTH - 64,
+          badge: badgeOf({ name: WIDE_NAME }),
+        }),
+        sceneActor('a2', { x: 20, badge: badgeOf({ name: WIDE_NAME }) }),
+        sceneActor('a3', { x: 700, y: 100, badge: badgeOf() }),
+      ]),
+    );
+
+    const [right, left, high] = boxesOf(badges);
+    expect((right?.width ?? 0) / 2).toBeGreaterThan(64);
+    expect(right).toMatchObject({
+      left: CANVAS_WIDTH - (right?.width ?? NaN),
+      top: wantedAt(0, right).top,
+    });
+    expect(left).toMatchObject({ left: 0, top: wantedAt(0, left).top });
+    expect(high?.top).toBe(0);
+  });
+
+  it('不接滑鼠: the badge layer and its tags take no PixiJS events', () => {
+    const { stage, badges } = setupBadges();
+    stage.draw(scene([sceneActor('a1', { badge: badgeOf() })]));
+
+    expect(badges.layer.eventMode).toBe('none');
+    expect(badges.layer.interactiveChildren).toBe(false);
+    expect(tagsIn(badges)[0]?.eventMode).toBe('none');
+  });
+
+  it('解析度: the tag’s texture is painted on its own canvas at the scene’s resolution (the canvas display’s scaleFactor), its source’s resolution, so it is drawn at its size in DIP, sampled linearly', () => {
+    const { stage, badges, canvases } = setupBadges();
+    stage.draw(scene([sceneActor('a1', { badge: badgeOf() })], 2));
+
+    const [tag] = tagsIn(badges);
+    const [made] = canvases.made;
+    expect(canvases.made).toHaveLength(1);
+    expect([made?.canvas.width, made?.canvas.height]).toStrictEqual([
+      TAG.width * 2,
+      TAG.height * 2,
+    ]);
+    const source = tag?.texture.source;
+    expect(source).toBeInstanceOf(ImageSource);
+    expect(source?.resource).toBe(made?.canvas);
+    expect(source?.resolution).toBe(2);
+    expect(source?.scaleMode).toBe(TEXTURE_SCALE_MODE);
+    expect([tag?.texture.width, tag?.texture.height]).toStrictEqual([
+      TAG.width,
+      TAG.height,
+    ]);
+    expect(made?.calls[0]).toBe('setTransform 2 0 0 2 0 0');
+    expect(made?.calls.join('\n')).toContain('fillText "gundam-pet"');
+  });
+
+  it('解析度: the tag’s top-left corner is on the nearest whole device pixel, so its text stays sharp', () => {
+    const { stage, badges } = setupBadges();
+    // The exact corner: its bottom middle at x, y - 124.
+    const exact = [100.3 - TAG.width / 2, 800.2 - 124 - TAG.height];
+
+    const cornerAt = (resolution: number): number[] => {
+      stage.draw(
+        scene(
+          [sceneActor('a1', { x: 100.3, y: 800.2, badge: badgeOf() })],
+          resolution,
+        ),
+      );
+      const [tag] = tagsIn(badges);
+      return [tag?.x ?? NaN, tag?.y ?? NaN];
+    };
+
+    // At 1, whole DIP: x.3 and y.2 rounded down.
+    expect(cornerAt(1)).toStrictEqual(exact.map(Math.round));
+    for (const resolution of [1.5, 2]) {
+      cornerAt(resolution).forEach((value, index) => {
+        const pixels = value * resolution;
+        expect(Math.abs(pixels - Math.round(pixels))).toBeLessThan(1e-9);
+        expect(
+          Math.abs(value - (exact[index] ?? NaN)) * resolution,
+        ).toBeLessThanOrEqual(0.5);
+      });
+    }
+  });
+
+  it('推測: an inferred state’s tag is a texture of its own, painted otherwise (a ring, not a dot, and ？ after the state’s name)', () => {
+    const { stage, badges, canvases } = setupBadges();
+    stage.draw(
+      scene([
+        sceneActor('a1', { badge: badgeOf() }),
+        sceneActor('a2', { badge: badgeOf({ confidence: 'inferred' }) }),
+      ]),
+    );
+
+    const [exact, inferred] = tagsIn(badges);
+    expect(exact?.texture).not.toBe(inferred?.texture);
+    const [one, two] = canvases.made.map((each) => each.calls.join('\n'));
+    expect(one).not.toContain('stroke');
+    expect(one).toContain('fillText "工作中"');
+    expect(two).toMatch(/^stroke /m);
+    expect(two).toContain('fillText "工作中？"');
+  });
+
+  it('佔位: an actor drawn as the placeholder has its tag too; counted as a placeholder and a badge', () => {
+    const { stage, badges } = setupBadges();
+    const counts = stage.draw(
+      scene([placeholderActor('a1', { badge: badgeOf({ state: 'error' }) })]),
+    );
+
+    expect(counts).toMatchObject({ actors: 1, placeholders: 1, badges: 1 });
+    expect(tagsIn(badges)).toHaveLength(1);
+  });
+
+  it('關閉: an actor with no badge (its badges fixed parameter off) has no tag; one with an empty list has one', () => {
+    const { stage, badges } = setupBadges();
+    const counts = stage.draw(
+      scene([
+        sceneActor('a1', { sprites: [SPRITE_COMMAND] }),
+        sceneActor('a2', { badge: badgeOf() }),
+      ]),
+    );
+
+    expect(counts).toMatchObject({ actors: 2, badges: 1 });
+    expect(tagsIn(badges)).toHaveLength(1);
+    expect(badges.textures.count()).toBe(1);
+  });
+
+  it('重疊: the tags are in the badge layer, in the scene’s order (a lower actor’s above), not among the actors’ containers; reordered as the scene says', () => {
+    const { layer, stage, badges } = setupBadges();
+    const back = sceneActor('a1', { y: 700, badge: badgeOf({ name: 'one' }) });
+    const front = sceneActor('a2', { y: 800, badge: badgeOf({ name: 'two' }) });
+
+    stage.draw(scene([back, front]));
+    const [one, two] = tagsIn(badges);
+    stage.draw(
+      scene([
+        { ...front, y: 600 },
+        { ...back, y: 900 },
+      ]),
+    );
+
+    expect(layer.children.every((child) => !(child instanceof Sprite))).toBe(
+      true,
+    );
+    expect(tagsIn(badges)).toStrictEqual([two, one]);
+    expect([one?.destroyed, two?.destroyed]).toStrictEqual([false, false]);
+  });
+
+  it('同內容共用: tags of the same content share one texture, made on one canvas', () => {
+    const { stage, badges, canvases } = setupBadges();
+    stage.draw(
+      scene([
+        sceneActor('a1', { badge: badgeOf() }),
+        sceneActor('a2', { badge: badgeOf({ anchor: { x: 0, y: -104 } }) }),
+      ]),
+    );
+
+    const [one, two] = tagsIn(badges);
+    expect(one?.texture).toBe(two?.texture);
+    expect(canvases.made).toHaveLength(1);
+    expect(badges.textures.count()).toBe(1);
+  });
+
+  it('改名: a tag whose name, state or confidence changed shows its new texture at the next draw, the same Sprite; the old texture, used by no tag, is destroyed with its source', () => {
+    const { stage, badges } = setupBadges();
+    stage.draw(scene([sceneActor('a1', { badge: badgeOf() })]));
+    const [tag] = tagsIn(badges);
+    const before = tag?.texture;
+    const source = before?.source;
+
+    for (const changes of [
+      { name: 'renamed' },
+      { name: 'renamed', state: 'done' as const },
+      {
+        name: 'renamed',
+        state: 'done' as const,
+        confidence: 'inferred' as const,
+      },
+    ]) {
+      const shown = tag?.texture;
+      stage.draw(scene([sceneActor('a1', { badge: badgeOf(changes) })]));
+      expect(tagsIn(badges)).toStrictEqual([tag]);
+      expect(tag?.texture).not.toBe(shown);
+      expect(shown?.destroyed).toBe(true);
+    }
+    expect(before?.destroyed).toBe(true);
+    expect(source?.destroyed).toBe(true);
+    expect(badges.textures.count()).toBe(1);
+  });
+
+  it('離場: an actor gone takes its tag with it; a texture another tag still uses stays; once no tag uses it, it is destroyed with its source', () => {
+    const { stage, badges } = setupBadges();
+    const both = [
+      sceneActor('a1', { badge: badgeOf() }),
+      sceneActor('a2', { badge: badgeOf() }),
+    ];
+    stage.draw(scene(both));
+    const [one, two] = tagsIn(badges);
+    const texture = one?.texture;
+    const source = texture?.source;
+
+    const counts = stage.draw(scene([both[1] as SceneActor]));
+
+    expect(counts.badges).toBe(1);
+    expect(one?.destroyed).toBe(true);
+    expect(tagsIn(badges)).toStrictEqual([two]);
+    expect(texture?.destroyed).toBe(false);
+
+    expect(stage.draw(scene([])).badges).toBe(0);
+    expect(two?.destroyed).toBe(true);
+    expect(tagsIn(badges)).toStrictEqual([]);
+    expect(texture?.destroyed).toBe(true);
+    expect(source?.destroyed).toBe(true);
+    expect(badges.textures.count()).toBe(0);
+  });
+
+  it('關閉: an actor whose badge goes off (still drawn) has its tag destroyed, and its texture with no other tag', () => {
+    const { stage, badges } = setupBadges();
+    stage.draw(scene([sceneActor('a1', { badge: badgeOf() })]));
+    const [tag] = tagsIn(badges);
+
+    const counts = stage.draw(scene([sceneActor('a1')]));
+
+    expect(counts).toMatchObject({ actors: 1, badges: 0 });
+    expect(tag?.destroyed).toBe(true);
+    expect(badges.textures.count()).toBe(0);
+  });
+
+  it('換螢幕: a new resolution paints a new texture at it; the old one is destroyed', () => {
+    const { stage, badges, canvases } = setupBadges();
+    const actors = [sceneActor('a1', { badge: badgeOf() })];
+    stage.draw(scene(actors, 2));
+    const before = tagsIn(badges)[0]?.texture;
+
+    stage.draw(scene(actors, 1));
+
+    const after = tagsIn(badges)[0]?.texture;
+    expect(after?.source.resolution).toBe(1);
+    expect(before?.destroyed).toBe(true);
+    expect(canvases.made.map(({ canvas }) => canvas.width)).toStrictEqual([
+      TAG.width * 2,
+      TAG.width,
+    ]);
+  });
+
+  it('context 還原: the same scene drawn again keeps the same tag and texture (PixiJS uploads it again from its canvas): nothing is destroyed or painted again', () => {
+    const { stage, badges, canvases } = setupBadges();
+    const actors = [sceneActor('a1', { badge: badgeOf() })];
+    stage.draw(scene(actors, 2));
+    const [tag] = tagsIn(badges);
+    const texture = tag?.texture;
+
+    stage.draw(scene(actors, 2));
+
+    expect(tagsIn(badges)).toStrictEqual([tag]);
+    expect(tag?.texture).toBe(texture);
+    expect(texture?.destroyed).toBe(false);
+    expect(canvases.made).toHaveLength(1);
+  });
+
+  it('destroy() destroys the tags and their textures with their sources', () => {
+    const { stage, badges } = setupBadges();
+    stage.draw(scene([sceneActor('a1', { badge: badgeOf() })]));
+    const [tag] = tagsIn(badges);
+    const texture = tag?.texture;
+    const source = texture?.source;
+
+    stage.destroy();
+
+    expect(tag?.destroyed).toBe(true);
+    expect(texture?.destroyed).toBe(true);
+    expect(source?.destroyed).toBe(true);
+    expect(tagsIn(badges)).toStrictEqual([]);
+    expect(badges.textures.count()).toBe(0);
+  });
+});
+
+describe('the name tags’ textures', () => {
+  it('a canvas without a 2D context gives a clear texture, nothing measured (the dot and the padding only), not an error', () => {
+    const textures = badgeTextures(
+      fakeBadgeCanvases({ noContext: true }).create,
+    );
+
+    const badge = textures.get(badgeOf(), 2);
+
+    expect(badge.texture).toBeInstanceOf(Texture);
+    expect([badge.width, badge.height]).toStrictEqual([
+      BADGE_DOT_RADIUS * 2 + BADGE_DOT_GAP + BADGE_PADDING_X * 2,
+      TAG.height,
+    ]);
+  });
+
+  it('sweep() keeps what was asked for since the last sweep and destroys the rest; the same content asked again is the same texture', () => {
+    const textures = badgeTextures(fakeBadgeCanvases().create);
+    const one = textures.get(badgeOf(), 1);
+    const two = textures.get(badgeOf({ name: 'other' }), 1);
+    expect(textures.get(badgeOf(), 1)).toBe(one);
+    textures.sweep();
+    expect(textures.count()).toBe(2);
+
+    textures.get(badgeOf(), 1);
+    textures.sweep();
+
+    expect(textures.count()).toBe(1);
+    expect(one.texture.destroyed).toBe(false);
+    expect(two.texture.destroyed).toBe(true);
+    textures.destroy();
+    expect(one.texture.destroyed).toBe(true);
+    expect(textures.count()).toBe(0);
   });
 });

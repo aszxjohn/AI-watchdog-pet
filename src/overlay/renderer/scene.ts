@@ -1,5 +1,5 @@
 /**
- * overlay/renderer (Stories 3.6, 3.7): what to draw this display frame,
+ * overlay/renderer (Stories 3.6, 3.7, 3.8): what to draw this display frame,
  * worked out as plain data: no PixiJS and no DOM, so it is unit-tested
  * under Node. pixi-stage.ts draws it.
  *
@@ -48,10 +48,23 @@
  *   only sprites whose textures are still loading or failed, or only a
  *   bitmap not up yet, so nothing invisible catches a click. Particles
  *   never change an actor's area.
+ * - Each actor drawn (placeholders and empty lists included) carries its
+ *   name tag and state badge (Story 3.8, `badge`) unless its character's
+ *   `badges` fixed parameter is off: its session's display name (its
+ *   native id while it has none), state and confidence as StageView has
+ *   them now, and its character's manifest `anchor`. An actor not drawn
+ *   has none. The badges take no mouse: they never change `areas`.
+ * - The scene's `resolution` is the canvas display's scaleFactor: what
+ *   pixi-stage.ts paints the badges' text at; its `canvasWidth` is the
+ *   world's width, which pixi-stage.ts keeps the badges within.
  */
-import type { SessionKey } from '../../shared/detection-events';
+import {
+  type SessionKey,
+  splitSessionKey,
+} from '../../shared/detection-events';
 import {
   type LocalBox,
+  type LocalPoint,
   type PackCharacter,
   SPRITE_COMMAND_DEFAULTS,
 } from '../../shared/pack-api';
@@ -59,6 +72,7 @@ import type { StageCharacter, StageView } from '../../shared/stage-view';
 import type { PackLook } from '../looks';
 import type { PackDraw } from '../pack-host/host';
 import type { ImageBitmapLike } from '../../shared/draw-size';
+import type { BadgeContent } from './badges';
 import type {
   DrawnCommand,
   ParticlesCommand,
@@ -98,6 +112,18 @@ export interface SceneBitmap {
   readonly height: number;
 }
 
+/**
+ * An actor's name tag and state badge (Story 3.8): what it shows, and
+ * where.
+ */
+export interface SceneBadge extends BadgeContent {
+  /**
+   * Its character's manifest `anchor`, in the actor's local coordinates:
+   * the tag's bottom middle, at the actor's 大小.
+   */
+  readonly anchor: LocalPoint;
+}
+
 /** One actor to draw. */
 export interface SceneActor {
   readonly actorId: string;
@@ -123,12 +149,28 @@ export interface SceneActor {
    * 3.7; no key otherwise): then it has no sprite, emitter or bitmap.
    */
   readonly placeholder?: LocalBox;
+  /**
+   * Its name tag and state badge (Story 3.8); no key when its character's
+   * `badges` fixed parameter is off.
+   */
+  readonly badge?: SceneBadge;
 }
 
 /** What to draw this display frame. */
 export interface Scene {
   /** The actors drawn, bottom first. */
   readonly actors: readonly SceneActor[];
+  /**
+   * The canvas display's scaleFactor: the device pixels to the DIP the
+   * badges' text is painted at. 1 in a scene with no actor (the canvas not
+   * placed yet, or no actor on it).
+   */
+  readonly resolution: number;
+  /**
+   * The canvas's width, DIP (StageView `canvas.bounds`): the badges are
+   * kept within it. 0 in a scene with no actor.
+   */
+  readonly canvasWidth: number;
   /** What takes the mouse, top last. */
   readonly areas: readonly HitArea<SessionKey>[];
   /**
@@ -234,13 +276,35 @@ export function hitAreaOf(
 
 const EMPTY: Scene = Object.freeze({
   actors: [],
+  resolution: 1,
+  canvasWidth: 0,
   areas: [],
   missing: new Set<string>(),
 });
 
+/**
+ * What `actor`'s badge shows (Story 3.8): its display name, or its native
+ * id while it has none (as the sessions panel names it), state and
+ * confidence.
+ */
+export function badgeContentOf(
+  actor: Pick<
+    StageView['actors'][number],
+    'sessionKey' | 'state' | 'confidence' | 'displayName'
+  >,
+): BadgeContent {
+  return {
+    name: actor.displayName ?? splitSessionKey(actor.sessionKey).nativeId,
+    state: actor.state,
+    confidence: actor.confidence,
+  };
+}
+
 /** An actor to place, with what drawing it needs. */
 interface Member extends RowMember<string> {
   readonly bounds: LocalBox;
+  /** Its character's `badges` fixed parameter. */
+  readonly badges: boolean;
   readonly actor: StageView['actors'][number];
   readonly look: PackLook;
   readonly character: PackCharacter;
@@ -292,6 +356,7 @@ export function buildScene({
       key: actor.actorId,
       bounds: character.bounds,
       scale: values.fixed.scale,
+      badges: values.fixed.badges,
       actor,
       look: packLook,
       character,
@@ -315,6 +380,14 @@ export function buildScene({
       y: at.y,
       scale: member.scale,
       bounds: member.bounds,
+      ...(member.badges
+        ? {
+            badge: {
+              ...badgeContentOf(actor),
+              anchor: character.anchor,
+            },
+          }
+        : {}),
     };
     if (mappedState(character, actor.state) === null) {
       // The placeholder; the pack's draw is not used, whatever it has.
@@ -352,6 +425,8 @@ export function buildScene({
   drawn.sort((a, b) => a.actor.y - b.actor.y);
   return {
     actors: drawn.map(({ actor }) => actor),
+    resolution: canvas.scaleFactor,
+    canvasWidth: canvas.bounds.width,
     areas: drawn
       .filter(
         ({ actor }) =>
