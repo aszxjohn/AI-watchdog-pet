@@ -1,26 +1,35 @@
 /**
- * overlay/renderer (Story 3.6): what to draw this display frame, worked out
- * as plain data: no PixiJS and no DOM, so it is unit-tested under Node.
- * pixi-stage.ts draws it.
+ * overlay/renderer (Stories 3.6, 3.7): what to draw this display frame,
+ * worked out as plain data: no PixiJS and no DOM, so it is unit-tested
+ * under Node. pixi-stage.ts draws it.
  *
  * - An actor is placed (world/layout.ts) when its pack is installed, its
  *   character is in StageView's `characters` and the pack's look (its
  *   manifest at the version installed) has come; one whose character is
  *   missing from `characters` (or from that manifest) is reported in
  *   `missing`, by pack, and drawn nowhere.
- * - A placed actor is drawn when its state maps (world/states.ts: in the
- *   character's `states` or its `fallback`) and its pack's latest valid
+ * - A placed actor whose state maps (world/states.ts: in the character's
+ *   `states` or its `fallback`) is drawn when its pack's latest valid
  *   draw, made by the version installed, has it: its sprite commands,
  *   ordered by `z` (ties keep the pack's order), its `bitmap` command, if
  *   any (Story 3.6's last part: checkDraw lets one an actor through, which
  *   pixi-stage.ts draws above its sprites), and its `particles` commands
  *   (its emitters, which particles.ts runs and pixi-stage.ts draws above
- *   the rest). An empty list draws nothing but the actor is there. A state
- *   that does not map draws nothing of it (the placeholder is Story 3.7),
- *   nor does a draw that leaves it out.
+ *   the rest). An empty list draws nothing but the actor is there, with no
+ *   placeholder; a draw that leaves it out (or no draw yet) draws nothing
+ *   of it, with no placeholder either.
+ * - A placed actor whose state does not map is drawn as the placeholder
+ *   (Story 3.7, placeholder.ts: `placeholder` is its character's
+ *   `hitbox`), whether or not its pack has drawn yet, and its pack's draw
+ *   is not used, whatever it has: no sprite, no bitmap (pixi-stage.ts
+ *   releases one it had up) and no particle (particleActorsOf() leaves it
+ *   out, so particles.ts removes its emitters and their particles at once,
+ *   as for an actor not drawn). Only its state now counts: once it maps
+ *   again, the pack's latest draw is drawn, as at any change of state.
  * - Each drawn actor sits at its position, scaled by its 大小 (the `scale`
  *   fixed parameter), clipped to its manifest `bounds`. Actors are drawn
- *   by `y`, lower on the screen on top (ties keep StageView's order).
+ *   by `y`, lower on the screen on top (ties keep StageView's order),
+ *   placeholders among them.
  * - A sprite: the image's top-left corner at `x`, `y` in the actor's local
  *   coordinates (base pixels); one image pixel is one base pixel times
  *   `scaleX`, `scaleY` (a negative one flips it about that corner), turned
@@ -31,13 +40,14 @@
  *   image's own size).
  * - A drawn actor with at least one sprite on screen (its texture loaded:
  *   `ready`), or with a bitmap while pixi-stage.ts has a bitmap texture of
- *   it up (`bitmapReady`), takes the mouse over its manifest `hitbox`
- *   times its 大小, at its position, named by its session key; the one
- *   drawn on top comes last (pointer.ts gives the last one under the
- *   cursor). Any other actor takes no mouse: not drawn, an empty list,
- *   only particles, or only sprites whose textures are still loading or
- *   failed, or only a bitmap not up yet, so nothing invisible catches a
- *   click. Particles never change an actor's area.
+ *   it up (`bitmapReady`), or in the placeholder (always on screen: it
+ *   loads nothing), takes the mouse over its manifest `hitbox` times its
+ *   大小, at its position, named by its session key; the one drawn on top
+ *   comes last (pointer.ts gives the last one under the cursor). Any other
+ *   actor takes no mouse: not drawn, an empty list, only particles, or
+ *   only sprites whose textures are still loading or failed, or only a
+ *   bitmap not up yet, so nothing invisible catches a click. Particles
+ *   never change an actor's area.
  */
 import type { SessionKey } from '../../shared/detection-events';
 import {
@@ -108,6 +118,11 @@ export interface SceneActor {
   readonly emitters: readonly ParticlesCommand[];
   /** Its bitmap, when its latest draw has one (no key otherwise). */
   readonly bitmap?: SceneBitmap;
+  /**
+   * Its character's `hitbox`, when it is drawn as the placeholder (Story
+   * 3.7; no key otherwise): then it has no sprite, emitter or bitmap.
+   */
+  readonly placeholder?: LocalBox;
 }
 
 /** What to draw this display frame. */
@@ -192,6 +207,15 @@ export function sceneBitmap(
         width: command.width,
         height: command.height,
       };
+}
+
+/**
+ * The actors of `scene` drawn with their pack's draw, for particles.ts:
+ * the placeholders (Story 3.7) are left out, so their emitters and
+ * particles go at once, as an actor's not drawn do.
+ */
+export function particleActorsOf(scene: Scene): SceneActor[] {
+  return scene.actors.filter((actor) => actor.placeholder === undefined);
 }
 
 /** What takes the mouse for an actor: its `hitbox` × `scale` at its place. */
@@ -281,10 +305,30 @@ export function buildScene({
       continue;
     }
     const { actor, character } = member;
+    const { packId, version } = member.look;
+    const placedActor = {
+      actorId: actor.actorId,
+      sessionKey: actor.sessionKey,
+      packId,
+      version,
+      x: at.x,
+      y: at.y,
+      scale: member.scale,
+      bounds: member.bounds,
+    };
     if (mappedState(character, actor.state) === null) {
+      // The placeholder; the pack's draw is not used, whatever it has.
+      drawn.push({
+        actor: {
+          ...placedActor,
+          sprites: [],
+          emitters: [],
+          placeholder: character.hitbox,
+        },
+        hitbox: character.hitbox,
+      });
       continue;
     }
-    const { packId, version } = member.look;
     const latest = draw(packId);
     const commands =
       latest?.version === version
@@ -296,14 +340,7 @@ export function buildScene({
     const bitmap = sceneBitmap(commands);
     drawn.push({
       actor: {
-        actorId: actor.actorId,
-        sessionKey: actor.sessionKey,
-        packId,
-        version,
-        x: at.x,
-        y: at.y,
-        scale: member.scale,
-        bounds: member.bounds,
+        ...placedActor,
         sprites: sceneSprites(commands),
         emitters: commands.filter((command) => command.type === 'particles'),
         ...(bitmap === undefined ? {} : { bitmap }),
@@ -318,6 +355,7 @@ export function buildScene({
     areas: drawn
       .filter(
         ({ actor }) =>
+          actor.placeholder !== undefined ||
           actor.sprites.some((sprite) =>
             ready(actor.packId, actor.version, sprite.asset, sprite.frame),
           ) ||

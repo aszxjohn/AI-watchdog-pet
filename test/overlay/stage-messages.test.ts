@@ -403,6 +403,105 @@ describe('I/O matrix', () => {
     });
   });
 
+  it('fallback: with the contract pack’s manifest, probe-one’s done and waiting both go to the pack as waiting, and probe-two’s waiting as done, in init and frame', () => {
+    const state = newPackStageState();
+
+    const messages = tick(
+      state,
+      input([
+        actor('a1', `${PACK}/probe-one`, 'done'),
+        actor('a2', `${PACK}/probe-one`, 'waiting'),
+        actor('a3', `${PACK}/probe-two`, 'waiting'),
+      ]),
+    );
+
+    expect(messages).toMatchObject([
+      {
+        type: 'init',
+        actors: [
+          {
+            own: true,
+            actorId: 'a1',
+            characterId: 'probe-one',
+            state: 'waiting',
+          },
+          {
+            own: true,
+            actorId: 'a2',
+            characterId: 'probe-one',
+            state: 'waiting',
+          },
+          { own: true, actorId: 'a3', characterId: 'probe-two', state: 'done' },
+        ],
+      },
+      {
+        type: 'frame',
+        actors: [
+          { actorId: 'a1', state: 'waiting' },
+          { actorId: 'a2', state: 'waiting' },
+          { actorId: 'a3', state: 'done' },
+        ],
+      },
+    ]);
+  });
+
+  it('佔位: with the contract pack’s manifest, a state in neither states nor fallback (probe-one’s error and decision, probe-two’s idle) goes to the pack as it is, in init, spawn and frame; probe-two’s error, which it draws, as it is too', () => {
+    const state = newPackStageState();
+    const first = tick(
+      state,
+      input([actor('a1', `${PACK}/probe-one`, 'error')]),
+    );
+    expect(first).toMatchObject([
+      { type: 'init', actors: [{ own: true, actorId: 'a1', state: 'error' }] },
+      { type: 'frame', actors: [{ actorId: 'a1', state: 'error' }] },
+    ]);
+    answer(state);
+
+    const joined = tick(
+      state,
+      input([
+        actor('a1', `${PACK}/probe-one`, 'error'),
+        actor('a2', `${PACK}/probe-one`, 'decision'),
+        actor('a3', `${PACK}/probe-two`, 'idle'),
+        actor('a4', `${PACK}/probe-two`, 'error'),
+      ]),
+    );
+
+    expect(joined).toMatchObject([
+      { type: 'spawn', actorId: 'a2', state: 'decision' },
+      { type: 'spawn', actorId: 'a3', state: 'idle' },
+      { type: 'spawn', actorId: 'a4', state: 'error' },
+      {
+        type: 'frame',
+        actors: [
+          { actorId: 'a1', state: 'error' },
+          { actorId: 'a2', state: 'decision' },
+          { actorId: 'a3', state: 'idle' },
+          { actorId: 'a4', state: 'error' },
+        ],
+      },
+    ]);
+  });
+
+  it('狀態變回: into the placeholder and back, the pack gets a frame every tick, with the state as it is while in the placeholder and mapped again after', () => {
+    const state = newPackStageState();
+    const states: string[] = [];
+    for (const each of ['working', 'approval', 'done'] as const) {
+      const messages = tick(
+        state,
+        input([actor('a1', `${PACK}/probe-one`, each)]),
+      );
+      const frame = messages.find((message) => message.type === 'frame');
+      expect(frame).toBeDefined();
+      if (frame?.type === 'frame') {
+        states.push(...frame.actors.map((one) => one.state));
+      }
+      answer(state);
+    }
+
+    expect(states).toStrictEqual(['working', 'approval', 'waiting']);
+  });
+
   it('參數與名稱: a character whose params changed gets one params that tick, however many actors play it; a changed name gets meta', () => {
     const state = newPackStageState();
     const actors = [

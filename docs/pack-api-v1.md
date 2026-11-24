@@ -174,7 +174,7 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
 
 1. 角色的 `states` 有這個狀態：照原樣送。
 2. 沒有，但 `fallback` 有這個狀態：改送 `fallback` 指定的狀態。
-3. 兩者都沒有：舞台畫內建的佔位，並忽略這隻角色的 `draw`，直到狀態改變。
+3. 兩者都沒有：照原樣送，但舞台畫內建的佔位，並忽略這隻角色的 `draw`，直到狀態變回第 1、2 種情況。
 
 `fallback` 的格式是 `{ "缺的狀態": "已實作的狀態" }`：
 
@@ -189,7 +189,18 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
 ```
 
 - `done`、`idle` 時，包收到的是 `waiting`。
-- `approval`、`decision`、`error` 時，舞台畫佔位。
+- `approval`、`decision`、`error` 時，舞台畫佔位，包收到的是原本的狀態（例如 `approval`）。
+
+**佔位（定案）：**
+
+- **`init`、`spawn`、`frame` 都送原狀態：** 佔位期間 `frame` 照常送；這三種訊息裡這隻 actor 的 `state` 都是原本的狀態，不是 `fallback` 對應的狀態。所以包會收到不在 `states` 裡的狀態碼，必須能處理它。包知道真實狀態，可以自己收尾（例如重設這隻 actor 的動畫）；它回的 `draw` 反正不會畫。
+- **`draw` 照樣檢查：** 佔位期間包回的 `draw` 雖然不畫，仍照 8.1 檢查、計入上限；違規時整則 `draw` 一樣丟棄。建議佔位期間對這隻 actor 回空陣列。
+- **外觀：** 半透明灰色的簡單人形剪影（圓頭加圓角身體），填滿角色的 `hitbox`，約 2 秒一次透明度起伏。每種狀態都是同一個樣子，狀態看舞台畫的狀態標記；固定參數 `badges` 關閉時不畫標記，各狀態的佔位就完全一樣。佔位是舞台內建的，不載入任何素材。
+- **位置：** 跟包畫的圖一樣，畫在角色當下的位置，乘上「大小」，超出 `bounds` 的部分裁掉，和其他角色一起依 y 排前後。
+- **滑鼠：** 佔位看得到就接得到滑鼠，範圍是 `hitbox` 乘上「大小」。
+- **不等沙盒：** 角色的 manifest 載入後就畫佔位，不用等包的沙盒準備好或回第一則 `draw`；manifest 載入前什麼都不畫。
+- **忽略 `draw` 只看目前狀態：** 對應不到時，這隻 actor 的 `sprite`、`bitmap`、粒子都不畫。之前顯示的 `bitmap` 不再顯示，發射器與粒子立刻移除（同 8.1）。狀態一變回第 1、2 種情況，佔位就消失，改畫包最新的 `draw`；跟一般的狀態切換一樣，可能晚一格。
+- **空的 `draw` 不觸發佔位：** 狀態對應得到時，給空陣列代表這格不畫，`draw` 漏掉這隻 actor 或還沒有 `draw` 也是不畫，都**不會**出現佔位，也不接滑鼠（見 8.1）。
 
 ### 3.3 座標、`hitbox`、`bounds`、`anchor`
 
@@ -341,7 +352,7 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
 
 每則訊息都有 `type`。共同的欄位：
 
-- `state`：3.1 的狀態碼，已依 3.2 對應過。
+- `state`：3.1 的狀態碼，已依 3.2 對應過；對應不到的狀態照原樣送（見 3.2）。
 - `params`：角色的完整參數值。
 - `displayName`：session 的顯示名稱，字串或 `null`。
 
@@ -428,7 +439,7 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
 - 同一個 `emitterId` 換了 `preset`，視同舊的停止、新的開始。停止後又出現同一個 `emitterId`，也是新的發射器。
 - 停止中、還在淡出的發射器也算數：一個 actor 同時最多 16 個發射器，超過時最舊的停止中發射器連同它的粒子立刻移除（每格換新 `emitterId` 的包，舊粒子會提早消失）。
 - actor 離場、這一則沒畫它（漏回、狀態對應不到），或包的沙盒被銷毀、失敗時，它的發射器與粒子立刻移除。
-- 粒子畫在 actor 的所有 `sprite` 之上，跟著 actor 的位置與固定參數「大小」縮放，超出 `bounds` 的部分一樣被裁掉。粒子不影響滑鼠命中範圍（只看有沒有畫出 `sprite` 或 `bitmap`，範圍是 manifest `hitbox`）。
+- 粒子畫在 actor 的所有 `sprite` 之上，跟著 actor 的位置與固定參數「大小」縮放，超出 `bounds` 的部分一樣被裁掉。粒子不影響滑鼠命中範圍（只看有沒有畫出 `sprite` 或 `bitmap`，範圍是 manifest `hitbox`）；佔位也接住滑鼠，見 3.2。
 - 粒子的時間跟著舞台的畫面更新走：系統睡眠或鎖定、畫面暫停時，粒子停在原地，恢復後接著跑，不會一次噴出一大把。
 
 **上限（定案）：** 一則 `draw` 最多 16 個 `particles` 指令（所有 actor 合計），超過時整則丟棄並記錄包 id。每個發射器同時最多 64 顆粒子，滿了就暫停發射，等有粒子消失再繼續；這種情況 `draw` 不會被丟棄。
@@ -616,10 +627,8 @@ if (busy) {
 以下細節在後續版本實作時確定，屆時會更新本文件。在那之前，請不要依賴這些行為的任何一種結果：
 
 - **`stage`：** 各方法的確切呼叫方式（沙盒實作時確定），以及 `stage.random` 回傳值的範圍。
-- **訊息：**
-  - 角色處在舞台畫佔位的狀態時（3.2 的第 3 種情況），`frame` 裡這隻 actor 收到的是哪個狀態。
-  - 訊息到達的順序，例如同一個 tick 的 `spawn`、`params`、`meta` 與 `frame` 誰先誰後。
+- **訊息：** 訊息到達的順序，例如同一個 tick 的 `spawn`、`params`、`meta` 與 `frame` 誰先誰後。
 - **handlers：** 哪些處理函式必須提供，以及 `handlers` 有不認得的鍵時怎麼處理。範例包六種都有寫，鍵也只用訊息名稱。
 - **`draw`：** `drawTimeoutMs`、心跳逾時、`sandboxIdleMs` 等時間數值。
 
-已定案、移到正文的：`draw` 漏掉己方 actor 的處理、sprite 的座標與像素換算、spritesheet JSON 的欄位、粒子 preset 的清單與 `params`、發射器與粒子數的上限、`bitmap` 的上限與規則（都在 8.1）；`stage.canvas` 與 `stage.snapshot` 的呼叫方式（8.2）。圖片格式也已定案：v1.0 只收 PNG（第 1 節）。
+已定案、移到正文的：佔位時 `frame` 送的狀態（原狀態）、佔位的範圍與滑鼠（都在 3.2）；`draw` 漏掉己方 actor 的處理、sprite 的座標與像素換算、spritesheet JSON 的欄位、粒子 preset 的清單與 `params`、發射器與粒子數的上限、`bitmap` 的上限與規則（都在 8.1）；`stage.canvas` 與 `stage.snapshot` 的呼叫方式（8.2）。圖片格式也已定案：v1.0 只收 PNG（第 1 節）。

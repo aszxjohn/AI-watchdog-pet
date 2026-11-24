@@ -1,7 +1,8 @@
 /**
- * overlay/renderer/pixi-stage (Story 3.6), with PixiJS itself under Node
- * (no renderer, no DOM): the display objects a Scene becomes, and the
- * textures the backend makes (spritesheet frames, sampling).
+ * overlay/renderer/pixi-stage (Stories 3.6, 3.7), with PixiJS itself under
+ * Node (no renderer, no DOM): the display objects a Scene becomes (the
+ * placeholder's included), and the textures the backend makes
+ * (spritesheet frames, sampling).
  */
 import {
   Container,
@@ -13,11 +14,19 @@ import {
   Texture,
   TextureSource,
 } from 'pixi.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type {
   EmitterView,
   ParticleView,
 } from '../../src/overlay/renderer/particles';
+import {
+  PLACEHOLDER_ALPHA_MAX,
+  PLACEHOLDER_ALPHA_MIN,
+  PLACEHOLDER_COLOR,
+  PLACEHOLDER_PERIOD_MS,
+  placeholderAlpha,
+  placeholderShape,
+} from '../../src/overlay/renderer/placeholder';
 import {
   bitmapTexture,
   createPixiStage,
@@ -140,7 +149,12 @@ describe('I/O matrix', () => {
       ]),
     );
 
-    expect(counts).toStrictEqual({ actors: 2, sprites: 2, bitmaps: 0 });
+    expect(counts).toStrictEqual({
+      actors: 2,
+      sprites: 2,
+      bitmaps: 0,
+      placeholders: 0,
+    });
     expect(layer.children).toHaveLength(2);
     const [first, second] = layer.children as Container[];
     expect([first?.x, first?.y, first?.scale.x, first?.scale.y]).toStrictEqual([
@@ -205,7 +219,12 @@ describe('I/O matrix', () => {
       ]),
     );
 
-    expect(counts).toStrictEqual({ actors: 1, sprites: 0, bitmaps: 0 });
+    expect(counts).toStrictEqual({
+      actors: 1,
+      sprites: 0,
+      bitmaps: 0,
+      placeholders: 0,
+    });
     expect(partsOf(layer.children[0] as Container).sprites[0]?.visible).toBe(
       false,
     );
@@ -501,7 +520,12 @@ describe('I/O matrix', () => {
 
     const counts = stage.draw(scene([sceneActor('a1')]));
 
-    expect(counts).toStrictEqual({ actors: 1, sprites: 0, bitmaps: 0 });
+    expect(counts).toStrictEqual({
+      actors: 1,
+      sprites: 0,
+      bitmaps: 0,
+      placeholders: 0,
+    });
     expect(layer.children).toHaveLength(1);
   });
 });
@@ -673,7 +697,12 @@ describe('I/O matrix', () => {
       ]),
     );
 
-    expect(counts).toStrictEqual({ actors: 1, sprites: 1, bitmaps: 1 });
+    expect(counts).toStrictEqual({
+      actors: 1,
+      sprites: 1,
+      bitmaps: 1,
+      placeholders: 0,
+    });
     const container = layer.children[0] as Container;
     const sprite = spriteOf(container, image);
     expect(sprite).toBeDefined();
@@ -856,5 +885,262 @@ describe('I/O matrix', () => {
     expect(texture?.source.resource).toBe(image);
     expect(texture?.source.autoGarbageCollect).toBe(false);
     expect(image.closes).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The placeholder (Story 3.7): an actor whose state does not map is drawn
+// as the stage's own figure, a Graphics, instead of its pack's draw.
+
+/** The contract pack's probe-one's hitbox. */
+const HITBOX = { x: -30, y: -110, width: 60, height: 110 };
+
+/** An actor drawn as the placeholder for `hitbox`. */
+function placeholderActor(
+  actorId: string,
+  overrides: Partial<SceneActor> = {},
+  hitbox = HITBOX,
+): SceneActor {
+  return sceneActor(actorId, { placeholder: hitbox, ...overrides });
+}
+
+/** The placeholder in an actor's container: a Graphics that is not its mask. */
+function placeholderIn(container: Container): Graphics | undefined {
+  return container.children.find(
+    (child): child is Graphics =>
+      child instanceof Graphics && child !== container.mask,
+  );
+}
+
+/** What each child of an actor's container is, the placeholder named. */
+function layoutOf(container: Container): string[] {
+  const placeholder = placeholderIn(container);
+  return container.children.map((child) =>
+    child === container.mask
+      ? 'mask'
+      : child === placeholder
+        ? 'placeholder'
+        : child instanceof ParticleContainer
+          ? 'particles'
+          : child instanceof Sprite
+            ? 'sprite'
+            : 'other',
+  );
+}
+
+/** A Graphics' bounds, as [x, y, width, height]. */
+function boxOf(graphics: Graphics | undefined): number[] {
+  const bounds = graphics?.bounds;
+  return bounds === undefined
+    ? []
+    : [
+        bounds.minX,
+        bounds.minY,
+        bounds.maxX - bounds.minX,
+        bounds.maxY - bounds.minY,
+      ];
+}
+
+describe('I/O matrix', () => {
+  it('佔位: an actor drawn as the placeholder has one Graphics in its container right after the mask (so it takes its place, 大小 and bounds mask), filling its hitbox with a grey circle and rounded rectangle, at full opacity at first; counted as a placeholder and an actor', () => {
+    const { layer, stage } = setup();
+
+    const counts = stage.draw(
+      scene([placeholderActor('a1', { x: 1408, y: 886, scale: 1.5 })]),
+    );
+
+    expect(counts).toStrictEqual({
+      actors: 1,
+      sprites: 0,
+      bitmaps: 0,
+      placeholders: 1,
+    });
+    const container = layer.children[0] as Container;
+    expect(layoutOf(container)).toStrictEqual(['mask', 'placeholder']);
+    const graphics = placeholderIn(container);
+    expect(graphics?.parent).toBe(container);
+    expect(container.mask).toBe(container.children[0]);
+    expect([container.x, container.y, container.scale.x]).toStrictEqual([
+      1408, 886, 1.5,
+    ]);
+    expect(boxOf(graphics)).toStrictEqual([-30, -110, 60, 110]);
+    const head = placeholderShape(HITBOX).head;
+    const body = placeholderShape(HITBOX).body;
+    const fills = (graphics?.context.instructions ?? []).map((instruction) => {
+      if (instruction.action !== 'fill') {
+        return [instruction.action];
+      }
+      const { style, path } = instruction.data;
+      return [
+        style.color,
+        style.alpha,
+        ...path.shapePath.shapePrimitives.map(({ shape }) => shape),
+      ];
+    });
+    expect(fills).toStrictEqual([
+      [
+        PLACEHOLDER_COLOR,
+        1,
+        expect.objectContaining({
+          type: 'circle',
+          x: head.x,
+          y: head.y,
+          radius: head.radius,
+        }),
+      ],
+      [
+        PLACEHOLDER_COLOR,
+        1,
+        expect.objectContaining({
+          type: 'roundedRectangle',
+          x: body.x,
+          y: body.y,
+          width: body.width,
+          height: body.height,
+          radius: body.radius,
+        }),
+      ],
+    ]);
+    expect(graphics?.alpha).toBeCloseTo(PLACEHOLDER_ALPHA_MAX);
+    expect(graphics?.visible).toBe(true);
+  });
+
+  it('佔位: its opacity follows the time draw() is given (the render loop’s): faintest half a period on, full again after a whole one; a draw() given no time (the render loop stopped) leaves it standing still', () => {
+    const { layer, stage } = setup();
+    const shown = scene([placeholderActor('a1')]);
+    stage.draw(shown, 33);
+    const graphics = placeholderIn(layer.children[0] as Container);
+    expect(graphics?.alpha).toBeCloseTo(placeholderAlpha(33));
+
+    stage.draw(shown, PLACEHOLDER_PERIOD_MS / 2 - 33);
+    expect(graphics?.alpha).toBeCloseTo(PLACEHOLDER_ALPHA_MIN);
+    stage.draw(shown);
+    stage.draw(shown, 0);
+    expect(graphics?.alpha).toBeCloseTo(PLACEHOLDER_ALPHA_MIN);
+    stage.draw(shown, PLACEHOLDER_PERIOD_MS / 2);
+    expect(graphics?.alpha).toBeCloseTo(PLACEHOLDER_ALPHA_MAX);
+    // A time that is not a number moves nothing.
+    stage.draw(shown, Number.NaN);
+    stage.draw(shown, -50);
+    expect(graphics?.alpha).toBeCloseTo(PLACEHOLDER_ALPHA_MAX);
+  });
+
+  it('佔位: the same Graphics is kept from frame to frame and drawn again only when the hitbox changes; then it fills the new one', () => {
+    const { layer, stage } = setup();
+    stage.draw(scene([placeholderActor('a1')]));
+    const container = layer.children[0] as Container;
+    const graphics = placeholderIn(container);
+    expect(graphics).toBeDefined();
+    const clear = vi.spyOn(graphics as Graphics, 'clear');
+
+    stage.draw(scene([placeholderActor('a1', { x: 500, scale: 2 })]), 100);
+    expect(placeholderIn(container)).toBe(graphics);
+    expect(clear).not.toHaveBeenCalled();
+    expect(container.x).toBe(500);
+
+    const other = { x: -25, y: -96, width: 50, height: 96 };
+    stage.draw(scene([placeholderActor('a1', {}, other)]));
+    expect(placeholderIn(container)).toBe(graphics);
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(boxOf(graphics)).toStrictEqual([-25, -96, 50, 96]);
+    expect(graphics?.context.instructions).toHaveLength(2);
+  });
+
+  it('狀態變回: drawn with its pack’s draw again, its Graphics is destroyed and its sprites take its place after the mask; nothing is counted as a placeholder', () => {
+    const { layer, stage } = setup();
+    stage.draw(scene([placeholderActor('a1')]));
+    const container = layer.children[0] as Container;
+    const graphics = placeholderIn(container);
+
+    const counts = stage.draw(
+      scene([sceneActor('a1', { sprites: [SPRITE_COMMAND] })]),
+    );
+
+    expect(counts).toStrictEqual({
+      actors: 1,
+      sprites: 1,
+      bitmaps: 0,
+      placeholders: 0,
+    });
+    expect(graphics?.destroyed).toBe(true);
+    expect(layer.children[0]).toBe(container);
+    expect(layoutOf(container)).toStrictEqual(['mask', 'sprite']);
+
+    // And into the placeholder again: a new Graphics.
+    stage.draw(scene([placeholderActor('a1')]));
+    const again = placeholderIn(container);
+    expect(again).toBeDefined();
+    expect(again).not.toBe(graphics);
+    expect(layoutOf(container)).toStrictEqual(['mask', 'placeholder']);
+  });
+
+  it('資源: going into the placeholder, its sprites are destroyed and its bitmap released as in 3.6 (sprite and texture destroyed, ImageBitmap closed once); its emitters, gone from particles.ts, take their containers with them', () => {
+    const { layer, stage, emitters } = setupParticles();
+    const image = new FakeImageBitmap();
+    emitters.set('a1', [emitter(1, 'sparkle', [particle()])]);
+    stage.draw(
+      scene([
+        sceneActor('a1', {
+          sprites: [SPRITE_COMMAND, SPRITE_COMMAND],
+          bitmap: bitmapOf(image),
+        }),
+      ]),
+    );
+    const container = layer.children[0] as Container;
+    const [sprite] = container.children.filter(
+      (child): child is Sprite =>
+        child instanceof Sprite && child.texture.source.resource !== image,
+    );
+    const bitmapSprite = spriteOf(container, image);
+    const bitmapSource = bitmapSprite?.texture.source;
+    const [emitterNode] = emittersIn(container);
+
+    // particles.ts has nothing for an actor in the placeholder (main.ts
+    // leaves it out of sync()).
+    emitters.set('a1', []);
+    const counts = stage.draw(scene([placeholderActor('a1')]));
+
+    expect(counts).toStrictEqual({
+      actors: 1,
+      sprites: 0,
+      bitmaps: 0,
+      placeholders: 1,
+    });
+    expect(sprite?.destroyed).toBe(true);
+    expect(bitmapSprite?.destroyed).toBe(true);
+    expect(bitmapSource?.destroyed).toBe(true);
+    expect(image.closes).toBe(1);
+    expect(stage.bitmapShown('a1')).toBe(false);
+    expect(emitterNode?.destroyed).toBe(true);
+    expect(stage.particleCounts()).toStrictEqual({ emitters: 0, particles: 0 });
+    expect(layoutOf(container)).toStrictEqual(['mask', 'placeholder']);
+
+    stage.draw(scene([placeholderActor('a1')]));
+    expect(image.closes).toBe(1);
+  });
+
+  it('加入與移出: the actor gone takes its placeholder with it, the others keep theirs; destroy() destroys them all', () => {
+    const { layer, stage } = setup();
+    stage.draw(
+      scene([
+        placeholderActor('a1'),
+        placeholderActor('a2'),
+        sceneActor('a3', { sprites: [SPRITE_COMMAND] }),
+      ]),
+    );
+    const [one, two] = (layer.children as Container[]).map(placeholderIn);
+
+    const counts = stage.draw(
+      scene([
+        placeholderActor('a2'),
+        sceneActor('a3', { sprites: [SPRITE_COMMAND] }),
+      ]),
+    );
+
+    expect(counts).toMatchObject({ actors: 2, placeholders: 1 });
+    expect(one?.destroyed).toBe(true);
+    expect(two?.destroyed).toBe(false);
+    stage.destroy();
+    expect(two?.destroyed).toBe(true);
   });
 });

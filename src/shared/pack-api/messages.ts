@@ -37,8 +37,9 @@ export const displayNameSchema = z.string().nullable();
 
 /**
  * One of this pack's actors: its character, that character's full
- * parameter values, its state (already mapped through `fallback`) and its
- * display name.
+ * parameter values, its state (already mapped through `fallback`; one in
+ * neither `states` nor `fallback` as it is, while the stage draws its
+ * placeholder) and its display name.
  */
 export const ownActorSchema = z.strictObject({
   own: z.literal(true),
@@ -81,7 +82,10 @@ export const initMessageSchema = z.strictObject({
     .refine(hasUniqueActorIds, uniqueActorIds),
 });
 
-/** One of this pack's actors arrived. */
+/**
+ * One of this pack's actors arrived. Its state is mapped through
+ * `fallback`; one in neither `states` nor `fallback` comes as it is.
+ */
 export const spawnMessageSchema = z.strictObject({
   type: z.literal('spawn'),
   actorId: actorIdSchema,
@@ -134,7 +138,11 @@ export const frameEventSchema = z.discriminatedUnion('type', [
 
 export type FrameEvent = z.infer<typeof frameEventSchema>;
 
-/** One of this pack's actors in a `frame`: its state, after `fallback`. */
+/**
+ * One of this pack's actors in a `frame`: its state, after `fallback` (one
+ * in neither `states` nor `fallback` as it is: the stage draws its
+ * placeholder then, and its `draw` is not used).
+ */
 export const frameActorSchema = z.strictObject({
   actorId: actorIdSchema,
   state: stateCodeSchema,

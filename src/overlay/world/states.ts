@@ -8,8 +8,9 @@ import type { StateCode } from '../../shared/states';
 /**
  * The state the pack draws for `state`: `state` itself when the character
  * lists it in `states`, else what its `fallback` gives for it, else null:
- * the stage draws a placeholder (Story 3.7) and the actor's `draw` is not
- * used. A pack still gets `state` itself then.
+ * the stage draws its placeholder (Story 3.7, renderer/scene.ts) and the
+ * actor's `draw` is not used until the state maps again. The pack still
+ * gets `state` itself then (sentState), so it knows the real state.
  */
 export function mappedState(
   character: Pick<PackCharacter, 'states' | 'fallback'>,

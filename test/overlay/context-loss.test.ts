@@ -374,6 +374,8 @@ describe('I/O matrix', () => {
       drawnSprites: '0',
       // The bitmaps too (Story 3.6's last part).
       drawnBitmaps: '0',
+      // The placeholders too (Story 3.7).
+      drawnPlaceholders: '0',
       // The particles too (Story 3.6's second last part).
       particleEmitters: '0',
       liveParticles: '0',
@@ -382,6 +384,28 @@ describe('I/O matrix', () => {
       hitAreas: '0',
     });
     expect(t.reports).toStrictEqual(['context-lost']);
+  });
+
+  it('context lost: with a placeholder shown (counted, its hitbox taking the mouse), lost sets drawnPlaceholders to 0 and the cursor over it gets click-through back', () => {
+    const t = stageSetup();
+    t.setView(view(['a1']));
+    // What main.ts's drawFrame showed for an actor drawn as the placeholder.
+    t.shown.set('drawnActors', '1');
+    t.shown.set('drawnPlaceholders', '1');
+    t.shown.set('hitAreas', '1');
+    t.input.setAreas([AREA]);
+    t.input.onMouseMove({ x: 50, y: 50 });
+    expect(t.hovers).toStrictEqual([{ seq: 1, over: true }]);
+
+    t.fire('webglcontextlost');
+
+    expect(t.shown.get('drawnPlaceholders')).toBe('0');
+    expect(t.shown.get('drawnActors')).toBe('0');
+    expect(t.shown.get('hitAreas')).toBe('0');
+    expect(t.hovers).toStrictEqual([
+      { seq: 1, over: true },
+      { seq: 2, over: false },
+    ]);
   });
 
   it('context lost 後還原: StageView changes while lost keep the world paused', () => {

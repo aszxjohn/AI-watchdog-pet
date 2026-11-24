@@ -1,8 +1,9 @@
 /**
- * overlay/renderer (Story 3.6): draws a Scene (scene.ts) with PixiJS, on
- * the overlay's one canvas, and makes the packs' textures. PixiJS runs
- * under Node too, so this is unit-tested there (test/overlay/pixi-stage);
- * only loading an image needs the browser, and main.ts passes that in.
+ * overlay/renderer (Stories 3.6, 3.7): draws a Scene (scene.ts) with
+ * PixiJS, on the overlay's one canvas, and makes the packs' textures.
+ * PixiJS runs under Node too, so this is unit-tested there
+ * (test/overlay/pixi-stage); only loading an image needs the browser, and
+ * main.ts passes that in.
  *
  * - Each drawn actor is one Container at its position and 大小, clipped by
  *   a rectangle mask of its `bounds` (a child of it, so it moves and
@@ -37,6 +38,16 @@
  *   emitter gone from particles.ts has its container destroyed.
  *   particleCounts() says how many containers and particles the last
  *   draw() put on screen (main.ts shows them, the e2e tests read them).
+ * - The placeholder (Story 3.7): an actor drawn as the placeholder has one
+ *   more Graphics in its container (so it takes its place, 大小 and bounds
+ *   mask), right after the mask (it has no sprite or bitmap then, and
+ *   particles.ts no emitter for it), filled with placeholder.ts's figure
+ *   for its `hitbox` in PLACEHOLDER_COLOR. It is made when the actor goes
+ *   into the placeholder, kept from frame to frame and drawn again only
+ *   when the hitbox changes; its opacity follows placeholderAlpha() of the
+ *   time draw() has been given (the render loop's: none, and it stands
+ *   still). It is destroyed when the actor is drawn otherwise again, or is
+ *   gone.
  * - Each preset's texture (particleTextures) is painted in white, from
  *   its PresetDef's shape, on a 2D canvas main.ts makes (not a render
  *   texture: PixiJS uploads the canvas again once a lost WebGL context is
@@ -77,6 +88,12 @@ import {
   type ParticleShape,
   type ParticleView,
 } from './particles';
+import {
+  PLACEHOLDER_COLOR,
+  PLACEHOLDER_PERIOD_MS,
+  placeholderAlpha,
+  placeholderShape,
+} from './placeholder';
 import type { Scene } from './scene';
 import type { TextureBackend } from './textures';
 
@@ -408,14 +425,21 @@ interface ActorNode {
   readonly emitters: Map<number, ParticleContainer<Particle>>;
   /** The bounds the mask was drawn for. */
   bounds: string;
+  /** Its placeholder (Story 3.7), while it is drawn as one. */
+  placeholder: Graphics | null;
+  /** The hitbox the placeholder was drawn for. */
+  placeholderBox: string;
 }
 
 /** What one draw() put on screen. */
 export interface StageCounts {
+  /** Actors, placeholders included. */
   readonly actors: number;
   readonly sprites: number;
   /** Bitmaps (Story 3.6's last part). */
   readonly bitmaps: number;
+  /** Actors drawn as the placeholder (Story 3.7). */
+  readonly placeholders: number;
 }
 
 /** The particles one draw() put on screen. */
@@ -429,9 +453,11 @@ export interface StageParticleCounts {
 export interface PixiStage {
   /**
    * Puts `scene` on screen (it shows at the next render), with each drawn
-   * actor's particles as they are now.
+   * actor's particles as they are now, the placeholders' opacity moved on
+   * by `dtMs` (the render loop's time since its last frame; 0 by default:
+   * none moves).
    */
-  draw(scene: Scene): StageCounts;
+  draw(scene: Scene, dtMs?: number): StageCounts;
   /** The particles the last draw() put on screen; none before any. */
   particleCounts(): StageParticleCounts;
   /** Whether `actorId` has a bitmap texture up since the last draw(). */
@@ -457,6 +483,8 @@ export function createPixiStage(
   let particleCounts: StageParticleCounts = { emitters: 0, particles: 0 };
   /** The images this stage has closed: none is shown again or closed twice. */
   const closed = new WeakSet<object>();
+  /** The render loop's time draw() has been given, ms (the placeholders'). */
+  let elapsedMs = 0;
 
   function nodeOf(actorId: string): ActorNode {
     let node = nodes.get(actorId);
@@ -472,6 +500,8 @@ export function createPixiStage(
         bitmap: null,
         emitters: new Map(),
         bounds: '',
+        placeholder: null,
+        placeholderBox: '',
       };
       nodes.set(actorId, node);
     }
@@ -541,6 +571,57 @@ export function createPixiStage(
     return true;
   }
 
+  /** Takes `node`'s placeholder off the screen, destroyed. */
+  function dropPlaceholder(node: ActorNode): void {
+    const shown = node.placeholder;
+    if (shown === null) {
+      return;
+    }
+    node.placeholder = null;
+    node.placeholderBox = '';
+    shown.destroy();
+  }
+
+  /**
+   * `node`'s placeholder for `hitbox` (none: taken off), at `alpha`;
+   * whether one is up.
+   */
+  function drawPlaceholder(
+    node: ActorNode,
+    hitbox: LocalBox | undefined,
+    alpha: number,
+  ): boolean {
+    if (hitbox === undefined) {
+      dropPlaceholder(node);
+      return false;
+    }
+    let shown = node.placeholder;
+    if (shown === null) {
+      shown = new Graphics();
+      // After the mask, the sprites and the bitmap (an actor in the
+      // placeholder has none left by now), under any particles.
+      node.container.addChildAt(
+        shown,
+        1 + node.sprites.length + (node.bitmap === null ? 0 : 1),
+      );
+      node.placeholder = shown;
+    }
+    const { x, y, width, height } = hitbox;
+    const box = `${x} ${y} ${width} ${height}`;
+    if (node.placeholderBox !== box) {
+      const { head, body } = placeholderShape(hitbox);
+      shown
+        .clear()
+        .circle(head.x, head.y, head.radius)
+        .fill(PLACEHOLDER_COLOR)
+        .roundRect(body.x, body.y, body.width, body.height, body.radius)
+        .fill(PLACEHOLDER_COLOR);
+      node.placeholderBox = box;
+    }
+    shown.alpha = alpha;
+    return true;
+  }
+
   /** Destroys `node`, its bitmap released first. */
   function destroyNode(node: ActorNode): void {
     dropBitmap(node);
@@ -584,11 +665,17 @@ export function createPixiStage(
   }
 
   return {
-    draw(scene) {
+    draw(scene, dtMs = 0) {
+      if (dtMs > 0 && Number.isFinite(dtMs)) {
+        // Kept to one period: the opacity repeats every PLACEHOLDER_PERIOD_MS.
+        elapsedMs = (elapsedMs + dtMs) % PLACEHOLDER_PERIOD_MS;
+      }
+      const alpha = placeholderAlpha(elapsedMs);
       const drawn = new Set<string>();
       const order: Container[] = [];
       let sprites = 0;
       let bitmaps = 0;
+      let placeholders = 0;
       let emitters = 0;
       let alive = 0;
       for (const actor of scene.actors) {
@@ -638,6 +725,9 @@ export function createPixiStage(
         if (drawBitmap(node, actor.bitmap)) {
           bitmaps += 1;
         }
+        if (drawPlaceholder(node, actor.placeholder, alpha)) {
+          placeholders += 1;
+        }
         alive += drawEmitters(node, actor.actorId, actor.bounds);
         emitters += node.emitters.size;
         order.push(node.container);
@@ -661,7 +751,7 @@ export function createPixiStage(
         }
       }
       particleCounts = { emitters, particles: alive };
-      return { actors: order.length, sprites, bitmaps };
+      return { actors: order.length, sprites, bitmaps, placeholders };
     },
 
     particleCounts: () => particleCounts,

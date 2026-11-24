@@ -15,8 +15,9 @@
  *   coordinates); one whose command is gone stops emitting, its particles
  *   live out their lives, and then it is removed. Another preset under the
  *   same `emitterId` is the old emitter stopping and a new one starting.
- *   An actor that is not drawn any more (it left, its draw left it out, or
- *   its pack's sandbox went and took its draw) has its emitters and
+ *   An actor that is not drawn any more (it left, its draw left it out,
+ *   its pack's sandbox went and took its draw, or it is drawn as the
+ *   placeholder, which main.ts leaves out: Story 3.7) has its emitters and
  *   particles removed at once.
  * - An actor has at most PARTICLE_EMITTERS_MAX emitters, the stopped ones
  *   still fading out counted too (one ParticleContainer each): past that,

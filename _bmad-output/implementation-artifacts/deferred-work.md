@@ -295,3 +295,18 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-demo-mode-pick-character.md`
   summary: （待討論）同版本號重新匯入角色包時，畫布要不要即時重載：現在 overlay 的沙箱、外觀、貼圖都以版本號當 key，同版本重匯後 StageView 的 `packs` 一模一樣，畫布不重建沙箱、不重讀素材
   evidence: 使用者 2026-11-24 要求示範模式在開發中能即時重載，並指定這一項先記為待討論、另外處理。暫時的做法：重新匯入時把版本號加 1，pack-host 會拆掉舊沙箱、以新版本重建，素材 URL 也帶新版本。要做的話會動到 `src/shared/packs.ts`（StagePack 帶一個每次安裝都不同的值）、`main/packs` 的 store，以及 overlay 的 pack-host、looks、textures。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-7-state-placeholder.md`
+  summary: Story 3.7 的契約測試包 e2e 驗收：`test/e2e/helpers.ts` 的 `SyntheticTurn` 加 `'error'`（assistant 紀錄帶 `isApiErrorMessage: true`）；`test/e2e/stage.spec.ts` 的探針在 actor 的 `frame` 狀態改變時多寫一行 `awp-stage state <state>`；新增「過場」（prompt 加 answer，以 append 前的時間 T 為準：T + 5000 之前看得到 `done`，`waiting` 最早在 T + 5000 出現，probe-one 兩段收到的都是 `waiting`、`drawnPlaceholders` 維持 0）與「佔位」（error 紀錄：`drawnPlaceholders` 為 1、`drawnSprites` 為 0、`hitAreas` 為 1，探針收到 `error`），放在「加入與移出」之前；並驗證佔位顯示中 WebGL context lost 再還原後照常
+  evidence: 使用者 2026-11-24 在 3.7 規格約 2,800 token 時選擇拆出 e2e 驗收，先做佔位繪製與單元測試。3.7 的 AC 要求用契約測試包驗收「一輪結束先演 done 5 秒再轉 waiting」，這段做完 3.7 才能標 done。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-7-state-placeholder.md`
+  summary: `src/overlay/main.ts` 的 `drawFrame` 用 `particleActorsOf(scene)` 把佔位 actor 排除在 `particles.sync` 之外，這段接線沒有任何測試經過；改回 `particles.sync(scene.actors)` 時單元測試全過，粒子會在佔位上淡出而不是立刻移除
+  evidence: 2026-11-24 Story 3.7（上）審查 V1、B7（medium）。單元測試只直接測 `particleActorsOf` 與 particles.ts。做 3.7 的 e2e 時加一條：先 prompt（thinking，有 sparkle），再送 error 紀錄，斷言 `drawnPlaceholders` 第一次為 `'1'` 的同一份 body data 裡 `particleEmitters`、`drawnEmitters` 都是 `'0'`；或把過濾移進 particles.ts 讓單元測試涵蓋。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-7-state-placeholder.md`
+  summary: `src/overlay/main.ts` 的 `drawFrame` 把 render loop 的 `dtMs` 傳給 `drawing.draw(scene, dtMs)`（佔位透明度起伏），沒有任何驗證；拿掉後佔位停在最亮、不起伏，測試全過
+  evidence: 2026-11-24 Story 3.7（上）審查 V2（medium）。pixi-stage.test 直接給時間，不經過 main.ts；main.ts 沒有輸出佔位透明度的 data 屬性。做 3.7 的 e2e 時可讓 `drawFrame` 輸出佔位 alpha（或累計時間）的 data 屬性並斷言兩次輪詢之間有變化；在那之前靠使用者手動驗收時看佔位有沒有起伏。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-7-state-placeholder.md`
+  summary: （未驗證，若屬實為 medium）`advancedBitmap` 角色停在佔位時，包每格送的 ImageBitmap 從不顯示、被下一則取代，全部交給 GC（`host.ts` 的 3.6 規則），可能在幾分鐘的佔位期間堆積記憶體
+  evidence: 2026-11-24 Story 3.7（上）審查 E2、B5（maybe-false）。要確認：在真 Electron 讓一個每格 snapshot 512×512 的 bitmap 包停在對應不到的狀態幾分鐘，量 overlay 行程與 GPU 記憶體是否持續上升；若會，舞台在取代佔位 actor 的 draw 時主動 `close()` 那些圖，並在作者文件勸包佔位期間回空陣列。可與 3.6 那兩筆 snapshot 囤積的記憶體上限一起處理。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-7-state-placeholder.md`
+  summary: `test/e2e/stage.spec.ts` 約 `:238-240` 的 `mapped` 算法在狀態對應不到時得到 `undefined`，跟 3.7 定案的規則（送原狀態）不一致，做 3.7 的 e2e 時要一起改
+  evidence: 2026-11-24 Story 3.7（上）審查 B16（low，既有程式）。目前 e2e 起始狀態都對應得到，所以還沒出錯；3.7 的 e2e 會讓 actor 進入 `error`。

@@ -27,7 +27,10 @@ import 'pixi.js/unsafe-eval';
 //   after one last frame, which moves no particle: they stand still until
 //   it runs again. The packs' bitmaps (Story 3.6's last part) are drawn
 //   from their ImageBitmaps as they come, and an actor with a bitmap
-//   texture up takes the mouse;
+//   texture up takes the mouse. An actor whose state its character neither
+//   draws nor maps through `fallback` is drawn as the stage's placeholder
+//   (Story 3.7, renderer/placeholder.ts) instead of its pack's draw, takes
+//   the mouse, and its opacity moves on by the render loop's time too;
 // - PixiJS's resolution follows the canvas's display (`canvas.scaleFactor`,
 //   renderer/display.ts).
 // - While the canvas's WebGL context is lost (context-loss.ts, from its
@@ -36,9 +39,9 @@ import 'pixi.js/unsafe-eval';
 //   pauses (no `frame`), nothing takes the mouse, and main hears it on
 //   `canvas:gpu`; once it is back, drawing starts again from StageView now
 //   and each pack's last draw.
-// The body's data attributes say what was last drawn (bitmaps included),
-// how many emitters and particles there are, how many areas take the
-// mouse and whether the context is lost, for DevTools.
+// The body's data attributes say what was last drawn (bitmaps and
+// placeholders included), how many emitters and particles there are, how
+// many areas take the mouse and whether the context is lost, for DevTools.
 import './index.css';
 import { Application, Assets, Container, type Ticker } from 'pixi.js';
 import { PRELOAD_API_KEY } from '../shared/constants';
@@ -59,7 +62,7 @@ import {
   pixiTextures,
   type PixiStage,
 } from './renderer/pixi-stage';
-import { buildScene } from './renderer/scene';
+import { buildScene, particleActorsOf } from './renderer/scene';
 import { createTextureStore } from './renderer/textures';
 import { startOverlay, type InitialisedCanvas } from './start';
 import { createWorld, isPaused } from './world/world';
@@ -196,8 +199,9 @@ function installedLooks(current: StageView): PackLook[] {
 }
 
 /**
- * One display frame: what to draw, its particles moved on by `dtMs` (0 when
- * not called by the render loop), drawn; what takes the mouse.
+ * One display frame: what to draw, its particles and placeholders moved on
+ * by `dtMs` (0 when not called by the render loop), drawn; what takes the
+ * mouse.
  */
 function drawFrame(dtMs = 0): void {
   if (
@@ -219,13 +223,15 @@ function drawFrame(dtMs = 0): void {
     bitmapReady: (actorId) => drawing.bitmapShown(actorId),
   });
   reportMissing(scene.missing);
-  particles.sync(scene.actors);
+  // Not the placeholders: their particles go at once.
+  particles.sync(particleActorsOf(scene));
   particles.step(dtMs);
-  const counts = drawing.draw(scene);
+  const counts = drawing.draw(scene, dtMs);
   input.setAreas(scene.areas);
   show('drawnActors', String(counts.actors));
   show('drawnSprites', String(counts.sprites));
   show('drawnBitmaps', String(counts.bitmaps));
+  show('drawnPlaceholders', String(counts.placeholders));
   // What runs (particles.ts), and what of it is on screen (pixi-stage.ts).
   const live = particles.counts();
   show('particleEmitters', String(live.emitters));

@@ -1,8 +1,8 @@
 /**
- * overlay/renderer (Story 3.6): what is drawn each display frame
- * (buildScene: placing, mapping, the latest draws, clipping, order, the
- * areas that take the mouse), the missing-character log, and the texture
- * store with a fake backend.
+ * overlay/renderer (Stories 3.6, 3.7): what is drawn each display frame
+ * (buildScene: placing, mapping, the latest draws, the placeholder,
+ * clipping, order, the areas that take the mouse), the missing-character
+ * log, and the texture store with a fake backend.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { packLook, type PackLook } from '../../src/overlay/looks';
@@ -13,9 +13,11 @@ import type {
 } from '../../src/overlay/pack-host/draw-rules';
 import type { PackDraw } from '../../src/overlay/pack-host/host';
 import { createMissingLog } from '../../src/overlay/renderer/missing-log';
+import { createParticleSystem } from '../../src/overlay/renderer/particles';
 import {
   buildScene,
   hitAreaOf,
+  particleActorsOf,
   sceneSprite,
   sceneSprites,
   type SceneInput,
@@ -124,6 +126,9 @@ const SPRITE: SpriteCommand = {
   scaleX: 30,
   scaleY: 55,
 };
+
+/** The contract pack's probe-one's hitbox (its manifest). */
+const PROBE_ONE_HITBOX = { x: -30, y: -110, width: 60, height: 110 };
 
 interface Setup {
   actors: StageActor[];
@@ -239,8 +244,18 @@ describe('I/O matrix', () => {
     );
   });
 
-  it('狀態對應不到: an actor whose state is in neither states nor fallback is not drawn and takes no mouse (its slot stays)', () => {
-    const draws = { [ALPHA]: drawOf({ a1: [SPRITE], a2: [SPRITE] }) };
+  it('佔位: an actor whose state is in neither states nor fallback is drawn as the placeholder in its own slot (its hitbox, at its place and 大小, clipped to its bounds), with no sprite, emitter or bitmap whatever its draw has, and takes the mouse', () => {
+    const bitmap: DrawnCommand = {
+      type: 'bitmap',
+      image: new FakeImageBitmap(),
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+    };
+    const draws = {
+      [ALPHA]: drawOf({ a1: [SPRITE, SPARKLE, bitmap], a2: [SPRITE] }),
+    };
     const scene = buildScene(
       input({
         actors: [
@@ -251,13 +266,32 @@ describe('I/O matrix', () => {
       }),
     );
 
-    expect(scene.actors.map((each) => each.actorId)).toStrictEqual(['a2']);
-    expect(scene.areas.map((area) => area.key)).toStrictEqual([
-      'claude-code:a2',
+    const right = WORLD.width - STAGE_ROW_RIGHT_MARGIN;
+    expect(scene.actors.map((each) => each.actorId)).toStrictEqual([
+      'a1',
+      'a2',
     ]);
-    // a2 is in the second slot: a1's stays empty.
-    expect(scene.actors[0]?.x).toBe(
-      WORLD.width - STAGE_ROW_RIGHT_MARGIN - 80 - STAGE_ROW_GAP - 80 + 40,
+    expect(scene.actors[0]).toStrictEqual({
+      actorId: 'a1',
+      sessionKey: 'claude-code:a1',
+      packId: ALPHA,
+      version: '1.0.0',
+      x: right - 80 + 40,
+      y: FEET,
+      scale: 1,
+      bounds: { x: -40, y: -130, width: 80, height: 130 },
+      sprites: [],
+      emitters: [],
+      placeholder: PROBE_ONE_HITBOX,
+    });
+    // a2 (done, shown as waiting) is in the second slot, with its draw.
+    expect(scene.actors[1]).toMatchObject({
+      actorId: 'a2',
+      x: right - 80 - STAGE_ROW_GAP - 80 + 40,
+      sprites: [sceneSprite(SPRITE)],
+    });
+    expect(scene.areas).toStrictEqual(
+      scene.actors.map((each) => hitAreaOf(each, PROBE_ONE_HITBOX)),
     );
   });
 
@@ -712,6 +746,308 @@ describe('I/O matrix', () => {
         }),
       ).actors,
     ).toStrictEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 3.7: by state, fallback and the placeholder. The contract pack's
+// probe-one draws waiting, thinking and working, shows done and idle as
+// waiting, and leaves approval, decision and error to the placeholder;
+// probe-two draws working, done and error, and shows thinking as working
+// and waiting as done.
+
+/** Whether `value` is an actor drawn as the placeholder. */
+function hasPlaceholder(value: object | undefined): boolean {
+  return value !== undefined && 'placeholder' in value;
+}
+
+describe('I/O matrix', () => {
+  it('有實作: an actor whose state its character lists in states is drawn with its pack’s draw, with no placeholder', () => {
+    const scene = buildScene(
+      input({
+        actors: [
+          actor('a1', `${ALPHA}/probe-one`, 'thinking'),
+          actor('a2', `${ALPHA}/probe-two`, 'error'),
+        ],
+        draws: { [ALPHA]: drawOf({ a1: [SPRITE], a2: [SPRITE] }) },
+      }),
+    );
+
+    expect(
+      scene.actors.map((each) => [
+        each.actorId,
+        each.sprites,
+        hasPlaceholder(each),
+      ]),
+    ).toStrictEqual([
+      ['a1', [sceneSprite(SPRITE)], false],
+      ['a2', [sceneSprite(SPRITE)], false],
+    ]);
+    expect(scene.areas.map((area) => area.key)).toStrictEqual([
+      'claude-code:a1',
+      'claude-code:a2',
+    ]);
+  });
+
+  it('fallback: an actor whose state only its fallback has (probe-one’s done and idle, probe-two’s thinking and waiting) is drawn with its pack’s draw, with no placeholder', () => {
+    const actors = [
+      actor('a1', `${ALPHA}/probe-one`, 'done'),
+      actor('a2', `${ALPHA}/probe-one`, 'idle'),
+      actor('a3', `${ALPHA}/probe-two`, 'thinking'),
+      actor('a4', `${ALPHA}/probe-two`, 'waiting'),
+    ];
+    const scene = buildScene(
+      input({
+        actors,
+        draws: {
+          [ALPHA]: drawOf({
+            a1: [SPRITE],
+            a2: [SPRITE],
+            a3: [SPRITE],
+            a4: [SPRITE],
+          }),
+        },
+      }),
+    );
+
+    expect(scene.actors.map((each) => each.actorId)).toStrictEqual([
+      'a1',
+      'a2',
+      'a3',
+      'a4',
+    ]);
+    for (const each of scene.actors) {
+      expect(each.sprites).toStrictEqual([sceneSprite(SPRITE)]);
+      expect(hasPlaceholder(each)).toBe(false);
+    }
+    expect(scene.areas).toHaveLength(4);
+  });
+
+  it('佔位: every state probe-one neither draws nor maps (approval, decision, error) gets the same placeholder, its hitbox; probe-two’s gets its own hitbox', () => {
+    const scene = buildScene(
+      input({
+        actors: [
+          actor('a1', `${ALPHA}/probe-one`, 'approval'),
+          actor('a2', `${ALPHA}/probe-one`, 'decision'),
+          actor('a3', `${ALPHA}/probe-one`, 'error'),
+          actor('a4', `${ALPHA}/probe-two`, 'idle'),
+        ],
+        draws: { [ALPHA]: drawOf({ a1: [SPRITE], a2: [], a3: [SPARKLE] }) },
+      }),
+    );
+
+    expect(
+      scene.actors.map(({ actorId, sprites, emitters, placeholder }) => [
+        actorId,
+        sprites.length,
+        emitters.length,
+        placeholder,
+      ]),
+    ).toStrictEqual([
+      ['a1', 0, 0, PROBE_ONE_HITBOX],
+      ['a2', 0, 0, PROBE_ONE_HITBOX],
+      ['a3', 0, 0, PROBE_ONE_HITBOX],
+      ['a4', 0, 0, { x: -25, y: -96, width: 50, height: 96 }],
+    ]);
+    expect(scene.actors.some((each) => 'bitmap' in each)).toBe(false);
+  });
+
+  it('佔位: it takes the mouse over its hitbox × 大小 at its place though no texture is loaded (it loads none), and is drawn by y among the other actors', () => {
+    const ys: Record<string, number> = { a1: 600, b1: 500, a2: 550 };
+    const scene = buildScene({
+      ...input({
+        actors: [
+          actor('a1', `${ALPHA}/probe-one`, 'working'),
+          actor('b1', `${BRAVO}/probe-one`, 'approval'),
+          actor('a2', `${ALPHA}/probe-one`, 'working'),
+        ],
+        draws: { [ALPHA]: drawOf({ a1: [SPRITE], a2: [SPRITE] }) },
+        // No texture is there yet: only the placeholder takes the mouse.
+        ready: () => false,
+      }),
+      place: (_world, members) =>
+        new Map(
+          members.map((member) => [
+            member.key,
+            { x: 300, y: ys[member.key] ?? 0 },
+          ]),
+        ),
+    });
+
+    expect(scene.actors.map((each) => each.actorId)).toStrictEqual([
+      'b1',
+      'a2',
+      'a1',
+    ]);
+    expect(scene.areas).toStrictEqual([
+      {
+        key: 'claude-code:b1',
+        x: 300 - 30 * 1.5,
+        y: 500 - 110 * 1.5,
+        width: 60 * 1.5,
+        height: 110 * 1.5,
+      },
+    ]);
+    expect(scene.actors[0]).toMatchObject({
+      scale: 1.5,
+      bounds: { x: -40, y: -130, width: 80, height: 130 },
+      placeholder: PROBE_ONE_HITBOX,
+    });
+  });
+
+  it('空 draw: an actor whose state maps and whose draw gives it an empty list is there with nothing drawn: no placeholder, no mouse', () => {
+    const scene = buildScene(
+      input({
+        actors: [actor('a1', `${ALPHA}/probe-one`, 'waiting')],
+        draws: { [ALPHA]: drawOf({ a1: [] }) },
+      }),
+    );
+
+    expect(scene.actors).toHaveLength(1);
+    expect(scene.actors[0]?.sprites).toStrictEqual([]);
+    expect(hasPlaceholder(scene.actors[0])).toBe(false);
+    expect(scene.areas).toStrictEqual([]);
+  });
+
+  it('漏回: an actor whose state maps and whose draw leaves it out, or with no draw yet (or only one by another version), is not drawn and gets no placeholder', () => {
+    const actors = [
+      actor('a1', `${ALPHA}/probe-one`, 'done'),
+      actor('a2', `${ALPHA}/probe-one`, 'working'),
+    ];
+    const cases: Record<string, PackDraw>[] = [
+      { [ALPHA]: drawOf({ a2: [SPRITE] }) },
+      {},
+      { [ALPHA]: drawOf({ a1: [SPRITE] }, '0.9.0') },
+    ];
+    for (const draws of cases) {
+      const scene = buildScene(input({ actors, draws }));
+      expect(scene.actors.some((each) => each.actorId === 'a1')).toBe(false);
+      expect(scene.actors.some(hasPlaceholder)).toBe(false);
+      expect(scene.areas.some((area) => area.key === 'claude-code:a1')).toBe(
+        false,
+      );
+    }
+  });
+
+  it('沙盒還沒好: an actor whose state does not map is drawn as the placeholder before its pack has any draw (or while it has only one by another version), and takes the mouse; not before its pack’s look has come', () => {
+    const actors = [actor('a1', `${ALPHA}/probe-one`, 'approval')];
+    const cases: Record<string, PackDraw>[] = [
+      {},
+      { [ALPHA]: drawOf({ a1: [SPRITE] }, '0.9.0') },
+    ];
+    for (const draws of cases) {
+      const scene = buildScene(input({ actors, draws }));
+      expect(scene.actors.map((each) => each.placeholder)).toStrictEqual([
+        PROBE_ONE_HITBOX,
+      ]);
+      expect(scene.areas.map((area) => area.key)).toStrictEqual([
+        'claude-code:a1',
+      ]);
+    }
+    // The look of the version installed has not come: nothing is placed.
+    const notYet: Record<string, PackLook>[] = [
+      {},
+      { [ALPHA]: lookOf(ALPHA, '0.9.0') },
+    ];
+    for (const looks of notYet) {
+      expect(buildScene(input({ actors, looks })).actors).toStrictEqual([]);
+    }
+  });
+
+  it('狀態變回: from the placeholder back to a state that maps, the placeholder goes and the pack’s latest draw is drawn as it is (even one made before the state changed); and the other way round, the draw goes at once', () => {
+    // The pack's latest draw, made while a1 was still in the placeholder.
+    const draws = { [ALPHA]: drawOf({ a1: [SPRITE, SPARKLE] }) };
+    const inPlaceholder = buildScene(
+      input({
+        actors: [actor('a1', `${ALPHA}/probe-one`, 'approval')],
+        draws,
+      }),
+    );
+    const back = buildScene(
+      input({
+        actors: [actor('a1', `${ALPHA}/probe-one`, 'working')],
+        draws,
+      }),
+    );
+
+    expect(inPlaceholder.actors[0]).toMatchObject({
+      sprites: [],
+      emitters: [],
+      placeholder: PROBE_ONE_HITBOX,
+    });
+    expect(hasPlaceholder(back.actors[0])).toBe(false);
+    expect(back.actors[0]).toMatchObject({
+      sprites: [sceneSprite(SPRITE)],
+      emitters: [SPARKLE],
+    });
+    const { placeholder: _placeholder, ...placed } =
+      inPlaceholder.actors[0] ?? {};
+    const {
+      sprites: _sprites,
+      emitters: _emitters,
+      ...same
+    } = back.actors[0] ?? {};
+    // Same place, 大小 and bounds either way.
+    expect({ ...placed, sprites: [], emitters: [] }).toStrictEqual({
+      ...same,
+      sprites: [],
+      emitters: [],
+    });
+    expect(back.areas).toStrictEqual(inPlaceholder.areas);
+  });
+
+  it('資源: an actor going into the placeholder with a bitmap and particles in its draw carries neither, and particleActorsOf leaves it out, so its emitters and their particles go at once', () => {
+    const bitmap: DrawnCommand = {
+      type: 'bitmap',
+      image: new FakeImageBitmap(),
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+    };
+    const draws = {
+      [ALPHA]: drawOf({ a1: [SPRITE, bitmap, SPARKLE], a2: [SPARKLE] }),
+    };
+    const particles = createParticleSystem({ random: () => 0.5 });
+    const before = buildScene(
+      input({
+        actors: [
+          actor('a1', `${ALPHA}/probe-one`, 'working'),
+          actor('a2', `${ALPHA}/probe-one`, 'working'),
+        ],
+        draws,
+      }),
+    );
+    particles.sync(particleActorsOf(before));
+    particles.step(200);
+    expect(particles.emittersOf('a1')).toHaveLength(1);
+    expect(particles.emittersOf('a1')[0]?.particles.length).toBeGreaterThan(0);
+
+    const after = buildScene(
+      input({
+        actors: [
+          actor('a1', `${ALPHA}/probe-one`, 'error'),
+          actor('a2', `${ALPHA}/probe-one`, 'working'),
+        ],
+        draws,
+      }),
+    );
+    particles.sync(particleActorsOf(after));
+
+    expect(after.actors[0]).toMatchObject({
+      actorId: 'a1',
+      sprites: [],
+      emitters: [],
+      placeholder: PROBE_ONE_HITBOX,
+    });
+    expect('bitmap' in (after.actors[0] ?? {})).toBe(false);
+    expect(particleActorsOf(after).map((each) => each.actorId)).toStrictEqual([
+      'a2',
+    ]);
+    // a1's emitter and particles are gone at once; a2's go on.
+    expect(particles.emittersOf('a1')).toStrictEqual([]);
+    expect(particles.emittersOf('a2')).toHaveLength(1);
+    expect(particles.emittersOf('a2')[0]?.active).toBe(true);
   });
 });
 
