@@ -45,6 +45,7 @@ describe('settings fields', () => {
       'syncTimeoutMs',
       'packEnabled',
       'fixedOverrides',
+      'demoCharacter',
     ]);
     expect(Object.keys(settingsFieldSchemas)).toStrictEqual([
       ...SETTINGS_FIELDS,
@@ -66,6 +67,7 @@ describe('settings fields', () => {
       syncTimeoutMs: 10_000,
       packEnabled: {},
       fixedOverrides: {},
+      demoCharacter: null,
     });
     expect(Object.isFrozen(SETTINGS_DEFAULTS)).toBe(true);
   });
@@ -102,6 +104,41 @@ describe('canvasDisplayId schema', () => {
     ['an object', { id: 1 }],
   ])('rejects %s', (_label, value) => {
     expectRejected(schema, value);
+  });
+});
+
+describe('demoCharacter schema (FR21 as changed on 2026-11-24)', () => {
+  const schema = settingsFieldSchemas.demoCharacter;
+
+  it.each([[null], ['dynames/dynames'], ['contract-pack/probe-one']])(
+    'round-trips %j',
+    (value) => {
+      expectRoundTrip(schema, value);
+    },
+  );
+
+  it.each([
+    ['a pack id alone', 'dynames'],
+    ['an empty character id', 'dynames/'],
+    ['an upper-case key', 'Dynames/dynames'],
+    ['a number', 1],
+    ['undefined', undefined],
+    ['an object', { packId: 'dynames', characterId: 'dynames' }],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(schema, value);
+  });
+
+  it('is changed by a set op', () => {
+    expectRoundTrip(settingsOpSchema, {
+      op: 'set',
+      field: 'demoCharacter',
+      value: 'dynames/dynames',
+    });
+    expectRejected(settingsOpSchema, {
+      op: 'set',
+      field: 'demoCharacter',
+      value: 'dynames',
+    });
   });
 });
 

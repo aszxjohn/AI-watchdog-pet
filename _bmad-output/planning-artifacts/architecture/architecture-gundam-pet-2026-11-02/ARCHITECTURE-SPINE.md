@@ -79,7 +79,7 @@ graph LR
 | 舞台設定（覆蓋值、池子勾選、固定參數、計時秒數） | `main/settings` | 經 StageView 訂閱；寫入走 `settings:patch`（AD-23） |
 | 已安裝角色包、執行失敗標記 | `main/packs` | 唯讀 |
 | StageView | `main/stage-view`（只組合，不擁有資料） | 訂閱（AD-20） |
-| 世界（位置、移動、碰撞框、飛行物件、節拍） | `overlay/world` | 角色包只收事件 |
+| 世界（位置、移動、招式執行、碰撞框、飛行物件與彈道、節拍） | `overlay/world` | 角色包只收事件與 `frame.motion`；招式由包宣告、world 執行（AD-27） |
 | 角色自己的演出狀態 | 該角色包（以 `actorId` 為 key） | 舞台看不到內部 |
 
 只有 `main` 寫檔，一個檔一個擁有者。每個持久檔帶 `schemaVersion`，由 `main/<擁有者>/migrations` 只往前遷移；遷移失敗才走壞檔流程。
@@ -148,7 +148,7 @@ graph LR
 
 - **Binds:** `overlay/world`、角色包 API
 - **Prevents:** 各包命中算法不一致；包讀取別包狀態
-- **Rule:** 角色位置、移動、遊走、碰撞框、飛行物件都是 `overlay/world` 的。包要發射就呼叫舞台 API：包有自訂物件就用包的素材；沒指定、或指定了舞台不認得且包裡也沒附（含素材載入失敗）時，舞台都改丟一個隨機的通用物件，不報錯、不會什麼都不丟。命中由舞台判定。第一版通用事件五種：被擊中（`hit`）、靠近／碰撞（`proximity`）、角色進場／離場（`enter`／`leave`）、狀態廣播（`state-broadcast`）、被使用者捏起來（`grab`）。目標包沒處理該事件就不反應；被捏起來的角色沒實作捏起來動作，就照原樣被拎著走。同一包的角色在同一個沙盒裡；包內特殊互動的反應邏輯由包自己寫，觸發仍來自舞台事件，涉及世界物件（發射、命中）一律走舞台 API。包只能請自己的角色停在原地／恢復遊走、轉向（`stage.hold`、`stage.face`，AD-16），不能指定位置、看不到座標；使用者的遊走偏好優先，設成不遊走就一定不動 [ADOPTED]。事件與發射細則見 AD-18。
+- **Rule:** 角色位置、移動、遊走、碰撞框、飛行物件都是 `overlay/world` 的。包要發射就呼叫舞台 API：包有自訂物件就用包的素材；沒指定、或指定了舞台不認得且包裡也沒附（含素材載入失敗）時，舞台都改丟一個隨機的通用物件，不報錯、不會什麼都不丟。命中由舞台判定。第一版通用事件五種：被擊中（`hit`）、靠近／碰撞（`proximity`）、角色進場／離場（`enter`／`leave`）、狀態廣播（`state-broadcast`）、被使用者捏起來（`grab`）。目標包沒處理該事件就不反應；被捏起來的角色沒實作捏起來動作，就照原樣被拎著走。同一包的角色在同一個沙盒裡；包內特殊互動的反應邏輯由包自己寫，觸發仍來自舞台事件，涉及世界物件（發射、命中）一律走舞台 API。移動與彈道歸舞台、演出歸包 [ADOPTED 2026-11-24，取代 Q7 的 A]：包不能指定位置、看不到座標，能影響移動的只有三種方式：請自己的角色停在原地／恢復遊走、轉向（`stage.hold`、`stage.face`，AD-16），以及宣告招式（有節奏的移動，由 world 執行，AD-27）。使用者的遊走偏好只管舞台自己的閒逛：設成不遊走就不閒逛，但招式照跑，跑完回到停留點。事件與發射細則見 AD-18。
 
 ### AD-11 — 參數兩層、覆蓋值歸舞台 [ADOPTED]
 
@@ -169,7 +169,7 @@ graph LR
 
 - **Binds:** `main/packs`、manifest schema
 - **Prevents:** 惡意壓縮檔寫出資料夾；安裝失敗留下半套；同 packId 的包靜默互相覆蓋；畫布被超大圖片吃光記憶體
-- **Rule:** `.awpet` 是 zip，根目錄一個 `<packId>/`，內含 `manifest.json`、程式與素材。manifest 必填 `id`、`name`、`version`（semver）、`apiVersion`、`entry`、`assets`（key → 單張圖或 PixiJS spritesheet JSON）、`characters`；選填 `projectiles`（key → `assets` 的 key）。每個角色宣告 `id`、`name`、`height`（身高，基準像素，見 AD-11）、參數宣告、`states`（已實作的狀態碼）、選填 `fallback`、`hitbox`、`bounds`、`anchor`（名牌與標記的位置，本地座標）、選填 `defaults`（固定參數 `scale`、`wander` 的建議預設）、選填 `advancedBitmap`。`packId`、`characterId` 符合 `^[a-z0-9][a-z0-9-]{1,63}$`；`characterId` 是跨版本的穩定身分。匯入時擋 `..`、絕對路徑、捷徑檔，限制解壓總大小、檔案數、每張圖寬高與總像素（上限為 shared 常數），manifest 用 schema 驗證、入口試解析；安裝先解到暫存，成功才替換，失敗回復舊版。匯入的 packId 已存在時，顯示新舊名稱與版本請使用者確認才替換，降版另外警告。匯出只包含角色包本身，不附帶使用者的覆蓋值 [ADOPTED]。
+- **Rule:** `.awpet` 是 zip，根目錄一個 `<packId>/`，內含 `manifest.json`、程式與素材。manifest 必填 `id`、`name`、`version`（semver）、`apiVersion`、`entry`、`assets`（key → 單張圖或 PixiJS spritesheet JSON）、`characters`；選填 `projectiles`（key → `assets` 的 key，或 `{ asset, speed, range }`，AD-18）。每個角色宣告 `id`、`name`、`height`（身高，基準像素，見 AD-11）、參數宣告、`states`（已實作的狀態碼）、選填 `fallback`、`hitbox`、`bounds`、`anchor`（名牌與標記的位置，本地座標）、選填 `defaults`（固定參數 `scale`、`wander` 的建議預設）、選填 `advancedBitmap`、選填 `moves` 與 `stateMoves`（招式，AD-27）。`packId`、`characterId` 符合 `^[a-z0-9][a-z0-9-]{1,63}$`；`characterId` 是跨版本的穩定身分。匯入時擋 `..`、絕對路徑、捷徑檔，限制解壓總大小、檔案數、每張圖寬高與總像素（上限為 shared 常數），manifest 用 schema 驗證、入口試解析；安裝先解到暫存，成功才替換，失敗回復舊版。匯入的 packId 已存在時，顯示新舊名稱與版本請使用者確認才替換，降版另外警告。匯出只包含角色包本身，不附帶使用者的覆蓋值 [ADOPTED]。
 
 ### AD-14 — 透明置頂穿透畫布 [ADOPTED]
 
@@ -183,7 +183,7 @@ graph LR
 
 - **Binds:** `main/detection/adapters/demo`
 - **Prevents:** 展示模式另寫一套繞過偵測的邏輯，跟真實行為不同
-- **Rule:** 展示、示範模式實作成一個假的 `demo` 轉接器，輸出同一套共用事件，經同一個判斷器、池子與世界。示範模式照池子分配。展示模式可指定任何角色（含未加入池子的），指定只對 `demo` 來源的 session 有效、不存檔、不佔池子名額。編輯頁的「在畫面上預覽」就是展示模式在畫布上演。
+- **Rule:** 展示、示範模式實作成一個假的 `demo` 轉接器，輸出同一套共用事件，經同一個判斷器、池子與世界。示範模式（2026-11-24 修改）是開發用的獨立模式：開啟時 `main/pool` 收起其他 session 的角色，只讓 `demo` 來源的 session 演使用者指定的任一已安裝角色，關閉後收起的角色回來；上次選的角色記在 `settings.json`。展示模式可指定任何角色（含未加入池子的），指定只對 `demo` 來源的 session 有效、不存檔、不佔池子名額。編輯頁的「在畫面上預覽」就是展示模式在畫布上演。
 
 ### AD-16 — 角色包 API v1：程式格式、actor 與訊息
 
@@ -193,7 +193,7 @@ graph LR
   - 契約（型別、zod schema、常數）只在 `src/shared/pack-api/`，除 zod 外不依賴任何東西。
   - 入口：manifest `entry` 指向單一、已自行打包、不含 `import`／`require` 的 classic script，求值結果為工廠函式 `(stage) => handlers`；`handlers` 的鍵是下表的訊息名稱，`frame` 的回傳值就是該 tick 的 `draw`。其他格式在安裝時拒絕。
   - 包程式所在的 Worker 不是 secure context（`isSecureContext` 為 false，沒有 `crypto.subtle`）；亂數只由 `stage.random` 提供（Story 1.2 原型實測）。
-  - `stage` 是包唯一能用的 API：`stage.fire`（AD-18）、`stage.random(actorId)`（每個 actor 一個種子）、`stage.log`（限速，帶 `packId` 寫入運行紀錄）、`stage.canvas`（只限宣告 `advancedBitmap` 的角色，回傳 OffscreenCanvas 的 2d context）、`stage.hold(actorId, on)`（己方角色停在原地／恢復遊走）、`stage.face(actorId, 'left' | 'right')`（轉向）。`hold`／`face` 只對己方 actor 有效，使用者設為不遊走或角色被捏起來時不生效。時間只來自 `frame` 的 `t`。
+  - `stage` 是包唯一能用的 API：`stage.fire`（AD-18）、`stage.random(actorId)`（每個 actor 一個種子）、`stage.log`（限速，帶 `packId` 寫入運行紀錄）、`stage.canvas`（只限宣告 `advancedBitmap` 的角色，回傳 OffscreenCanvas 的 2d context）、`stage.hold(actorId, on)`（己方角色停在原地／恢復遊走）、`stage.face(actorId, 'left' | 'right')`（轉向）、`stage.move(actorId, key | null)`（觸發或停止招式，AD-27）。`hold`／`face` 只對己方 actor 有效，使用者設為不遊走或角色被捏起來時不生效。時間只來自 `frame` 的 `t`。
   - 畫面上每一隻是一個 **actor**。`actorId` 由 `main/pool` 在建立分配時產生（不透明字串，app 執行期間不重用）；一筆分配＝一個 session × 一個角色＝一個 `actorId`，換角色＝舊 actor 結束、新 actor 產生。所有舞台↔包訊息、世界實體、繪圖、發射一律以 `actorId` 定址；同一角色可同時有多個 `actorId`，包的內部狀態以 `actorId` 為 key，`characterId` 只用來選外觀與參數。
   - `overlay/pack-host` 驗證包送出的每則訊息裡的 `actorId` 屬於該包，否則整則丟棄並記錄 `packId`。包看不到 `sessionKey`、`source`、`confidence`，也看不到別包的 `packId`、`characterId`。
 
@@ -203,9 +203,9 @@ graph LR
   | `spawn`／`despawn` | 己方 actor：`actorId`、`characterId`、完整有效參數、狀態、session 顯示名稱 | 己方 actor 加入／移出 |
   | `params` | 某己方角色的完整有效參數 | 參數變更，同一角色每 tick 至多一則 |
   | `meta` | 己方 actor 的 session 顯示名稱 | 顯示名稱變更 |
-  | `frame` | `seq`、`t`（舞台相對毫秒）、`dt`、己方 actor 的狀態（已依 AD-18 對應）與 `motion`（是否移動、面向、是否被捏起來 `held`）、本 tick 的通用事件 | 每個邏輯 tick（AD-17） |
+  | `frame` | `seq`、`t`（舞台相對毫秒）、`dt`、己方 actor 的狀態（已依 AD-18 對應）與 `motion`（是否移動、面向、是否被捏起來 `held`，以及招式進度 `move`、`step`、`progress`、`returning`，AD-27）、本 tick 的通用事件 | 每個邏輯 tick（AD-17） |
 
-  包→舞台只有：`frame` 的回傳值（`draw`）、`stage.fire`、`stage.hold`、`stage.face`、`stage.log`。心跳 `ping`／`pong` 由 Worker bootstrap 在 Compartment 外處理。
+  包→舞台只有：`frame` 的回傳值（`draw`）、`stage.fire`、`stage.hold`、`stage.face`、`stage.move`、`stage.log`。心跳 `ping`／`pong` 由 Worker bootstrap 在 Compartment 外處理。
 
 ### AD-17 — 角色包 API v1：節拍、繪圖指令與素材
 
@@ -213,7 +213,7 @@ graph LR
 - **Prevents:** 一包變慢拖住全部角色；畫面、命中與縮放各算一套；包把角色畫到世界以為它不在的地方
 - **Rule:**
   - 節拍唯一擁有者是 `overlay/world`，邏輯頻率 `tickHz`（shared 常數，預設 30）。每 tick 對有 actor 的包送一則 `frame`；每包同時最多一則在途，上一則沒回就跳過該包這一格，不排隊。renderer 每個顯示幀用該包最後一則有效 `draw`，永不等待。連續 `drawTimeoutMs` 沒有有效 `draw` 視同執行失敗（AD-19）。
-  - 繪圖座標一律是 actor 本地座標：原點＝world 給的錨點（角色腳底中心），單位＝基準像素（未乘「大小」），y 向下。舞台在外層依序套 world 位置、固定參數「大小」、actor 之間的層級（world 依 y 排序）。指令內 `z` 只排同一 actor 內的前後；超出 manifest `bounds` 的內容裁切。
+  - 繪圖座標一律是 actor 本地座標：原點＝world 給的錨點（角色腳底中心），單位＝基準像素（未乘「大小」），y 向下。舞台在外層依序套 world 位置、固定參數「大小」、actor 之間的層級（world 依 y 排序）。指令內 `z` 只排同一 actor 內的前後；超出 manifest `bounds` 的內容裁切。`bounds` 是跟著 actor 走的近身繪圖框，不是活動範圍；角色的位移一律由 world 執行（招式，AD-27），不得用繪圖指令的偏移模擬。
   - v1 指令是封閉清單：`sprite`（`asset`、`frame`、`x`、`y`、`rotation`、`scaleX`、`scaleY`、`alpha`、`z`）、`particles`（`emitterId`、`preset`、`x`、`y`、參數；同一 `emitterId` 跨 frame 持續，下一則 `draw` 沒出現就停止發射）、`bitmap`（只限 `advancedBitmap` 角色，ImageBitmap 以 transfer 傳送）。
   - 素材：`asset` 是 manifest `assets` 的 key，`frame` 是該 spritesheet 的格名稱（單張圖不填）。renderer 自行從 `pack://<packId>/<version>/<path>` 載入並依 URL 快取；除 `bitmap` 外，包不傳任何圖檔位元組。
   - 命中、碰撞、滑鼠穿透只用 manifest 每個角色的 `hitbox`（本地座標矩形）×「大小」，由 world 計算；繪圖內容不影響。
@@ -230,7 +230,7 @@ graph LR
   - 收件：事件送給每個其他 actor 的擁有包，同包也送；己方 actor 的進出以 `spawn`／`despawn` 得知。舞台不過濾同包事件。
   - `proximity` 是邊緣觸發：`phase` 為 `begin`／`end`，`kind` 為 `near`（半徑是舞台常數）或 `touch`（兩個 hitbox 相交）。`hit` 帶被打的 `actorId`、射方 `byActorId`、`projectile`（`generic`／`custom`）。`state-broadcast` 帶 `actorId` 與 8 狀態碼。`grab` 是邊緣觸發，帶被捏的 `actorId` 與 `phase`（`begin`／`end`），送給所有有 actor 的包（含被捏角色自己的包）；捏住期間該 actor 的 `frame.motion.held` 為 `true`。
   - 事件只含 `actorId` 與 8 狀態碼；不含別包的 `packId`、`characterId`、顯示名稱，也不含 `sessionKey`、`source`、`confidence`。
-  - 發射：`stage.fire(fromActorId, { target, object })`，兩者都選填。有 `target`（另一個 `actorId`）就朝目標發射，否則依面向水平發射；速度、射程、每個 actor 每秒次數上限是舞台常數，超出的丟棄。`object` 是 manifest `projectiles` 的 key，由 renderer 直接畫，射方包不參與每格繪製；落空依 AD-10 改丟通用物件。飛行物件屬於 world；射方包卸除後，其自訂物件改以通用外觀飛完。命中以 `hit` 通知，同包也收到。
+  - 發射：`stage.fire(fromActorId, { from, object, angle, target })`。`from` 必填 [ADOPTED 2026-11-24]：出發點（本地座標 `{ x, y }`），由包定義（例如槍口位置）；沒給或格式不對時不發射，整則丟棄並記錄 `packId`。其餘選填：有 `target`（另一個 `actorId`）就朝目標發射，否則照 `angle`（度，0＝右、90＝下，與繪圖座標同向），沒給 `angle` 就依面向水平發射。彈道由 world 計算，第一版為直線；飛行物件在整個畫布裡飛，不受射方 `bounds` 裁切，超過射程或飛出畫面就移除，圖沿飛行方向旋轉，不會打中射方自己。速度與射程取 manifest `projectiles` 物件寫法的 `speed`、`range`（基準像素／秒、基準像素，乘射方「大小」），沒寫或用字串寫法時用舞台預設，都夾在舞台上限內；每個 actor 每秒次數上限是舞台常數，超出的丟棄。`object` 是 manifest `projectiles` 的 key，由 renderer 直接畫，射方包不參與每格繪製；落空依 AD-10 改丟通用物件。飛行物件屬於 world；射方包卸除後，其自訂物件改以通用外觀飛完。命中以 `hit` 通知，同包也收到。
 
 ### AD-19 — 角色包載入鏈與執行期生命週期
 
@@ -334,6 +334,20 @@ graph LR
   - 轉接器健康 `ok`／`degraded`／`missing` 由 `main/detection` 發佈到 StageView，面板顯示。
   - `main/windows` 監聽 `render-process-gone`，重建畫布視窗；overlay 重拿 StageView 快照，沙盒依 AD-19 重建。
   - 平台：macOS 13+、Windows x64／arm64；Linux 次要。
+
+### AD-27 — 招式：包宣告節奏、world 執行、舞台是唯一時鐘 [ADOPTED]
+
+- **Binds:** `overlay/world`、`overlay/pack-host`、`src/shared/pack-api`、manifest、第三方角色包
+- **Prevents:** 動畫與位移各自計時而不同步；包把身體畫偏，受擊框、名牌留在原地、超出 `bounds` 被切；包看不到座標而衝出螢幕
+- **Rule:**
+  - manifest 每個角色可宣告 `moves`：招式 key → 段落清單。段落兩種：`hold`（停 `duration` 秒）、`line`（沿面向前進 `dx`、往下 `dy` 基準像素，`duration` 秒，`easing` 為 `linear`／`in`／`out`／`in-out`）。`dx` 正值＝朝面向前進。段數、單段速度（距離÷時間）、單段距離有上限（shared 常數），安裝時驗證，超出拒絕並說明原因。第一版沒有弧線、跳躍。
+  - 觸發：角色選填 `stateMoves`（狀態碼 → 招式 key），進入該狀態就循環跑該招式，狀態改變時中斷。包也可以呼叫 `stage.move(actorId, key)` 觸發一次，優先於狀態的招式，跑完後狀態的招式從頭再跑；`stage.move(actorId, null)` 停止目前的招式。正在跑時觸發新招式＝中斷舊的、開始新的。
+  - 唯一時鐘：world 依節拍執行招式，移動 actor 的世界位置；受擊框、名牌、`bounds`、發射起點都跟著走。每則 `frame` 的 `motion` 帶 `move`（招式 key 或 `null`）、`step`（段落索引）、`progress`（該段 0～1）、`returning`（是否正在回停留點）、`moving`、`facing`、`held`。包依此選動畫格，不自行計時位移；包最多落後一則 `frame`，掉格只影響姿勢，不影響位置。
+  - 遊走與停留：遊走中跑招式時暫停遊走，跑完從新位置繼續。停留中（使用者設不遊走，或包 `hold(true)`）以停留點為中心跑；招式結束或被中斷時，world 以舞台的回位速度把角色帶回停留點，期間 `returning` 為 `true`。
+  - 邊界：一段 `line` 開始時，若它的終點會讓 `hitbox` 水平超出畫面，world 把該段與之後各段的水平方向翻過來並改面向（下一則 `frame` 的 `facing` 反映）；翻了仍放不下、或垂直超出時，停在邊上。
+  - 捏起來：招式立即中止；放開後照 AD-14 從放下處恢復遊走；停留中的角色以放下處為新停留點。
+  - 角色之間不擋路，穿過時只產生 `proximity`（AD-18）。
+  - `pack-host` 驗證 `stage.move` 的 `actorId` 屬於該包、key 在該角色的 `moves` 裡，否則整則丟棄並記錄 `packId`。
 
 ## Consistency Conventions
 
@@ -458,6 +472,8 @@ test/
 | Linux 點角色才接滑鼠 | 等 Electron `setInputRegion`（PR #55084，2026-11-03 仍未合併）；X11 可先評估 `win.setShape` 當過渡 |
 | 角色包的聲音、滑鼠互動、牆上時間、額外全域（如 `Float32Array`） | 第一版不開放；要開放時升 API minor |
 | 退場演出（`leave` 保留期） | v1 `leave` 即時移除；要加時升 minor，並定義保留期間角色何時回池 |
+| 招式的弧線、跳躍等段落 | 第一版只有 `hold`、`line`；要加新段落類型時升 API minor（AD-27） |
+| 拋物線等非直線彈道 | 第一版直線；要加時在 `projectiles` 物件寫法加欄位並升 minor（AD-18） |
 | `characterId` 改名搬移 | v1 `characterId` 是跨版本穩定身分，改名視同舊角色消失；要支援時在 manifest 加改名宣告並升 minor |
 | 池子用完時挑哪隻重複 | 只在 `main/pool` 一處實作，不會跨單元分歧；預設沿用 Demo（出場次數最少者） |
 | 粒子 preset 清單 | 由 `overlay/renderer` 一處定義、放 `src/shared/pack-api` 常數；內容實作時定 |

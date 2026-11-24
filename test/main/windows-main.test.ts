@@ -48,8 +48,22 @@ const state = vi.hoisted(() => {
     trayActions: undefined as
       | {
           openPage(page: string): void;
-          setDemo(state: string | null): void;
+          pickDemoCharacter(key: string): void;
+          pickDemoState(state: string): void;
+          stopDemo(): void;
           quit(): void;
+        }
+      | undefined,
+    /** What main.ts passed to createTray as its 示範模式. */
+    trayDemo: undefined as unknown,
+    /** What main.ts passed to createDemoMode. */
+    demoOptions: undefined as
+      | {
+          chooseCharacter(
+            choices: readonly unknown[],
+            pick: (key: string) => void,
+          ): void;
+          batch(run: () => void): void;
         }
       | undefined,
     /** What main.ts passed to buildApplicationMenu. */
@@ -120,8 +134,8 @@ const state = vi.hoisted(() => {
       | undefined,
     /** What the right-click callback passed to openCanvasMenu. */
     menuArgs: undefined as unknown[] | undefined,
-    /** The listener main.ts passed to watchDemoState. */
-    demoListener: undefined as ((state: string | null) => void) | undefined,
+    /** The listener main.ts passed to demo mode's onChange. */
+    demoListener: undefined as ((view: unknown) => void) | undefined,
     /** The listener main.ts passed to detection.onSynced. */
     syncedListener: undefined as
       | ((
@@ -141,6 +155,8 @@ const state = vi.hoisted(() => {
       s.panelOpen = false;
       s.listeners = new Map();
       s.trayActions = undefined;
+      s.trayDemo = undefined;
+      s.demoOptions = undefined;
       s.menuActions = undefined;
       s.panelOptions = undefined;
       s.importerOptions = undefined;
@@ -581,18 +597,6 @@ vi.mock('../../src/main/detection/detection', () => ({
       stop: record('detection.stop'),
     };
   },
-  demoStateOf: (sessions: unknown) => {
-    state.order.push(`demoStateOf ${JSON.stringify(sessions)}`);
-    return 'error';
-  },
-  watchDemoState: (
-    detection: { fake: string },
-    listener: (demoState: string | null) => void,
-  ) => {
-    state.order.push(`watchDemoState ${detection.fake}`);
-    state.demoListener = listener;
-    state.maybeFail('watchDemoState');
-  },
   watchSleep: (...args: unknown[]) => {
     state.sleepArgs = args;
     state.order.push('watchSleep');
@@ -719,18 +723,57 @@ vi.mock('../../src/main/windows/menu', () => ({
 vi.mock('../../src/main/windows/tray', () => ({
   createTray: (
     platform: string,
-    actions: {
-      openPage(page: string): void;
-      setDemo(state: string | null): void;
-      quit(): void;
-    },
+    actions: NonNullable<typeof state.trayActions>,
+    demo: unknown,
   ) => {
     state.order.push(`createTray ${platform}`);
     state.trayActions = actions;
+    state.trayDemo = demo;
     state.maybeFail('createTray');
   },
-  showTrayDemoState: (demoState: string | null) => {
-    state.order.push(`showTrayDemoState ${String(demoState)}`);
+  showTrayDemo: (view: unknown) => {
+    state.order.push(`showTrayDemo ${JSON.stringify(view)}`);
+  },
+  popUpDemoCharacters: (choices: unknown, pick: (key: string) => void) => {
+    state.order.push(`popUpDemoCharacters ${JSON.stringify(choices)}`);
+    pick('picked/one');
+    return true;
+  },
+}));
+
+vi.mock('../../src/main/pool/demo-mode', () => ({
+  createDemoMode: (options: NonNullable<typeof state.demoOptions>) => {
+    state.order.push(
+      `createDemoMode ${Object.entries(options as Record<string, unknown>)
+        .filter(([, source]) => typeof source === 'object')
+        .map(
+          ([name, source]) =>
+            `${name}=${String((source as { fake?: string }).fake)}`,
+        )
+        .join(' ')}`,
+    );
+    state.demoOptions = options;
+    return {
+      fake: 'demo-mode',
+      view: () => ({ fake: 'demo view' }),
+      onChange: (listener: (view: unknown) => void) => {
+        state.order.push('demoMode.onChange');
+        state.demoListener = listener;
+        state.maybeFail('demoMode.onChange');
+      },
+      pickCharacter: (key: string) => {
+        state.order.push(`demoMode.pickCharacter ${key}`);
+      },
+      pickState: (demoState: string) => {
+        state.order.push(`demoMode.pickState ${demoState}`);
+      },
+      stop: () => {
+        state.order.push('demoMode.stop');
+      },
+      watch: () => {
+        state.order.push('demoMode.watch');
+      },
+    };
   },
 }));
 
@@ -767,7 +810,7 @@ function readySteps(): string[] {
     'handlePackProtocol packs',
     'dock.hideAtStartup',
     `createTray ${process.platform}`,
-    'watchDemoState detection',
+    'demoMode.onChange',
     'watchDisplays',
     'watchPower',
     'watchSleep',
@@ -861,6 +904,8 @@ describe('the primary instance', () => {
       'createStageView settings={"fake":"settings"} windows={"fake":"windows-source"} assigner={"fake":"assigner"} packs={"fake":"packs"} packImport={"fake":"importer"} packExport={"fake":"exporter"} characters={"fake":"characters"}',
       'characters.watch',
       'assigner.watchPool',
+      'createDemoMode detection=detection assigner=assigner settings=settings packs=packs',
+      'demoMode.watch',
       'registerIpcHandler app:get-version ["panels"]',
       'registerSettingsHandlers settings stage-view',
       'registerPoolHandlers pool',
@@ -913,9 +958,9 @@ describe('the primary instance', () => {
         readySteps().filter(
           (entry) =>
             // A menu that cannot be built is not set, and a tray that
-            // cannot be created has no check mark to follow detection.
+            // cannot be created has no 示範模式 to follow demo mode.
             (step !== 'menu' || !entry.startsWith('Menu.')) &&
-            (step !== 'tray' || !entry.startsWith('watchDemoState')),
+            (step !== 'tray' || !entry.startsWith('demoMode.onChange')),
         ),
       );
       expect(state.order).toContain(`createTray ${process.platform}`);
@@ -1101,14 +1146,39 @@ describe('the primary instance', () => {
     await becomeReady();
     state.order = [];
     state.trayActions?.openPage('packs');
-    state.trayActions?.setDemo('approval');
-    state.trayActions?.setDemo(null);
+    state.trayActions?.pickDemoCharacter('dynames/dynames');
+    state.trayActions?.pickDemoState('approval');
+    state.trayActions?.stopDemo();
     state.trayActions?.quit();
     expect(state.order).toStrictEqual([
       'panels.open packs',
-      'detection.setDemo approval',
-      'detection.setDemo null',
+      'demoMode.pickCharacter dynames/dynames',
+      'demoMode.pickState approval',
+      'demoMode.stop',
       'app.quit',
+    ]);
+    expect(state.trayDemo).toStrictEqual({ fake: 'demo view' });
+  });
+
+  it("demo mode asks with the tray's character menu, and switches in one StageView batch", async () => {
+    await startMain();
+    await becomeReady();
+    state.order = [];
+    const picked: string[] = [];
+
+    state.demoOptions?.chooseCharacter([{ key: 'picked/one' }], (key) => {
+      picked.push(key);
+    });
+    state.demoOptions?.batch(() => {
+      state.order.push('a switch');
+    });
+
+    expect(picked).toStrictEqual(['picked/one']);
+    expect(state.order).toStrictEqual([
+      'popUpDemoCharacters [{"key":"picked/one"}]',
+      'stageView.batch begins',
+      'a switch',
+      'stageView.batch ends',
     ]);
   });
 
@@ -1209,17 +1279,17 @@ describe('the primary instance', () => {
     ]);
   });
 
-  it("the tray's 示範模式 check mark follows detection's demo state", async () => {
+  it("the tray's 示範模式 is built again on each change of demo mode", async () => {
     await startMain();
     await becomeReady();
     state.order = [];
 
-    state.demoListener?.('error');
-    state.demoListener?.(null);
+    state.demoListener?.({ fake: 'view 2' });
+    state.demoListener?.({ fake: 'view 3' });
 
     expect(state.order).toStrictEqual([
-      'showTrayDemoState error',
-      'showTrayDemoState null',
+      'showTrayDemo {"fake":"view 2"}',
+      'showTrayDemo {"fake":"view 3"}',
     ]);
   });
 

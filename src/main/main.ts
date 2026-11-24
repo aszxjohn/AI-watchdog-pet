@@ -21,20 +21,22 @@
  *    effective parameters, from its pack's installed manifest), StageView
  *    (settings and characters, main/windows' displays, canvas and power
  *    sections, main/pool's assigner's sessions, adapters, pool and actors,
- *    main/packs' packs, packImport and packExport) and the IPC handlers
+ *    main/packs' packs, packImport and packExport), main/pool's demo mode
+ *    (the tray's 示範模式 goes through it) and the IPC handlers
  *    (a settings patch, an install and a removal each run in one StageView
  *    batch; removing a pack among them; the overlay's packs' entries and
  *    sandbox log lines, and what it draws each pack with), and guards
  *    every window webContents. The canvas's hover, right-click and WebGL
  *    context handlers come once the canvas windows exist; no right-click
  *    opens a menu yet (a character's menu is Story 4.3), and demo mode is
- *    switched from the tray's 示範模式 only. A GPU process that goes away
- *    is logged (Story 3.6).
+ *    switched from the tray's 示範模式 only, through main/pool's demo mode.
+ *    A GPU process that goes away is logged (Story 3.6).
  * 3. Once ready: the session guards, the application menu, the `app://`
  *    handler, the `pack://` handler (with the sandbox document the build
  *    wrote next to main.cjs), the Dock icon hidden, the tray icon
- *    (its 示範模式 check mark follows detection, whichever menu changed
- *    it), then the stage: the canvas on the chosen display (following
+ *    (its 示範模式 submenu built again on each change of demo mode, which
+ *    pops its character question up from the icon), then the stage: the
+ *    canvas on the chosen display (following
  *    display and settings changes) and the sleep / lock watch (sleep also
  *    goes to detection's clock), and last the `.awpet` files held until
  *    ready (see 6). On macOS, hiding the whole app hides the canvas too
@@ -82,11 +84,7 @@ import { MAIN_PANEL_PAGE, type PanelPageId } from '../shared/panels';
 import { createClaudeCodeAdapter } from './detection/adapters/claude-code/claude-code';
 import { createCursorAdapter } from './detection/adapters/cursor/cursor';
 import { createGeminiAdapter } from './detection/adapters/gemini/gemini';
-import {
-  createDetection,
-  watchDemoState,
-  watchSleep,
-} from './detection/detection';
+import { createDetection, watchSleep } from './detection/detection';
 import { registerIpcHandler } from './ipc/register';
 import { errorCode, initRunLog, logEvent } from './log/run-log';
 import { exportPack } from './packs/export';
@@ -110,6 +108,7 @@ import { logPackEntry } from './packs/sandbox-log';
 import { loadPacks } from './packs/store';
 import { flushOnQuit } from './persist/quit';
 import { createAssigner } from './pool/assign';
+import { createDemoMode } from './pool/demo-mode';
 import { registerPoolHandlers } from './pool/ipc';
 import { loadPool } from './pool/store';
 import { createCharacters } from './settings/characters';
@@ -141,7 +140,7 @@ import {
   createWindowsStageSource,
   watchDisplays,
 } from './windows/stage-sources';
-import { createTray, showTrayDemoState } from './windows/tray';
+import { createTray, popUpDemoCharacters, showTrayDemo } from './windows/tray';
 
 if (started) {
   // A Squirrel event: quit silently.
@@ -355,6 +354,24 @@ function startPrimaryInstance(): void {
   // that plays it.
   characters.watch();
   assigner.watchPool();
+  // main/pool's demo mode (FR21 as changed on 2026-11-24): the tray's
+  // 示範模式 goes through it. It has the stage to itself while on (the
+  // assigner parks every other session's actor), and each switch is one
+  // StageView batch. It follows the installed packs and settings from now
+  // on, after StageView, for the same reason as above.
+  const demoMode = createDemoMode({
+    detection,
+    assigner,
+    settings,
+    packs,
+    chooseCharacter: (choices, pick) => {
+      popUpDemoCharacters(choices, pick);
+    },
+    batch: (run) => {
+      stageView.batch(run);
+    },
+  });
+  demoMode.watch();
 
   registerIpcHandler(appGetVersion, ['panels'], () => app.getVersion());
   registerSettingsHandlers(settings, stageView);
@@ -550,20 +567,30 @@ function startPrimaryInstance(): void {
         dock.hideAtStartup();
       });
       startupStep('tray', () => {
-        createTray(process.platform, {
-          openPage: (page) => {
-            panels.open(page);
+        createTray(
+          process.platform,
+          {
+            openPage: (page) => {
+              panels.open(page);
+            },
+            pickDemoCharacter: (key) => {
+              demoMode.pickCharacter(key);
+            },
+            pickDemoState: (state) => {
+              demoMode.pickState(state);
+            },
+            stopDemo: () => {
+              demoMode.stop();
+            },
+            quit: () => {
+              app.quit();
+            },
           },
-          setDemo: (state) => {
-            detection.setDemo(state);
-          },
-          quit: () => {
-            app.quit();
-          },
-        });
-        // The 示範模式 check mark follows detection, whatever changed it.
-        watchDemoState(detection, (state) => {
-          showTrayDemoState(state);
+          demoMode.view(),
+        );
+        // The 示範模式 submenu is built again on each change of demo mode.
+        demoMode.onChange((view) => {
+          showTrayDemo(view);
         });
       });
       startupStep('canvas', () => {

@@ -47,6 +47,25 @@
  *   and are never used twice in a run.
  * - Each change of the assignments goes to the store, which writes
  *   assignments.json after its debounce.
+ * - Demo mode's stage (FR21 as changed on 2026-11-24; setDemo(), which
+ *   main/pool's demo mode calls): demo mode is a tool for pack
+ *   development that takes the stage for itself. While it is on, every
+ *   shown session of another source loses its actor (released ones as
+ *   usual; the rest are parked, character and all, in memory only), new
+ *   ones get none, and each `demo` session plays the character demo mode
+ *   names, any installed character that fits this stage (in the pool or
+ *   not), released or not, with a new actor id and no appearance counted.
+ *   None when the character is null or not installed (any more). Every
+ *   setDemo() with a stage starts the demo's actors anew (a pick reloads
+ *   the character). When it is off again, the demo's actors end and each
+ *   parked session still shown and not released comes back first: with
+ *   its character when a kept one would keep it (in the pool, and not on
+ *   stage unless every pool character is), otherwise by the usual pick;
+ *   either way with a new actor id and no appearance counted. The
+ *   assignments saved are the actors' and the parked ones, never the
+ *   demo's, so a parked session keeps its character across a restart too.
+ *   Before setDemo() is first called demo sessions are assigned like any
+ *   other.
  *
  * Log lines carry counts only, never a session key, a character or an
  * actor id.
@@ -86,6 +105,20 @@ const ACTOR_ID_TRIES = 16;
 export interface Assignment {
   readonly actorId: string;
   readonly characterKey: CharacterKey;
+}
+
+/** Demo mode's stage, while it is on (see setDemo). */
+export interface DemoStage {
+  /**
+   * The character every `demo` session plays; null: none (no character is
+   * installed).
+   */
+  readonly characterKey: CharacterKey | null;
+}
+
+/** Whether `sessionKey` is a session of demo mode's adapter. */
+function isDemoSession(sessionKey: SessionKey): boolean {
+  return splitSessionKey(sessionKey).source === 'demo';
 }
 
 function log(message: string, level: ConsoleLevel = 'info'): void {
@@ -245,6 +278,13 @@ export interface Assigner {
    * Only the first call does anything.
    */
   watchPool(): void;
+  /**
+   * Demo mode's stage: `demo` takes the stage for demo mode's sessions
+   * alone, starting their actors anew; null gives it back to the other
+   * sessions (see the file comment). One change, published once; before
+   * start-up sync it only takes effect at sync.
+   */
+  setDemo(demo: DemoStage | null): void;
 }
 
 export function createAssigner({
@@ -282,6 +322,15 @@ export function createAssigner({
   let batching = 0;
   /** The sections changed in this batch, heard when it ends. */
   let changed: Partial<StageViewAssignerSections> = {};
+  /** Demo mode's stage while it is on; null otherwise. */
+  let demo: DemoStage | null = null;
+  /**
+   * The assignments demo mode took off the stage: shown sessions of other
+   * sources, kept until demo mode is off.
+   */
+  const parked = new Map<SessionKey, Assignment>();
+  /** The shown sessions whose assignment demo mode made. */
+  const demoActors = new Set<SessionKey>();
 
   for (const saved of store.assignments()) {
     restored.set(saved.sessionKey, {
@@ -293,6 +342,17 @@ export function createAssigner({
 
   function currentPool(): CharacterKey[] {
     return poolOf(installed, poolValues);
+  }
+
+  /** Whether `key` is a character of an installed pack that fits this stage. */
+  function isInstalled(key: CharacterKey): boolean {
+    return installed.some(
+      (pack) =>
+        pack.compatibility.compatible &&
+        pack.characters.some(
+          (character) => characterKey(pack.id, character.id) === key,
+        ),
+    );
   }
 
   function appeared(key: CharacterKey): void {
@@ -325,11 +385,16 @@ export function createAssigner({
     return null;
   }
 
-  /** Hands every assignment, shown or kept for later, to the store. */
+  /**
+   * Hands every assignment, shown, parked by demo mode or kept for later,
+   * to the store; demo mode's own are never saved.
+   */
   function save(): void {
     const all: PoolAssignment[] = [];
-    for (const [sessionKey, assignment] of [...live, ...restored]) {
-      all.push({ sessionKey, ...assignment });
+    for (const [sessionKey, assignment] of [...live, ...parked, ...restored]) {
+      if (!demoActors.has(sessionKey)) {
+        all.push({ sessionKey, ...assignment });
+      }
     }
     try {
       store.setAssignments(all);
@@ -341,27 +406,63 @@ export function createAssigner({
   /**
    * After sync: ends the assignments of sessions gone or released, gives
    * shown sessions their kept assignment, then a character to each one
-   * still without, and publishes `actors` if they changed. `force` saves
-   * the assignments even when none changed here (the sync's sweep may have
-   * dropped some).
+   * still without, and publishes `actors` if they changed. While demo mode
+   * is on, it parks the other sources' actors and gives the demo sessions
+   * theirs instead (see the file comment). `force` saves the assignments
+   * even when none changed here (the sync's sweep may have dropped some);
+   * `restartDemo` ends the demo's actors first, so they start anew.
    */
-  function reconcile(force = false): void {
+  function reconcile(force = false, restartDemo = false): void {
     if (!synced) {
       return;
     }
     const shown = sections.sessions;
     const shownKeys = new Set<SessionKey>(shown.map((s) => s.sessionKey));
     const released = new Set<SessionKey>(sections.pool.released);
+    /** The character demo mode's sessions play now; null: none. */
+    const demoCharacter =
+      demo !== null &&
+      demo.characterKey !== null &&
+      isInstalled(demo.characterKey)
+        ? demo.characterKey
+        : null;
     let ended = 0;
     let dropped = 0;
     let kept = 0;
     let added = 0;
+    let offStage = 0;
+    let back = 0;
 
     // A Map may lose the entry being visited: iteration goes on safely.
-    for (const key of live.keys()) {
-      if (!shownKeys.has(key) || released.has(key)) {
+    for (const [key, assignment] of live) {
+      let ends: boolean;
+      if (!shownKeys.has(key)) {
+        ends = true;
+      } else if (demo === null) {
+        ends = demoActors.has(key) || released.has(key);
+      } else if (isDemoSession(key)) {
+        ends =
+          restartDemo ||
+          !demoActors.has(key) ||
+          assignment.characterKey !== demoCharacter;
+      } else if (released.has(key)) {
+        ends = true;
+      } else {
         live.delete(key);
+        parked.set(key, assignment);
+        offStage += 1;
+        continue;
+      }
+      if (ends) {
+        live.delete(key);
+        demoActors.delete(key);
         ended += 1;
+      }
+    }
+    for (const key of parked.keys()) {
+      if (!shownKeys.has(key) || released.has(key)) {
+        parked.delete(key);
+        dropped += 1;
       }
     }
     for (const key of restored.keys()) {
@@ -372,52 +473,101 @@ export function createAssigner({
     }
 
     const pool = currentPool();
-    const inPool = new Set(pool);
-    const due = shown.filter(
-      (session) =>
-        !released.has(session.sessionKey) && !live.has(session.sessionKey),
-    );
-    const onStage = new Set<CharacterKey>(
-      [...live.values()].map((assignment) => assignment.characterKey),
-    );
-    // Kept ones first, so a new pick sees their characters on stage. One
-    // whose character is on stage already is kept only when no pool
-    // character is free: a kept assignment never repeats a character
-    // while another is off stage.
-    for (const { sessionKey } of due) {
-      const saved = restored.get(sessionKey);
-      if (saved === undefined) {
-        continue;
+    if (demo !== null) {
+      for (const { sessionKey } of shown) {
+        if (
+          demoCharacter === null ||
+          !isDemoSession(sessionKey) ||
+          live.has(sessionKey)
+        ) {
+          continue;
+        }
+        const actorId = newActorId();
+        if (actorId === null) {
+          break;
+        }
+        live.set(sessionKey, { actorId, characterKey: demoCharacter });
+        demoActors.add(sessionKey);
+        added += 1;
       }
-      restored.delete(sessionKey);
-      const free =
-        !onStage.has(saved.characterKey) ||
-        pool.every((key) => onStage.has(key));
-      if (inPool.has(saved.characterKey) && free) {
-        live.set(sessionKey, saved);
-        onStage.add(saved.characterKey);
-        appeared(saved.characterKey);
-        kept += 1;
-      } else {
-        dropped += 1;
+    } else {
+      const inPool = new Set(pool);
+      const due = shown.filter(
+        (session) =>
+          !released.has(session.sessionKey) && !live.has(session.sessionKey),
+      );
+      const onStage = new Set<CharacterKey>(
+        [...live.values()].map((assignment) => assignment.characterKey),
+      );
+      // Back from demo mode first, then kept ones, so a new pick sees their
+      // characters on stage. Each keeps its character on the same terms:
+      // one whose character is on stage already only when no pool
+      // character is free, so it never repeats a character while another
+      // is off stage. One back from demo mode gets a new actor id and no
+      // appearance (it appeared this run already).
+      for (const { sessionKey } of due) {
+        const before = parked.get(sessionKey);
+        if (before === undefined) {
+          continue;
+        }
+        const free =
+          !onStage.has(before.characterKey) ||
+          pool.every((key) => onStage.has(key));
+        if (!inPool.has(before.characterKey) || !free) {
+          parked.delete(sessionKey);
+          dropped += 1;
+          continue;
+        }
+        const actorId = newActorId();
+        if (actorId === null) {
+          break;
+        }
+        parked.delete(sessionKey);
+        live.set(sessionKey, { actorId, characterKey: before.characterKey });
+        onStage.add(before.characterKey);
+        back += 1;
+      }
+      for (const { sessionKey } of due) {
+        const saved = restored.get(sessionKey);
+        if (saved === undefined) {
+          continue;
+        }
+        restored.delete(sessionKey);
+        const free =
+          !onStage.has(saved.characterKey) ||
+          pool.every((key) => onStage.has(key));
+        if (inPool.has(saved.characterKey) && free) {
+          live.set(sessionKey, saved);
+          onStage.add(saved.characterKey);
+          appeared(saved.characterKey);
+          kept += 1;
+        } else {
+          dropped += 1;
+        }
+      }
+      for (const { sessionKey } of due) {
+        if (live.has(sessionKey)) {
+          continue;
+        }
+        const picked = pickCharacter(pool, onStage, appearances);
+        if (picked === null) {
+          break;
+        }
+        const actorId = newActorId();
+        if (actorId === null) {
+          break;
+        }
+        live.set(sessionKey, { actorId, characterKey: picked });
+        onStage.add(picked);
+        appeared(picked);
+        added += 1;
       }
     }
-    for (const { sessionKey } of due) {
-      if (live.has(sessionKey)) {
-        continue;
-      }
-      const picked = pickCharacter(pool, onStage, appearances);
-      if (picked === null) {
-        break;
-      }
-      const actorId = newActorId();
-      if (actorId === null) {
-        break;
-      }
-      live.set(sessionKey, { actorId, characterKey: picked });
-      onStage.add(picked);
-      appeared(picked);
-      added += 1;
+
+    if (offStage + back > 0) {
+      log(
+        `demo mode: ${offStage} actors taken off the stage, ${back} back on it with their characters`,
+      );
     }
 
     if (ended + dropped + kept + added > 0) {
@@ -425,7 +575,7 @@ export function createAssigner({
         `assignments: ${added} new, ${kept} kept from the last run, ${ended} ended, ${dropped} dropped (${live.size} actors, ${pool.length} characters in the pool)`,
       );
     }
-    if (force || ended + dropped + kept + added > 0) {
+    if (force || ended + dropped + kept + added + offStage + back > 0) {
       save();
     }
     const actors = actorsOf(shown, live);
@@ -543,6 +693,21 @@ export function createAssigner({
           installed = next.packs.installed;
           reconcile();
         });
+      });
+    },
+
+    setDemo(next) {
+      batch(() => {
+        if (next === null && demo === null) {
+          return;
+        }
+        demo = next === null ? null : { characterKey: next.characterKey };
+        log(
+          next === null
+            ? 'demo mode stage off'
+            : `demo mode stage on (${next.characterKey === null ? 'no character' : 'one character'})`,
+        );
+        reconcile(false, true);
       });
     },
   };

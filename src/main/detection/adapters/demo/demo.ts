@@ -1,11 +1,11 @@
 /**
  * main/detection/adapters/demo: the demo adapter (FR21, as decided on
  * 2026-11-10). The user picks a state and one fake session, 示範, shows it
- * until another state is picked or demo mode is turned off. The tray menu
- * picks it for now, and Epic 3's right-click menu on the canvas will too:
- * both through main/detection's setDemo(), never this adapter's setState()
- * directly, so a switch is published as one change and demo mode's adapter
- * health is kept.
+ * until another state is picked or demo mode is turned off. The tray's
+ * 示範模式 picks it, through main/pool's demo mode (which also picks the
+ * session's character, 2026-11-24) and main/detection's setDemo(), never
+ * this adapter's setState() directly, so a switch is published as one
+ * change and demo mode's adapter health is kept.
  *
  * Like every adapter it only translates: it hands plain shared events to
  * `emit` (main/detection/sessions' receive), and the reducer decides the
@@ -39,8 +39,9 @@
  * replayed `turn.end` leaves the turn without starting `done`. `idle` comes
  * only from a last event older than idleMs, and the reducer's last-event
  * time only moves forward, so `idle` ends the session and starts it again
- * with the same key, back-dated (known limitation: once Epic 3 gives
- * sessions actors, picking 休息中 may change the demo's actor).
+ * with the same key, back-dated. Both happen in one main/detection change,
+ * so the session never leaves the published list and keeps its actor; its
+ * character is demo mode's either way (2026-11-24).
  *
  * The first setState() also opens the session (`session.start`, then
  * `session.meta` naming it 示範), unless it is `idle`, which opens it

@@ -522,8 +522,9 @@ export function demoStateOf(
 
 /**
  * Calls `listener` with the demo session's state now, then each time it
- * changes, whatever changed it (null: demo mode off). The tray's 示範模式
- * check mark follows it. Returns an unsubscribe.
+ * changes, whatever changed it (null: demo mode off). Returns an
+ * unsubscribe. (The tray's 示範模式 check marks follow main/pool's demo
+ * mode since 2026-11-24, which is the only caller of setDemo.)
  */
 export function watchDemoState(
   detection: Pick<Detection, 'get' | 'onChange'>,

@@ -142,6 +142,13 @@ export const settingsFieldSchemas = {
     fixedOverrideSchema,
     FIXED_OVERRIDES_MAX_ENTRIES,
   ),
+  /**
+   * The character demo mode showed last (FR21 as changed on 2026-11-24),
+   * by character key; null when none was picked yet. Demo mode writes it
+   * each time a character is picked, and lists it first in the 示範模式
+   * menu. A character that is not installed (or no longer is) keeps it.
+   */
+  demoCharacter: characterKeySchema.nullable(),
 } as const;
 
 export type SettingsField = keyof typeof settingsFieldSchemas;
@@ -190,6 +197,7 @@ export const SETTINGS_DEFAULTS: Readonly<SettingsValues> = Object.freeze({
   syncTimeoutMs: 10_000,
   packEnabled: Object.freeze({}),
   fixedOverrides: Object.freeze({}),
+  demoCharacter: null,
 });
 
 /**

@@ -292,3 +292,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-6-bitmap.md`
   summary: 限制每個 actor 留著沒送出的 `stage.snapshot` 圖（例如最多 4 張，再拍就 close 最舊的），避免包囤圖吃掉 Worker 外的記憶體。
   evidence: 2026-11-19 第 2 輪審查 B8、E5。ImageBitmap 的像素不在 JS heap（在 Blink 或 GPU），之後若加 JS heap 類的上限也算不到它；512×512 一張約 1 MiB，每秒每 actor 可拍 30 張。使用者當天選擇先不管，跟 3.7～3.9 的失敗判定一起處理。
+- source_spec: `_bmad-output/implementation-artifacts/spec-demo-mode-pick-character.md`
+  summary: （待討論）同版本號重新匯入角色包時，畫布要不要即時重載：現在 overlay 的沙箱、外觀、貼圖都以版本號當 key，同版本重匯後 StageView 的 `packs` 一模一樣，畫布不重建沙箱、不重讀素材
+  evidence: 使用者 2026-11-24 要求示範模式在開發中能即時重載，並指定這一項先記為待討論、另外處理。暫時的做法：重新匯入時把版本號加 1，pack-host 會拆掉舊沙箱、以新版本重建，素材 URL 也帶新版本。要做的話會動到 `src/shared/packs.ts`（StagePack 帶一個每次安裝都不同的值）、`main/packs` 的 store，以及 overlay 的 pack-host、looks、textures。

@@ -1561,3 +1561,205 @@ describe('with StageView, as main.ts wires them', () => {
     ]);
   });
 });
+
+// FR21 as changed on 2026-11-24: demo mode has the stage to itself.
+describe("demo mode's stage", () => {
+  const PICKED: CharacterKey = TWO;
+
+  it('清場: parks every other shown session’s actor at once, gives new ones none, and the demo session plays the character named (out of the pool too), released or not', () => {
+    const { ready, start, cast, settings, assigner, detection, store, heard } =
+      wire({ installed: [SAMPLE, ANOTHER] });
+    ready();
+    start('codex:a');
+    start('codex:b');
+    expect(cast()).toStrictEqual([
+      ['codex:a', THREE, 'actor-1'],
+      ['codex:b', ONE, 'actor-2'],
+    ]);
+    settings.set({ fixedOverrides: { [PICKED]: { inPool: false } } });
+    heard.length = 0;
+
+    assigner.setDemo({ characterKey: PICKED });
+    expect(cast()).toStrictEqual([]);
+    expect(heard).toStrictEqual([{ actors: [] }]);
+
+    detection.setDemo('idle');
+    expect(cast()).toStrictEqual([['demo:1', PICKED, 'actor-3']]);
+
+    start('codex:c');
+    store.setReleased('demo:1', true);
+    expect(cast()).toStrictEqual([['demo:1', PICKED, 'actor-3']]);
+    expect(poolLines()).toContain('[pool] demo mode stage on (one character)');
+    expect(poolLines()).toContain(
+      '[pool] demo mode: 2 actors taken off the stage, 0 back on it with their characters',
+    );
+  });
+
+  it('saves the parked assignments, never the demo’s', () => {
+    const { ready, start, assigner, detection, savedAssignments } = wire({
+      installed: [SAMPLE, ANOTHER],
+    });
+    ready();
+    start('codex:a');
+
+    assigner.setDemo({ characterKey: ONE });
+    detection.setDemo('working');
+
+    expect(savedAssignments()).toStrictEqual([
+      { sessionKey: 'codex:a', actorId: 'actor-1', characterKey: THREE },
+    ]);
+  });
+
+  it('回復: off again, the demo’s actor ends and each parked session comes back with its character and a new actor id; one that came meanwhile gets the usual pick', () => {
+    const { ready, start, cast, assigner, detection, savedAssignments } = wire({
+      installed: [SAMPLE, ANOTHER],
+    });
+    ready();
+    start('codex:a');
+    start('codex:b');
+    assigner.setDemo({ characterKey: ONE });
+    detection.setDemo('thinking');
+    start('codex:c');
+
+    detection.setDemo(null);
+    assigner.setDemo(null);
+
+    expect(cast()).toStrictEqual([
+      ['codex:a', THREE, 'actor-4'],
+      ['codex:b', ONE, 'actor-5'],
+      ['codex:c', TWO, 'actor-6'],
+    ]);
+    expect(savedAssignments()).toHaveLength(3);
+    expect(poolLines()).toContain(
+      '[pool] demo mode: 0 actors taken off the stage, 2 back on it with their characters',
+    );
+  });
+
+  it('a parked session whose character left the pool meanwhile comes back with the usual pick', () => {
+    const { ready, start, cast, assigner, settings } = wire({
+      installed: [SAMPLE, ANOTHER],
+    });
+    ready();
+    start('codex:a');
+    assigner.setDemo({ characterKey: ONE });
+    settings.set({ packEnabled: { 'another-pack': false } });
+
+    assigner.setDemo(null);
+
+    expect(cast()).toStrictEqual([['codex:a', ONE, 'actor-2']]);
+  });
+
+  it('a parked session that ended, or was released, during demo mode does not come back', () => {
+    const { ready, start, end, cast, assigner, store, sessionKeys } = wire({
+      installed: [SAMPLE, ANOTHER],
+    });
+    ready();
+    start('codex:a');
+    start('codex:b');
+    assigner.setDemo({ characterKey: ONE });
+    end('codex:a');
+    store.setReleased('codex:b', true);
+
+    assigner.setDemo(null);
+
+    expect(cast()).toStrictEqual([]);
+    expect(sessionKeys()).toStrictEqual(['codex:b']);
+  });
+
+  it('重新載入: each setDemo with a stage starts the demo’s actor anew, the same character or another', () => {
+    const { ready, cast, assigner, detection } = wire({
+      installed: [SAMPLE, ANOTHER],
+    });
+    ready();
+    assigner.setDemo({ characterKey: ONE });
+    detection.setDemo('working');
+    expect(cast()).toStrictEqual([['demo:1', ONE, 'actor-1']]);
+
+    assigner.setDemo({ characterKey: ONE });
+    expect(cast()).toStrictEqual([['demo:1', ONE, 'actor-2']]);
+
+    assigner.setDemo({ characterKey: THREE });
+    expect(cast()).toStrictEqual([['demo:1', THREE, 'actor-3']]);
+  });
+
+  it('休息中: switching the demo session to idle (it ends and starts again in one change) keeps its actor', () => {
+    const { ready, cast, assigner, detection } = wire();
+    ready();
+    assigner.setDemo({ characterKey: ONE });
+    detection.setDemo('working');
+
+    for (const state of ['idle', 'thinking', 'idle', 'error'] as const) {
+      detection.setDemo(state);
+      expect(cast()).toStrictEqual([['demo:1', ONE, 'actor-1']]);
+      expect(detection.get().sessions[0]?.state).toBe(state);
+    }
+  });
+
+  it('no character: none named, or not installed (any more): the demo session is shown with no actor', () => {
+    const { ready, cast, assigner, detection, packs, sessionKeys } = wire({
+      installed: [SAMPLE, ANOTHER],
+    });
+    ready();
+    assigner.setDemo({ characterKey: null });
+    detection.setDemo('done');
+    expect(cast()).toStrictEqual([]);
+
+    assigner.setDemo({ characterKey: 'gone-pack/probe' });
+    expect(cast()).toStrictEqual([]);
+
+    assigner.setDemo({ characterKey: THREE });
+    expect(cast()).toStrictEqual([['demo:1', THREE, 'actor-1']]);
+
+    packs.update([SAMPLE]);
+    expect(cast()).toStrictEqual([]);
+    expect(sessionKeys()).toStrictEqual(['demo:1']);
+  });
+
+  it('a character of a pack that does not fit this stage is not shown', () => {
+    const newer: StagePack = {
+      ...ANOTHER,
+      apiVersion: '1.9',
+      compatibility: {
+        compatible: false,
+        reason: 'pack-newer',
+        required: '1.9',
+      },
+    };
+    const { ready, cast, assigner, detection } = wire({
+      installed: [SAMPLE, newer],
+    });
+    ready();
+    assigner.setDemo({ characterKey: THREE });
+    detection.setDemo('done');
+
+    expect(cast()).toStrictEqual([]);
+  });
+
+  it('before start-up sync: takes effect at sync, in the same change', () => {
+    const { ready, start, cast, assigner, detection } = wire();
+    start('codex:a');
+    assigner.setDemo({ characterKey: TWO });
+    detection.setDemo('waiting');
+    expect(cast()).toStrictEqual([]);
+
+    ready();
+    expect(cast()).toStrictEqual([['demo:1', TWO, 'actor-1']]);
+
+    detection.setDemo(null);
+    assigner.setDemo(null);
+    expect(cast()).toStrictEqual([['codex:a', ONE, 'actor-2']]);
+  });
+
+  it('setDemo(null) while off changes nothing and logs nothing', () => {
+    const { ready, start, assigner, heard } = wire();
+    ready();
+    start('codex:a');
+    heard.length = 0;
+    const before = poolLines().length;
+
+    assigner.setDemo(null);
+
+    expect(heard).toStrictEqual([]);
+    expect(poolLines()).toHaveLength(before);
+  });
+});

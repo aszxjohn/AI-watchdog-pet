@@ -34,12 +34,12 @@ FR12: 使用者可以匯出角色包，匯出檔只含角色包本身，不含�
 FR13: 每隻角色依 8 狀態演出；包沒做的狀態先演包宣告的後備演出，沒有後備才演舞台佔位；`done` 是過場，預設 5 秒後轉 `waiting`；預設 5 分鐘沒有事件轉 `idle`。〔CAP-11〕
 FR14: 使用者可以在舞台設定調整計時值：「做完了」過場秒數、轉「休息中」的逾時、推測批准的門檻。〔CAP-11、AD-22〕
 FR15: 跨包通用互動五種：被擊中（`hit`）、靠近／碰撞（`proximity`）、進場／離場（`enter`／`leave`）、狀態廣播（`state-broadcast`）、被捏起來（`grab`）；目標包沒處理就不反應、不報錯。〔CAP-12〕
-FR16: 包可以發射物件：用包自己的物件，沒指定、不認得或素材載入失敗時改丟隨機的通用物件；命中由舞台判定並以 `hit` 通知。〔CAP-12〕
+FR16: 包可以發射物件：必須指定出發點（沒指定就不發射），可另指定角度與物件；彈道由舞台計算，物件在整個畫布裡飛、不受射方繪圖範圍裁切；用包自己的物件，沒指定、不認得或素材載入失敗時改丟隨機的通用物件；命中由舞台判定並以 `hit` 通知。〔CAP-12〕
 FR17: 同一包的角色之間可以有包內自訂的特殊互動。〔CAP-13〕
-FR18: 包可以請自己的角色停下／恢復遊走、轉向，不能指定位置；使用者設成不遊走或角色被捏起來時請求無效。〔CAP-14〕
+FR18: 包可以請自己的角色停下／恢復遊走、轉向，不能指定位置；使用者設成不遊走或角色被捏起來時這些請求無效。包可以在 manifest 宣告招式（停留與直線移動的段落），由狀態自動循環或包呼叫觸發，舞台執行並每格告訴包進度；遊走中跑完從新位置繼續，停留中跑完回停留點，水平衝出畫面時翻轉方向，被捏起來時中止。〔CAP-14〕
 FR19: 包當掉時自動重啟，同一包最多 3 次；第 4 次失敗標為失敗（視同停用），在包管理頁顯示原因。〔CAP-15〕
 FR20: 包被停用、移除、標為失敗，角色取消加入池子，或更新後角色消失時，畫面上受影響的角色立刻換成池子裡的其他角色；池子空了就收回角色。〔CAP-15〕
-FR21: 示範模式用假 session 顯示使用者指定的狀態，並照池子分配；展示模式可以指定任何角色與狀態，不存檔、不佔池子；編輯頁的「在畫面上預覽」用展示模式。〔CAP-16〕
+FR21: 示範模式是開發用的獨立模式，與一般模式互斥：開啟時清場（真 session 的角色全部下台、仍留在清單），使用者從選單列指定任一已安裝角色（記住上次選的）與狀態，假 session 以那隻角色演出；關閉後真 session 帶原角色回到舞台（2026-11-24 修改，見 `spec-demo-mode-pick-character.md`）。展示模式可以指定任何角色與狀態，不存檔、不佔池子；編輯頁的「在畫面上預覽」用展示模式。〔CAP-16〕
 FR22: 舞台留運行紀錄：每小時一個檔、只留 24 小時。〔CAP-17〕
 FR23: 設定檔壞掉時保留 `.broken-<時間>` 備份、改用預設值，不被默默蓋掉；單一欄位型別錯只有那欄用預設。〔CAP-17〕
 FR24: 沒有安裝任何角色包時，偵測、面板、管理 session 都照常運作，畫布為空。〔CAP-18〕
@@ -74,9 +74,9 @@ NFR13: 繪圖效能：邏輯節拍 30 Hz；全部角色用單一 PixiJS WebGL �
 - **資料擁有者與持久檔：** `settings.json`（`main/settings`）、`assignments.json`（`main/pool`）、`packs/`（`main/packs`）、`logs/`（`main/log`）。〔AD-3〕
 - **偵測管線：** 每個來源一個轉接器（`claude-code`、`codex`、`gemini`、`cursor`、`copilot`、`demo`）只發共用事件；轉接器宣告能力表；推測只在 `inference`；判斷器依條件表與優先序決定 8 狀態；session 生命週期由 `sessions` 決定；啟動補讀標 `replay`、完成發 `sync.ready`；計時用單調時鐘。〔AD-5、AD-21、AD-22〕
 - **各來源：** Claude Code 讀 `~/.claude/sessions/<pid>.json`＋transcript；Codex 讀 rollout；Gemini 讀 chats；Cursor 讀 agent-transcripts（step 級延遲、批准推測、error 多為使用者中止要看字串、檔案可能整檔重寫）；Copilot CLI 讀 `session-state/<id>/events.jsonl`，**排最後做，用真實 Copilot CLI session 驗證過才算完成**。〔AD-4〕
-- **角色包 API v1：** actor 與 `actorId`（由 `main/pool` 產生）；訊息 `init`／`spawn`／`despawn`／`params`／`meta`／`frame`；包只回 `draw` 與 `stage.fire`／`hold`／`face`／`log`／`random`／`canvas`；world 擁有 30 Hz 節拍；繪圖指令 `sprite`／`particles`／`bitmap`；actor 本地座標；素材以 manifest key 引用；命中只看 manifest `hitbox`。〔AD-16、AD-17、AD-18〕
+- **角色包 API v1：** actor 與 `actorId`（由 `main/pool` 產生）；訊息 `init`／`spawn`／`despawn`／`params`／`meta`／`frame`；包只回 `draw` 與 `stage.fire`／`hold`／`face`／`move`／`log`／`random`／`canvas`；world 擁有 30 Hz 節拍；繪圖指令 `sprite`／`particles`／`bitmap`；actor 本地座標；素材以 manifest key 引用；命中只看 manifest `hitbox`；招式由 world 執行，`frame.motion` 帶招式進度（v1.1）。〔AD-16、AD-17、AD-18、AD-27〕
 - **載入鏈與生命週期：** 每包一個沙盒、閒置銷毀；固定載入順序；心跳以 tick 計；失敗由 pack-host 移除 iframe；更新時保留 `actorId` 以新版本 URL 重載。〔AD-19〕
-- **manifest：** `id`、`name`、`version`、`apiVersion`、`entry`、`assets`、`characters`（`id`、`name`、參數宣告、`states`、`fallback`、`hitbox`、`bounds`、`anchor`、`advancedBitmap`）、`projectiles`；id 格式 `^[a-z0-9][a-z0-9-]{1,63}$`。〔AD-13〕
+- **manifest：** `id`、`name`、`version`、`apiVersion`、`entry`、`assets`、`characters`（`id`、`name`、參數宣告、`states`、`fallback`、`hitbox`、`bounds`、`anchor`、`advancedBitmap`、v1.1 起 `moves`、`stateMoves`）、`projectiles`（v1.1 起也可寫成 `{ asset, speed, range }`）；id 格式 `^[a-z0-9][a-z0-9-]{1,63}$`。〔AD-13、AD-27〕
 - **滑鼠穿透：** `setIgnoreMouseEvents(true, { forward: true })`；穿透狀態由 overlay 擁有、帶 `seq` 請求；macOS `type: 'panel'`；Windows 前景為管理員視窗時 forward 暫停（已知限制）。〔AD-14〕
 - **測試與 CI：** Vitest（shared、main、world）；轉接器以去識別化真實紀錄做快照測試；判斷器與推測做表格測試（假時鐘）；zod schema 往返與拒絕測試；沙盒安全以 Playwright `_electron` 在真的 Electron 裡驗（fetch、XHR、WebSocket、EventSource、importScripts、巢狀 Worker、parent／top、indexedDB、`Date.now`、`Math.random`、OffscreenCanvas webgl 全失敗）；`test/packs/contract-pack/` 契約測試包；端到端以 `demo` 轉接器；CI 跑 macOS 與 Windows。〔AD-25〕
 - **運行：** 單一實例、離線、轉接器健康、`render-process-gone` 重建、`powerMonitor` 暫停節拍。〔AD-24、AD-26〕
@@ -104,7 +104,7 @@ FR14: Epic 2 - 舞台設定可調計時值
 FR15: Epic 4 - 跨包五種通用互動
 FR16: Epic 4 - 發射物件與後援
 FR17: Epic 4 - 同包特殊互動
-FR18: Epic 4 - 包請角色停下／恢復遊走／轉向
+FR18: Epic 4 - 包請角色停下／恢復遊走／轉向、招式
 FR19: Epic 3 - 包當掉自動重啟與標記失敗
 FR20: Epic 3 - 包停用或角色消失時換角色
 FR21: Epic 2（示範模式）、Epic 5（展示模式與編輯頁預覽）- 示範與展示
@@ -128,7 +128,7 @@ FR25: Epic 2 - 轉接器健康顯示
 **FRs covered:** FR3、FR8、FR10、FR11、FR12、FR13、FR19、FR20
 
 ### Epic 4: 角色在桌面上活起來
-角色會遊走；使用者能左鍵捏起來拖走、右鍵開選單；不同包的角色透過五種通用互動與發射物件彼此反應，同包角色有專屬互動，包能請自己的角色停下或轉向。
+角色會遊走；使用者能左鍵捏起來拖走、右鍵開選單；不同包的角色透過五種通用互動與發射物件彼此反應，同包角色有專屬互動，包能請自己的角色停下或轉向，並宣告招式讓舞台照節奏移動角色。
 **FRs covered:** FR5（遊走與角色命中）、FR6、FR7（右鍵選單）、FR15、FR16、FR17、FR18
 
 ### Epic 5: 調整角色與預覽
@@ -584,6 +584,7 @@ So that 每隻角色代表一個 session，一眼就分得出來。
 **Given** 示範模式的假 session
 **When** 分配
 **Then** 照同一套池子規則分配〔FR21 示範模式〕
+**And** 2026-11-24 起改為：示範模式開啟時只有示範 session 有角色，角色由使用者指定、不看池子；真 session 的分配先收起，關閉後帶原角色回來（`spec-demo-mode-pick-character.md`）
 
 ### Story 3.5: 角色包沙盒與載入鏈
 
@@ -708,6 +709,7 @@ So that 不會有角色一直卡住，其他角色也照常演出。
 **Given** 包被停用、移除、標為失敗，角色取消加入池子，或包更新後角色消失
 **When** `main/pool` 處理
 **Then** 受影響的 actor 立刻換成池子裡的其他角色（舊 actor `leave`、新 actor `enter`）；池子空了就收回角色，session 留在管理清單〔FR20〕
+**And** 示範模式的角色不看池子：停用包或移出池子不影響示範；角色被移除（或新版本沒有它）時示範模式結束（2026-11-24）
 
 **Given** 包更新安裝成功
 **When** pack-host 收到新版本
@@ -715,7 +717,7 @@ So that 不會有角色一直卡住，其他角色也照常演出。
 
 ## Epic 4: 角色在桌面上活起來
 
-角色會遊走；使用者能左鍵捏起來拖走、右鍵開選單；不同包的角色透過五種通用互動與發射物件彼此反應，同包角色有專屬互動，包能請自己的角色停下或轉向。
+角色會遊走；使用者能左鍵捏起來拖走、右鍵開選單；不同包的角色透過五種通用互動與發射物件彼此反應，同包角色有專屬互動，包能請自己的角色停下或轉向，並宣告招式讓舞台照節奏移動角色。
 
 ### Story 4.1: 角色遊走
 
@@ -732,7 +734,7 @@ So that 桌寵看起來是活的，又不會老是待在我不想要的地方。
 
 **Given** 某角色的遊走偏好 `enabled` 為關
 **When** world 推進
-**Then** 該角色一定不動
+**Then** 該角色不閒逛；招式照跑，跑完回到停留點（Story 4.9）
 
 ### Story 4.2: 游標在角色上才接收滑鼠
 
@@ -832,10 +834,18 @@ So that 例如 00 射中寶可夢時，有被擊中特效的寶可夢就會有�
 
 **Acceptance Criteria:**
 
-**Given** 包呼叫 `stage.fire(fromActorId, { target, object })`
+**Given** 包呼叫 `stage.fire(fromActorId, { from, object, angle, target })`（`from` 必填，其餘選填）
 **When** world 處理
-**Then** 有 `target` 就朝目標發射，否則依面向水平發射；速度、射程、每個 actor 每秒次數上限是舞台常數，超出的丟棄〔FR16〕
-**And** 飛行物件屬於 world，由 renderer 直接畫，射方包不參與每格繪製
+**Then** 從 `from`（本地座標，由包定義，例如槍口）出發；有 `target` 就朝目標，否則照 `angle`（度，0＝右、90＝下），沒給就依面向水平發射；速度與射程取 manifest `projectiles` 的 `speed`、`range`，沒寫用舞台預設，都夾在舞台上限內；每個 actor 每秒次數上限是舞台常數，超出的丟棄〔FR16〕
+**And** 彈道由 world 計算（第一版直線）；飛行物件在整個畫布裡飛、不受射方 `bounds` 裁切，超過射程或飛出畫面就移除，圖沿飛行方向旋轉，不會打中射方自己；由 renderer 直接畫，射方包不參與每格繪製
+
+**Given** 包呼叫 `stage.fire` 時沒帶 `from`，或 `from` 不是有效的本地座標
+**When** pack-host 驗證
+**Then** 不發射任何物件，整則丟棄並記錄 `packId`
+
+**Given** manifest `projectiles` 的值是素材 key（v1.0 寫法）或 `{ asset, speed, range }`
+**When** 安裝
+**Then** 兩種都接受；`speed`、`range` 超出上限時拒絕並說明原因
 
 **Given** `object` 是 manifest `projectiles` 的 key
 **When** 繪製
@@ -883,6 +893,47 @@ So that 例如「坐下來工作」時角色不會一邊坐一邊被拖著走。
 **Given** 使用者把該角色設成不遊走，或角色正被捏起來
 **When** 包呼叫 `hold(false)` 或 `face`
 **Then** 不生效；包始終拿不到座標，也不能指定位置
+
+### Story 4.9: 招式：舞台照包宣告的節奏移動角色
+
+As a 角色包作者,
+I want 把有節奏的移動（例如狙擊時的高速衝刺、變速、停頓）宣告成招式交給舞台執行,
+So that 衝刺時受擊框、名牌與繪圖範圍跟著角色走、不會被畫框切掉，動畫也跟移動對得上。
+
+**Acceptance Criteria:**
+
+**Given** manifest 角色宣告 `moves`（招式 key → 段落清單；段落為 `hold` 或 `line`）與選填 `stateMoves`（狀態碼 → 招式 key）
+**When** 安裝
+**Then** schema 驗證段數、速度、距離上限（shared 常數），超出拒絕並說明原因；沒有這兩個欄位的 v1.0 包照常安裝〔FR18、AD-27〕
+
+**Given** 角色進入有 `stateMoves` 的狀態，或包呼叫 `stage.move(actorId, key)`
+**When** world 推進
+**Then** world 依段落移動 actor 的世界位置，受擊框、名牌、`bounds`、發射起點都跟著走；狀態的招式在該狀態期間循環，包觸發的招式跑一次、跑完回到狀態的招式；`stage.move(actorId, null)` 停止；狀態改變時中斷
+**And** 每則 `frame` 的 `motion` 帶 `move`、`step`、`progress`（0～1）、`returning`、`moving`、`facing`、`held`，與 world 的位置一致
+
+**Given** 角色在遊走中
+**When** 招式開始與結束
+**Then** 招式期間暫停遊走，結束後從新位置繼續遊走
+
+**Given** 角色停留中（使用者設不遊走，或包 `hold(true)`）
+**When** 招式結束或被中斷
+**Then** world 以回位速度把角色帶回停留點，期間 `motion.returning` 為 `true`
+
+**Given** 某段 `line` 的終點會讓 `hitbox` 水平超出畫面
+**When** world 開始該段
+**Then** 把該段與之後各段的水平方向翻過來並改面向，下一則 `frame` 的 `facing` 反映；翻了仍放不下、或垂直超出時停在邊上
+
+**Given** 招式進行中角色被捏起來
+**When** `grab` 開始
+**Then** 招式立即中止；放開後照 Story 4.4 從放下處恢復；停留中的角色以放下處為新停留點
+
+**Given** 包對不屬於自己的 `actorId` 呼叫 `stage.move`，或 key 不在該角色的 `moves`
+**When** pack-host 驗證
+**Then** 整則丟棄並記錄 `packId`
+
+**Given** world 的單元測試（假時鐘）
+**When** 跑一個含 `hold` 與 `line`（各種 `easing`）的招式，涵蓋遊走、停留回位、邊界翻轉、捏起來中止
+**Then** 每個 tick 的世界位置與 `motion` 的 `step`／`progress` 一致；契約測試包加一個招式，端到端可看到角色移動
 
 ## Epic 5: 調整角色與預覽
 
@@ -939,7 +990,7 @@ So that 我能看清楚每個角色各種狀態的演出，也能邊調參數邊
 
 **Given** 從選單列打開展示模式
 **When** 選擇任一已安裝角色（包含沒加入池子的）與 8 種狀態之一
-**Then** `demo` 轉接器產生一個假 session，經同一套判斷器與世界讓該角色在畫布上演出指定狀態〔FR21 展示模式〕
+**Then** `demo` 轉接器產生一個假 session，經同一套判斷器與世界讓該角色在畫布上演出指定狀態〔FR21 展示模式〕（2026-11-24 起示範模式已能從選單列指定任一已安裝角色與狀態，本 story 做時先決定展示模式與示範模式要不要合併）
 **And** 展示模式的指定只對 `demo` 來源的 session 有效、不存檔、不佔池子名額，不影響真 session 的分配
 
 **Given** 角色編輯頁

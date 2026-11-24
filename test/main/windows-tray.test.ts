@@ -1,31 +1,32 @@
 import type { BaseWindow } from 'electron';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEMO_SESSION_KEY } from '../../src/main/detection/adapters/demo/demo';
-import {
-  createDetection,
-  demoStateOf,
-  watchDemoState,
-} from '../../src/main/detection/detection';
 import {
   applicationMenuTemplate,
   buildApplicationMenu,
   buildTrayMenu,
-  checkDemoItem,
   CLOSE_PANEL_LABEL,
+  DEMO_CHARACTERS_LABEL,
+  DEMO_CHOOSE_LABEL,
+  DEMO_MENU_OFF,
+  DEMO_NO_CHARACTER_LABEL,
   DEMO_OFF_LABEL,
+  DEMO_STATES_LABEL,
+  demoCharacterItemId,
+  demoCharacterMenuTemplate,
+  demoItemId,
   openCanvasMenu,
   QUIT_LABEL,
   trayMenuTemplate,
   type ApplicationMenuActions,
+  type DemoMenuState,
 } from '../../src/main/windows/menu';
 import {
   createTray,
   currentTray,
-  showTrayDemoState,
+  popUpDemoCharacters,
+  showTrayDemo,
   TRAY_TOOLTIP,
 } from '../../src/main/windows/tray';
-import { SETTINGS_DEFAULTS } from '../../src/shared/settings';
-import { fakeClock } from '../helpers/fake-clock';
 import {
   createTrayIcon,
   drawRingBitmap,
@@ -33,6 +34,7 @@ import {
   TRAY_ICON_REPRESENTATIONS,
   trayIconStyle,
 } from '../../src/main/windows/tray-icon';
+import type { CharacterKey } from '../../src/shared/packs';
 import type { PanelPageId } from '../../src/shared/panels';
 import { DEMO_MODE_LABEL } from '../../src/shared/sources';
 import { STATE_CODES, type StateCode } from '../../src/shared/states';
@@ -232,14 +234,39 @@ function click(item: { click?: unknown } | undefined): void {
 function actions() {
   return {
     openPage: vi.fn<(page: PanelPageId) => void>(),
-    setDemo: vi.fn<(state: StateCode | null) => void>(),
+    pickDemoCharacter: vi.fn<(key: CharacterKey) => void>(),
+    pickDemoState: vi.fn<(state: StateCode) => void>(),
+    stopDemo: vi.fn<() => void>(),
     quit: vi.fn<() => void>(),
   };
 }
 
+const DYNAMES: CharacterKey = 'dynames/dynames';
+const PROBE: CharacterKey = 'contract-pack/probe-one';
+const CHARACTERS = [
+  { key: DYNAMES, label: '力天使 GN-002（力天使）' },
+  { key: PROBE, label: '探針一（契約測試包）' },
+] as const;
+
+/** Demo mode off, DYNAMES remembered. */
+const OFF: DemoMenuState = {
+  on: false,
+  state: null,
+  character: DYNAMES,
+  characters: CHARACTERS,
+};
+
+/** Demo mode on: PROBE showing 思考中. */
+const ON: DemoMenuState = {
+  on: true,
+  state: 'thinking',
+  character: PROBE,
+  characters: CHARACTERS,
+};
+
 /** The 示範模式 submenu's items. */
-function demoItems(handlers = actions()) {
-  const submenu = trayMenuTemplate(handlers).find(
+function demoItems(handlers = actions(), demo: DemoMenuState = OFF) {
+  const submenu = trayMenuTemplate(handlers, demo).find(
     (item) => item.id === 'demo',
   )?.submenu;
   if (!Array.isArray(submenu)) {
@@ -248,9 +275,17 @@ function demoItems(handlers = actions()) {
   return submenu;
 }
 
+function demoItem(id: string, handlers = actions(), demo = OFF) {
+  const item = demoItems(handlers, demo).find((entry) => entry.id === id);
+  if (item === undefined) {
+    throw new Error(`no item ${id}`);
+  }
+  return item;
+}
+
 describe('tray menu template', () => {
   it('lists 管理 session, 角色包, 舞台設定, 示範模式, a separator and 結束', () => {
-    const template = trayMenuTemplate(actions());
+    const template = trayMenuTemplate(actions(), DEMO_MENU_OFF);
     expect(template.map((item) => item.type ?? item.label)).toStrictEqual([
       '管理 session',
       '角色包',
@@ -269,7 +304,7 @@ describe('tray menu template', () => {
     [2, 'settings'],
   ] as const)('item %i opens the %s page', (index, page) => {
     const handlers = actions();
-    const item = trayMenuTemplate(handlers)[index];
+    const item = trayMenuTemplate(handlers, OFF)[index];
     expect(item?.id).toBe(`open-${page}`);
     click(item);
     expect(handlers.openPage).toHaveBeenCalledExactlyOnceWith(page);
@@ -278,70 +313,28 @@ describe('tray menu template', () => {
 
   it('結束 quits', () => {
     const handlers = actions();
-    const item = trayMenuTemplate(handlers)[5];
+    const item = trayMenuTemplate(handlers, OFF)[5];
     expect(item?.id).toBe('quit');
     click(item);
     expect(handlers.quit).toHaveBeenCalledOnce();
     expect(handlers.openPage).not.toHaveBeenCalled();
-    expect(handlers.setDemo).not.toHaveBeenCalled();
+    expect(handlers.stopDemo).not.toHaveBeenCalled();
   });
 
   it('is what buildTrayMenu builds', () => {
     const handlers = actions();
-    const menu = buildTrayMenu(handlers) as unknown as {
+    const menu = buildTrayMenu(handlers, ON) as unknown as {
       built: { label?: string }[];
     };
     expect(menu.built.map((item) => item.label)).toStrictEqual(
-      trayMenuTemplate(handlers).map((item) => item.label),
+      trayMenuTemplate(handlers, ON).map((item) => item.label),
     );
   });
-});
 
-describe('the 示範模式 submenu', () => {
-  it('is one radio group: 關閉, then the 8 states in STATE_CODES order by their Chinese names', () => {
-    const items = demoItems();
-    expect(items.map((item) => [item.id, item.type, item.label])).toStrictEqual(
-      [
-        ['demo-off', 'radio', '關閉'],
-        ['demo-waiting', 'radio', '等你回覆'],
-        ['demo-thinking', 'radio', '思考中'],
-        ['demo-working', 'radio', '工作中'],
-        ['demo-approval', 'radio', '要你批准'],
-        ['demo-decision', 'radio', '要你決定'],
-        ['demo-done', 'radio', '做完了'],
-        ['demo-idle', 'radio', '休息中'],
-        ['demo-error', 'radio', '出錯了'],
-      ],
+  it('sits 示範模式 after the pages and before the separator and 結束', () => {
+    const ids = trayMenuTemplate(actions(), OFF).map(
+      (item) => item.id ?? item.type,
     );
-    expect(DEMO_OFF_LABEL).toBe('關閉');
-  });
-
-  it('starts with 關閉 checked: demo mode is off at every start', () => {
-    expect(demoItems().map((item) => item.checked)).toStrictEqual([
-      true,
-      ...STATE_CODES.map(() => false),
-    ]);
-  });
-
-  it('關閉 turns demo mode off', () => {
-    const handlers = actions();
-    click(demoItems(handlers)[0]);
-    expect(handlers.setDemo.mock.calls).toStrictEqual([[null]]);
-    expect(handlers.openPage).not.toHaveBeenCalled();
-  });
-
-  it.each(STATE_CODES.map((state, index) => [state, index + 1] as const))(
-    '%s shows that state on the demo session',
-    (state, index) => {
-      const handlers = actions();
-      click(demoItems(handlers)[index]);
-      expect(handlers.setDemo.mock.calls).toStrictEqual([[state]]);
-      expect(handlers.quit).not.toHaveBeenCalled();
-    },
-  );
-
-  it('sits after the pages and before the separator and 結束', () => {
-    const ids = trayMenuTemplate(actions()).map((item) => item.id ?? item.type);
     expect(ids).toStrictEqual([
       'open-sessions',
       'open-packs',
@@ -350,6 +343,120 @@ describe('the 示範模式 submenu', () => {
       'separator',
       'quit',
     ]);
+  });
+});
+
+// FR21 as changed on 2026-11-24: pick a character, then states.
+describe('the 示範模式 submenu', () => {
+  it('is 關閉, then 角色 (the characters, as demo mode lists them), then 狀態 (the 8 states in STATE_CODES order), three radio groups split by separators', () => {
+    const items = demoItems();
+    expect(
+      items.map((item) => [
+        item.id ?? item.type,
+        item.type ?? 'normal',
+        item.label,
+        item.enabled ?? true,
+      ]),
+    ).toStrictEqual([
+      ['demo-off', 'radio', '關閉', true],
+      ['separator', 'separator', undefined, true],
+      ['demo-characters', 'normal', '角色', false],
+      [`demo-character-${DYNAMES}`, 'radio', '力天使 GN-002（力天使）', true],
+      [`demo-character-${PROBE}`, 'radio', '探針一（契約測試包）', true],
+      ['separator', 'separator', undefined, true],
+      ['demo-states', 'normal', '狀態', false],
+      ['demo-waiting', 'radio', '等你回覆', true],
+      ['demo-thinking', 'radio', '思考中', true],
+      ['demo-working', 'radio', '工作中', true],
+      ['demo-approval', 'radio', '要你批准', true],
+      ['demo-decision', 'radio', '要你決定', true],
+      ['demo-done', 'radio', '做完了', true],
+      ['demo-idle', 'radio', '休息中', true],
+      ['demo-error', 'radio', '出錯了', true],
+    ]);
+    expect(DEMO_OFF_LABEL).toBe('關閉');
+    expect(DEMO_CHARACTERS_LABEL).toBe('角色');
+    expect(DEMO_STATES_LABEL).toBe('狀態');
+    expect(demoCharacterItemId(DYNAMES)).toBe('demo-character-dynames/dynames');
+  });
+
+  it('while off: 關閉 and the remembered character are checked, no state is', () => {
+    const checked = demoItems()
+      .filter((item) => item.checked === true)
+      .map((item) => item.id);
+    expect(checked).toStrictEqual(['demo-off', `demo-character-${DYNAMES}`]);
+  });
+
+  it('while off with nothing remembered (or not installed): only 關閉 is checked', () => {
+    const checked = demoItems(actions(), { ...OFF, character: null })
+      .filter((item) => item.checked === true)
+      .map((item) => item.id);
+    expect(checked).toStrictEqual(['demo-off']);
+  });
+
+  it('while on: the character in use and the state shown are checked, 關閉 is not', () => {
+    const checked = demoItems(actions(), ON)
+      .filter((item) => item.checked === true)
+      .map((item) => item.id);
+    expect(checked).toStrictEqual([`demo-character-${PROBE}`, 'demo-thinking']);
+  });
+
+  it('with no character installed: 沒有已安裝的角色, disabled, in place of the characters', () => {
+    const items = demoItems(actions(), DEMO_MENU_OFF);
+    expect(items.slice(2, 4)).toStrictEqual([
+      { id: 'demo-characters', label: '角色', enabled: false },
+      { id: 'demo-no-character', label: '沒有已安裝的角色', enabled: false },
+    ]);
+    expect(DEMO_NO_CHARACTER_LABEL).toBe('沒有已安裝的角色');
+    expect(DEMO_MENU_OFF).toStrictEqual({
+      on: false,
+      state: null,
+      character: null,
+      characters: [],
+    });
+  });
+
+  it('關閉 turns demo mode off', () => {
+    const handlers = actions();
+    click(demoItem('demo-off', handlers, ON));
+    expect(handlers.stopDemo).toHaveBeenCalledOnce();
+    expect(handlers.pickDemoState).not.toHaveBeenCalled();
+  });
+
+  it.each([DYNAMES, PROBE])('a character picks %s', (key) => {
+    const handlers = actions();
+    click(demoItem(demoCharacterItemId(key), handlers));
+    expect(handlers.pickDemoCharacter.mock.calls).toStrictEqual([[key]]);
+    expect(handlers.stopDemo).not.toHaveBeenCalled();
+  });
+
+  it.each(STATE_CODES.map((state) => [state] as const))(
+    '%s picks that state',
+    (state) => {
+      const handlers = actions();
+      click(demoItem(demoItemId(state), handlers));
+      expect(handlers.pickDemoState.mock.calls).toStrictEqual([[state]]);
+      expect(handlers.quit).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe('the 選擇示範角色 menu', () => {
+  it('is a heading, a separator and the characters; picking one calls pick with it', () => {
+    const pick = vi.fn<(key: CharacterKey) => void>();
+    const template = demoCharacterMenuTemplate(CHARACTERS, pick);
+    expect(
+      template.map((item) => [item.id ?? item.type, item.label, item.enabled]),
+    ).toStrictEqual([
+      ['demo-choose', '選擇示範角色', false],
+      ['separator', undefined, undefined],
+      [`demo-character-${DYNAMES}`, '力天使 GN-002（力天使）', undefined],
+      [`demo-character-${PROBE}`, '探針一（契約測試包）', undefined],
+    ]);
+    expect(DEMO_CHOOSE_LABEL).toBe('選擇示範角色');
+
+    click(template[3]);
+    expect(pick.mock.calls).toStrictEqual([[PROBE]]);
   });
 });
 
@@ -382,115 +489,105 @@ describe('I/O matrix', () => {
   );
 });
 
-describe('the tray check mark follows detection', () => {
-  function trayMenuOf(tray: unknown) {
-    return (tray as InstanceType<typeof fake.FakeTray>)
-      .contextMenu as InstanceType<typeof fake.FakeMenu>;
+describe('the tray menu follows demo mode', () => {
+  type Built = InstanceType<typeof fake.FakeMenu>;
+
+  function trayOf(tray: unknown) {
+    return tray as InstanceType<typeof fake.FakeTray>;
   }
 
-  it('checkDemoItem moves the check to the state, unchecking the rest; false when it is already there or missing', () => {
-    const menu = buildTrayMenu(actions()) as unknown as InstanceType<
-      typeof fake.FakeMenu
-    >;
-    expect(menu.checkedIds()).toStrictEqual(['demo-off']);
+  it('showTrayDemo builds the menu again from what demo mode shows and sets it', () => {
+    const tray = trayOf(createTray('linux', actions(), OFF));
+    const first = tray.contextMenu as Built;
+    expect(first.checkedIds()).toStrictEqual([
+      'demo-off',
+      `demo-character-${DYNAMES}`,
+    ]);
 
-    expect(checkDemoItem(menu, 'error')).toBe(true);
-    expect(menu.checkedIds()).toStrictEqual(['demo-error']);
-
-    expect(checkDemoItem(menu, 'error')).toBe(false);
-    expect(checkDemoItem(menu, null)).toBe(true);
-    expect(menu.checkedIds()).toStrictEqual(['demo-off']);
-
-    expect(checkDemoItem({ getMenuItemById: () => null }, 'done')).toBe(false);
+    showTrayDemo(ON);
+    const second = tray.contextMenu as Built;
+    expect(second).not.toBe(first);
+    expect(second.checkedIds()).toStrictEqual([
+      `demo-character-${PROBE}`,
+      'demo-thinking',
+    ]);
+    expect(tray.contextMenus).toStrictEqual([first, second]);
   });
 
-  it('兩個入口同步: showTrayDemoState moves the mark and sets the menu again so every platform shows it', () => {
-    const tray = createTray('linux', actions()) as unknown as InstanceType<
-      typeof fake.FakeTray
-    >;
-    const menu = trayMenuOf(tray);
-    expect(tray.contextMenus).toStrictEqual([menu]);
+  it('a demo item clicked builds the menu again, so a check Electron moved by itself never outlives demo mode saying otherwise', () => {
+    const handlers = actions();
+    const tray = trayOf(createTray('darwin', handlers, OFF));
+    const first = tray.contextMenu as Built;
 
-    showTrayDemoState('error');
-    expect(menu.checkedIds()).toStrictEqual(['demo-error']);
-    expect(tray.contextMenus).toStrictEqual([menu, menu]);
+    // Demo mode asks which character to show: nothing changed yet.
+    first.getMenuItemById('demo-thinking')?.click();
+    expect(handlers.pickDemoState.mock.calls).toStrictEqual([['thinking']]);
+    const again = tray.contextMenu as Built;
+    expect(again).not.toBe(first);
+    expect(again.checkedIds()).toStrictEqual([
+      'demo-off',
+      `demo-character-${DYNAMES}`,
+    ]);
 
-    showTrayDemoState(null);
-    expect(menu.checkedIds()).toStrictEqual(['demo-off']);
-    expect(tray.contextMenus).toStrictEqual([menu, menu, menu]);
+    again.getMenuItemById(`demo-character-${PROBE}`)?.click();
+    again.getMenuItemById('demo-off')?.click();
+    expect(handlers.pickDemoCharacter.mock.calls).toStrictEqual([[PROBE]]);
+    expect(handlers.stopDemo).toHaveBeenCalledOnce();
+    expect(tray.contextMenus).toHaveLength(4);
   });
 
-  it('a mark already in place (a tray click moved it itself) is not set again', () => {
-    const tray = createTray('darwin', actions()) as unknown as InstanceType<
-      typeof fake.FakeTray
-    >;
-    const menu = trayMenuOf(tray);
-    menu.getMenuItemById('demo-done')?.click();
-
-    showTrayDemoState('done');
-    showTrayDemoState('done');
-
-    expect(menu.checkedIds()).toStrictEqual(['demo-done']);
-    expect(tray.contextMenus).toStrictEqual([menu]);
+  it('Windows: a left click pops up the menu set last', () => {
+    const tray = trayOf(createTray('win32', actions(), OFF));
+    showTrayDemo(ON);
+    tray.listeners.get('click')?.();
+    expect(tray.popUps).toStrictEqual([tray.contextMenu]);
   });
 
-  it('logs a failure as a windows error and keeps going', () => {
-    createTray('darwin', actions());
+  it('logs a menu that cannot be set again as a windows error and keeps the one before', () => {
+    const tray = trayOf(createTray('darwin', actions(), OFF));
+    const first = tray.contextMenu;
     fake.FakeTray.failSetContextMenu = true;
 
     expect(() => {
-      showTrayDemoState('idle');
+      showTrayDemo(ON);
     }).not.toThrow();
 
+    expect(tray.contextMenu).toBe(first);
     expect(error).toHaveBeenCalledWith(
-      '[windows] tray demo mode check mark could not be moved (Error)',
+      '[windows] tray demo mode menu could not be built again (Error)',
     );
   });
 
-  it('end to end, wired as main.ts does: the tray changes the demo session and the tray mark follows detection', () => {
-    const clock = fakeClock();
-    const detection = createDetection({
-      settings: {
-        get: () => ({ rev: 0, values: SETTINGS_DEFAULTS }),
-        onChange: () => () => {},
-      },
-      monotonic: clock.monotonic,
-      wall: clock.wall,
-      setTimer: clock.setTimer,
-      clearTimer: clock.clearTimer,
+  it('popUpDemoCharacters pops the character menu up from the tray once the menu clicked has closed; picking one calls pick', async () => {
+    const tray = trayOf(createTray('darwin', actions(), OFF));
+    const pick = vi.fn<(key: CharacterKey) => void>();
+
+    expect(popUpDemoCharacters(CHARACTERS, pick)).toBe(true);
+    expect(tray.popUps).toStrictEqual([]);
+    await new Promise((resolve) => {
+      setImmediate(resolve);
     });
-    const setDemo = (state: StateCode | null) => {
-      detection.setDemo(state);
-    };
-    const tray = createTray('darwin', { ...actions(), setDemo });
-    const menu = trayMenuOf(tray);
-    watchDemoState(detection, showTrayDemoState);
 
-    // 出現: from the tray, 要你批准.
-    menu.getMenuItemById('demo-approval')?.click();
-    expect(demoStateOf(detection.get().sessions)).toBe('approval');
-    expect(detection.get().sessions.map((s) => s.sessionKey)).toStrictEqual([
-      DEMO_SESSION_KEY,
+    expect(tray.popUps).toHaveLength(1);
+    const menu = tray.popUps[0] as Built;
+    expect(menu.built.map((item) => item.id ?? item.type)).toStrictEqual([
+      'demo-choose',
+      'separator',
+      `demo-character-${DYNAMES}`,
+      `demo-character-${PROBE}`,
     ]);
-
-    // Changed elsewhere (detection itself): the tray mark follows.
-    detection.setDemo('error');
-    expect(menu.checkedIds()).toStrictEqual(['demo-error']);
-
-    // 關閉 from the tray: the session is gone, the tray says 關閉.
-    menu.getMenuItemById('demo-off')?.click();
-    expect(detection.get().sessions).toStrictEqual([]);
-    expect(menu.checkedIds()).toStrictEqual(['demo-off']);
-
-    detection.stop();
+    menu.getMenuItemById(`demo-character-${DYNAMES}`)?.click();
+    expect(pick.mock.calls).toStrictEqual([[DYNAMES]]);
   });
 });
 
 describe('createTray', () => {
   it('creates the tray with its tooltip and menu, and logs it', () => {
-    const tray = createTray('darwin', actions()) as unknown as InstanceType<
-      typeof fake.FakeTray
-    >;
+    const tray = createTray(
+      'darwin',
+      actions(),
+      OFF,
+    ) as unknown as InstanceType<typeof fake.FakeTray>;
     expect(fake.FakeTray.instances).toStrictEqual([tray]);
     expect(tray.tooltip).toBe(TRAY_TOOLTIP);
     expect(TRAY_TOOLTIP).toBe('AI Watchdog Pet');
@@ -510,15 +607,17 @@ describe('createTray', () => {
   });
 
   it('macOS: clicking opens the context menu by itself; no click handler', () => {
-    const tray = createTray('darwin', actions()) as unknown as InstanceType<
-      typeof fake.FakeTray
-    >;
+    const tray = createTray(
+      'darwin',
+      actions(),
+      OFF,
+    ) as unknown as InstanceType<typeof fake.FakeTray>;
     expect(tray.listeners.has('click')).toBe(false);
     expect(tray.image.template).toBe(true);
   });
 
   it('Windows: a left click pops up the same menu', () => {
-    const tray = createTray('win32', actions()) as unknown as InstanceType<
+    const tray = createTray('win32', actions(), OFF) as unknown as InstanceType<
       typeof fake.FakeTray
     >;
     tray.listeners.get('click')?.();
@@ -527,14 +626,14 @@ describe('createTray', () => {
   });
 
   it('keeps the Tray it created, so it is not garbage-collected', () => {
-    const tray = createTray('darwin', actions());
+    const tray = createTray('darwin', actions(), OFF);
     expect(tray).toBeDefined();
     expect(currentTray()).toBe(tray);
   });
 
   it('logs a tray that cannot be created and keeps going', () => {
     fake.FakeTray.failNext = true;
-    expect(createTray('darwin', actions())).toBeUndefined();
+    expect(createTray('darwin', actions(), OFF)).toBeUndefined();
     expect(error).toHaveBeenCalledWith(
       '[windows] tray icon could not be created (Error); the app keeps running without it',
     );

@@ -63,7 +63,7 @@ export const NO_SESSIONS_TEXT = '目前沒有偵測到 session';
  * The hint below NO_SESSIONS_TEXT. The icon is in the menu bar on macOS and
  * in the notification area (系統匣) on Windows.
  */
-export const DEMO_MODE_HINT = `想先看看效果，可以從選單列或系統匣的圖示選「${DEMO_MODE_LABEL}」，選一種狀態產生一個示範 session。`;
+export const DEMO_MODE_HINT = `想先看看效果，可以從選單列或系統匣的圖示選「${DEMO_MODE_LABEL}」，再選一個角色或狀態，產生一個示範 session。`;
 
 /** The mark beside an inferred state. */
 export const INFERRED_LABEL = '推測';

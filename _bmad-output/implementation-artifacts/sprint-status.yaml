@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-03-2026 15:49
-last_updated: 11-24-2026 10:14
+last_updated: 11-24-2026 14:56
 project: gundam-pet
 project_key: NOKEY
 tracking_system: file-system
@@ -77,6 +77,7 @@ development_status:
   4-6-發射物件與被擊中: backlog
   4-7-同包角色的特殊互動: backlog
   4-8-包請角色停下-恢復遊走與轉向: backlog
+  4-9-招式-舞台照包宣告的節奏移動角色: backlog
   epic-4-retrospective: optional
 
   epic-5: backlog
@@ -103,6 +104,10 @@ sequencing_rules:
     epic: epic-6
     rule: "Epic 6 排在最後。Story 6.1 必須用真實 Copilot CLI session 走過 thinking、working、approval、一輪結束與
       error（或中止），去識別化紀錄放進 test/fixtures/copilot/ 並通過快照測試，才能標 done；沒有真實 session 可測時維持未完成。"
+  - id: moves-after-wander
+    epic: epic-4
+    rule: "Story 4.9 招式依賴 4.1（world 位置與遊走）與 4.4（捏起來）；排在 4.4 之後即可，不必等 4.5～4.8。力天使角色包改版（衝刺改用招式、子彈改用
+      stage.fire）等 4.6 與 4.9 完成後再做。來源：sprint-change-proposal-2026-11-24.md。"
 action_items:
   - id: "epic-1-retro-a1-startup-catch"
     epic: 1

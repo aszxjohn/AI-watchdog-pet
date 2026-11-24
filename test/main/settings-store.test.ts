@@ -47,6 +47,7 @@ const CUSTOM_VALUES = {
   syncTimeoutMs: 20_000,
   packEnabled: { 'pack-a': false },
   fixedOverrides: { 'pack-a/char-a': { inPool: false } },
+  demoCharacter: 'pack-a/char-a',
 } as const;
 
 /** A StageView batch that only runs the patch, for the IPC tests. */
@@ -194,6 +195,23 @@ describe('loading settings.json', () => {
     expect(store.get()).toStrictEqual({
       rev: 0,
       values: { ...before, approvalInferMs: 10_000 },
+    });
+    expect(store.canWrite).toBe(true);
+    vi.runAllTimers();
+    expect(files()).toStrictEqual(['settings.json']);
+    expect(fs.readFileSync(file, 'utf8')).toBe(text);
+    expect(settingsLines()).toStrictEqual([]);
+  });
+
+  it('reads a file from before demoCharacter: it takes null, nothing is backed up or written', () => {
+    const { demoCharacter: _added, ...before } = CUSTOM_VALUES;
+    const text = writeFile({ schemaVersion: 1, ...before });
+
+    const store = load();
+
+    expect(store.get()).toStrictEqual({
+      rev: 0,
+      values: { ...before, demoCharacter: null },
     });
     expect(store.canWrite).toBe(true);
     vi.runAllTimers();

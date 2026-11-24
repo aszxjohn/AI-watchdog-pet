@@ -204,7 +204,7 @@ zip -r -X contract-pack.awpet contract-pack -x '*.DS_Store'
 方框是 `{ "x", "y", "width", "height" }`，`width`、`height` 必須大於 0；點是 `{ "x", "y" }`。
 
 - `hitbox`：滑鼠命中與穿透只看它（乘上「大小」），畫了什麼不影響。它必須整個在 `bounds` 裡面，邊可以重疊。
-- `bounds`：繪圖範圍，超出的內容會被裁掉。
+- `bounds`：繪圖範圍，超出的內容會被裁掉。它跟著角色走，是近身的繪圖框，不是活動範圍：不要把身體畫偏來表現移動；衝刺這類位移在 v1.1 用招式交給舞台執行（第 9 節）。
 - `anchor`：舞台在這裡畫名牌與狀態標記。包不畫名牌。
 
 範例：
@@ -504,7 +504,7 @@ if (busy) {
 | `stage.log(…)` | 寫入運行紀錄，自動帶上包 id。有限速，超過的會被丟掉 |
 | `stage.canvas(actorId, width, height)` | 只限 `advancedBitmap` 的角色：取得這個 actor 的畫布的 2d context（見下） |
 | `stage.snapshot(actorId)` | 把這個 actor 的畫布內容變成 `ImageBitmap`，放進 `bitmap` 指令送出（見下） |
-| `stage.fire(fromActorId, { target, object })` | 發射飛行物件；`object` 是 `projectiles` 的 key |
+| `stage.fire(fromActorId, { target, object })` | 發射飛行物件；`object` 是 `projectiles` 的 key。v1.1 起必須帶出發點 `from`（本地座標，例如槍口），沒帶就不發射（第 9 節） |
 | `stage.hold(actorId, on)` | 讓己方角色停在原地或恢復遊走 |
 | `stage.face(actorId, 'left' \| 'right')` | 讓己方角色轉向 |
 
@@ -573,7 +573,7 @@ if (busy) {
   - 新增訊息、指令或欄位：升 minor。
   - 移除，或改變原本的意思：升 major。
 - 舞台只送包宣告的 minor 以內的訊息與欄位。即使如此，包仍必須**忽略不認得的訊息與欄位**。
-- 1.1 預計加入：`frame` 裡每個 actor 的 `motion`（是否在移動、面向、是否被捏起來），以及互動事件（靠近、被擊中、被捏起來、別的角色狀態改變）。
+- 1.1 預計加入：`frame` 裡每個 actor 的 `motion`（是否在移動、面向、是否被捏起來、招式進度）；互動事件（靠近、被擊中、被捏起來、別的角色狀態改變）；招式（manifest `moves`、`stateMoves` 與 `stage.move`，讓舞台照包宣告的節奏移動角色）；`stage.fire` 必須帶出發點 `from`（沒帶就不發射）、可另帶角度，以及 `projectiles` 的速度與射程。
 
 **更新已安裝的包：**
 
