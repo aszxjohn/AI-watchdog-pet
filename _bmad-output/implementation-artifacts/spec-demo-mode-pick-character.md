@@ -2,7 +2,7 @@
 title: '示範模式：先清場、選角色，再切狀態（FR21 2026-11-24 修改）'
 type: 'feature'
 created: '2026-11-24'
-status: 'review'
+status: 'done'
 baseline_commit: '48d7e99638f8d4c481b6b068f6c11bf78b304654'
 route: 'dispatch'
 review_loop_iteration: 0
@@ -163,7 +163,7 @@ context:
 - [x] main.ts 接線。
 - [x] 註解與面板提示。
 - [x] 測試，涵蓋 I/O 矩陣（同版重匯除外）。
-- [ ] 使用者實機驗收。
+- [x] 使用者實機驗收（2026-11-24 通過）。
 
 **Acceptance Criteria:**
 - Given 改完，when 執行 `npm run typecheck`、`npm run lint`、`npx vitest run`、`npm run depcruise`，then 全部通過。
@@ -202,8 +202,4 @@ context:
   - 示範中把 4 個已釋放的 session 改回顯示，它們沒有拿到角色。
   - 關閉：1 個帶原角色回來，4 個照一般規則分配（池子只有力天使，所以都是力天使）。
   - 整段沒有錯誤。
-- **尚未實機確認：**
-  - 其餘 6 個狀態，本次只點了「休息中」和「工作中」。
-  - 示範關閉時直接點狀態，是否會用記住的角色開始。
-  - 跳出「選擇示範角色」選單：只能在 macOS 實機確認，單元測試用的是假 Tray。
-  - 動作畫面要靠使用者目視，log 看不到。
+- **2026-11-24 16:17 起使用者實機驗收（16:16 重新打包的 `out/`）：通過。** 涵蓋上面原本列為尚未確認的項目：其餘 6 個狀態、示範關閉時直接點狀態會用記住的角色開始、「選擇示範角色」選單跳出、動作畫面目視。

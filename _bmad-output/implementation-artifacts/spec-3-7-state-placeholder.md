@@ -85,6 +85,7 @@ context:
 - **第 1 輪審查修補（2026-11-24）：** 只改文件與註解，沒有程式改動。作者文件 3.2 改為 `init`、`spawn`、`frame` 都送原狀態，並提醒包會收到 `states` 以外的狀態碼；補上佔位期間 `draw` 仍照 8.1 檢查與計入上限、`badges` 關閉時沒有標記、要等 manifest 載入才畫。第 7 節 `state` 與 8.1 粒子段（佔位也接滑鼠）跟著改。另外改了 `spawnMessageSchema` 的註解與 `pixi-stage.ts` 檔頭的措辭。
 - **本機驗證（2026-11-24 15:40，修補後）：** typecheck、lint、depcruise 通過；`npx vitest run` 5515 通過、2 略過。e2e 沒有在本機跑，交給 CI。
 - CI：commit `29a3aa1`（2026-11-24）後，GitHub Actions 的 unit（check）與 e2e 在 macOS、Windows 都通過（run 45349987270）。
+- **實機驗收（2026-11-24，16:16 重新打包的 `out/`）：** 使用者回覆通過：示範模式選探針一，「要你批准」畫出會起伏的灰色剪影並接住滑鼠，「工作中」換回包的圖（第 2 條 AC）。
 - **sprint-status：** 這份規格只是 3.7 的上半段，e2e 驗收已拆到 deferred-work，所以 `3-7-依狀態演出-後備與佔位` 維持 `in-progress`，不改成 `review`。
 
 ## Spec Change Log

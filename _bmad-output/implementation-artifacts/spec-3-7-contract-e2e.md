@@ -76,6 +76,8 @@ context:
 - **第 1 輪審查修補（2026-11-24）：** 只改 `test/e2e/stage.spec.ts`：`lastStateAt()` 回傳輪詢讀到的那一行；「過場」先確認探針收到 thinking 再送 answer，並檢查 done 中間沒有閃成別的狀態，`WAITING_EARLY_MS` 註解寫明實際精度；「佔位」加上 30 秒期限的清楚失敗訊息、lost 期間不畫不接滑鼠、還原後仍在起伏、期間沒有丟棄或沙盒問題；「加入與移出」先送 prompt（`turn.start` 清掉 error）回到包的圖、`placeholderAlpha` 為 `none`，再 release。
 - **本機驗證（2026-11-24，修補後）：** typecheck、lint、depcruise 通過；`npx vitest run` 5516 通過、2 略過。e2e 沒有在本機跑，等 push 後的 CI。
 - **處理掉的 deferred-work 項目**（依流程不改既有條目，記在這裡）：`spec-3-7-state-placeholder.md` 的 e2e 驗收、`main.ts` 的 `particleActorsOf` 接線（V1）、`dtMs` 傳給 `draw`（V2，`placeholderAlpha` 起伏）、`stage.spec.ts` 的 `mapped` 算法（B16）。尚未處理的仍是 bitmap 包停在佔位時的 GC 堆積（未驗證）。
+- **CI（2026-11-24）：** commit `424e5f1` 後，GitHub Actions 的 unit（check）與 e2e 在 macOS、Windows 都通過（run 45353457464），含新增的「過場」「佔位」；`stage.spec.ts` 沒有 skip／only，CI 設 `forbidOnly`、`retries: 0`。
+- **實機驗收（2026-11-24）：** 使用者回覆通過，3.7 標為 `done`。
 - **sprint-status：** 3.7 上下兩段都完成，`3-7-依狀態演出-後備與佔位` 改為 `review`；CI 通過、使用者實機驗收示範模式後再標 `done`。
 
 ## Spec Change Log
