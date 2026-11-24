@@ -1,27 +1,42 @@
 /**
- * The world tick and drawing (Story 3.6), in real Electron: the production
- * build (`.vite/`, from scripts/e2e-build.mjs) launched by Playwright's
- * `_electron` with a temporary HOME and userData. A synthetic Claude Code
- * session in that HOME gets a character of the stage probe pack: the
- * contract test pack under another id, its entry wrapped so that the
- * first message of each type it gets is written back with `stage.log`
- * (no other change: what it draws is the contract pack's). The tests read
- * the run log (what the pack got), the overlay's body data attributes
- * (what was drawn, the particles included: Story 3.6's second last part)
- * and the panels' StageView; to change the session's state they append a
- * synthetic record to its transcript. Nothing is read from the screen,
- * and nothing connects anywhere but the app itself.
+ * The world tick and drawing (Story 3.6) and acting by state (Story 3.7),
+ * in real Electron: the production build (`.vite/`, from
+ * scripts/e2e-build.mjs) launched by Playwright's `_electron` with a
+ * temporary HOME and userData. A synthetic Claude Code session in that
+ * HOME gets a character of the stage probe pack: the contract test pack
+ * under another id, its entry wrapped so that the first message of each
+ * type it gets is written back with `stage.log`, and so is its own
+ * actor's state in a `frame` whenever it differs from the one before, as
+ * `awp-stage state <state>` (no other change: what it draws is the
+ * contract pack's). The tests read the run log (what the pack got), the
+ * overlay's body data attributes (what was drawn, the particles and the
+ * placeholder included: Story 3.6's second last part, Story 3.7) and the
+ * panels' StageView; to change the session's state they append a
+ * synthetic record to its transcript. Story 3.7's are 過場 (a turn's end
+ * is done for 5 seconds, then waiting) and 佔位 (an API error, a state
+ * probe-one neither draws nor maps, is drawn as the stage's placeholder,
+ * whose opacity rises and falls, and which is drawn again once a lost
+ * WebGL context is back); then 加入與移出 starts a new turn, which ends
+ * the error (drawn by the pack again, no placeholder opacity), before the
+ * session is released. Nothing is read from the screen (no screenshot,
+ * no pixel), and nothing connects anywhere but the app itself.
  */
 import {
   expect,
   test,
+  type ConsoleMessage,
   type ElectronApplication,
   type Page,
 } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  PLACEHOLDER_ALPHA_MAX,
+  PLACEHOLDER_ALPHA_MIN,
+} from '../../src/overlay/renderer/placeholder';
 import { manifestSchema, type StageMessage } from '../../src/shared/pack-api';
 import type { PanelsApi } from '../../src/shared/preload-api';
+import { SETTINGS_DEFAULTS } from '../../src/shared/settings';
 import type { StageViewSnapshot } from '../../src/shared/stage-view';
 import {
   contractManifest,
@@ -35,11 +50,13 @@ import {
   closeStage,
   LAUNCH_TIMEOUT_MS,
   launchStage,
+  loseOverlayContext,
   makeDirs,
   readOverlayData,
   readRunLog,
   readStageView,
   removeDirs,
+  restoreOverlayContext,
   waitForLine,
   WINDOW_TIMEOUT_MS,
   windowAt,
@@ -54,6 +71,9 @@ const STAGE_PACK_ID = 'stage-probe';
 
 /** What starts each `stage.log` line the probe writes. */
 const TELL_PREFIX = 'awp-stage ';
+
+/** What starts the probe's `stage.log` line of its actor's state. */
+const STATE_PREFIX = `${TELL_PREFIX}state `;
 
 /** How long the probe's sandbox may take to be ready once launched. */
 const READY_TIMEOUT_MS = 90_000;
@@ -70,6 +90,30 @@ const DRAWN_TIMEOUT_MS = 20_000;
  */
 const PARTICLES_GONE_TIMEOUT_MS = 5_000;
 
+/** How long a turn's end is shown as done: the stage's timing, as set. */
+const DONE_MS = SETTINGS_DEFAULTS.doneMs;
+
+/**
+ * How late, after the answer was appended, waiting may first show at the
+ * latest: DONE_MS and the time the adapter takes to read the answer.
+ */
+const WAITING_LATEST_MS = 15_000;
+
+/**
+ * How much earlier than DONE_MS after the answer was appended waiting may
+ * first be seen: the test's and main's clocks and timers. The time checked
+ * is when the first read saying waiting came back, so the bound holds only
+ * to within one read cycle (STATE_POLL_MS and two IPC round trips): it
+ * catches waiting coming well before DONE_MS, not a few ms early.
+ */
+const WAITING_EARLY_MS = 50;
+
+/** How often the state is read while it changes (過場, 佔位). */
+const STATE_POLL_MS = 100;
+
+/** About how far apart the placeholder's opacity is read twice (起伏). */
+const ALPHA_GAP_MS = 300;
+
 /** The contract pack's manifest, checked: what the probe declares. */
 const MANIFEST = manifestSchema.parse({
   ...contractManifest(),
@@ -81,7 +125,9 @@ const MANIFEST = manifestSchema.parse({
  * The probe's entry: the contract pack's factory, called with `stage`,
  * inside a factory that writes the first message of each type back with
  * `stage.log` as `awp-stage <type> <JSON>` (non-ASCII written as `\uXXXX`),
- * then hands the message on.
+ * and, at a `frame` whose own actor's state differs from the one in the
+ * `frame` before (any, at the first), writes `awp-stage state <state>`
+ * (ASCII: a state code), then hands the message on.
  */
 function stageProbeEntry(): string {
   const contract = String(contractPackFiles().get('entry.js'))
@@ -106,13 +152,22 @@ ${contract}
       return inner[type](message);
     };
   }
+  var frame = pass('frame');
+  var lastState;
   return {
     init: pass('init'),
     spawn: pass('spawn'),
     despawn: pass('despawn'),
     params: pass('params'),
     meta: pass('meta'),
-    frame: pass('frame'),
+    frame: function (message) {
+      var own = message.actors[0];
+      if (own !== undefined && own.state !== lastState) {
+        lastState = own.state;
+        stage.log(${JSON.stringify(STATE_PREFIX)} + own.state);
+      }
+      return frame(message);
+    },
   };
 })
 `;
@@ -220,6 +275,63 @@ function overlayData(): Promise<Record<string, string | undefined>> {
   return readOverlayData(overlay);
 }
 
+/** One of the probe's state lines: when it was logged, and the state. */
+interface StateLine {
+  /** In ms since the epoch, as the run log has it. */
+  readonly at: number;
+  readonly state: string;
+}
+
+/**
+ * The probe's state lines in the run log (`awp-stage state <state>`), in
+ * order: all of them, or those logged after `since` (ms since the epoch).
+ */
+function probeStates(since = Number.NEGATIVE_INFINITY): StateLine[] {
+  const prefix = `pack ${STAGE_PACK_ID}: stage.log: ${STATE_PREFIX}`;
+  return readRunLog(dirs.logs).flatMap((line) =>
+    line.category === 'packs' &&
+    line.message.startsWith(prefix) &&
+    line.at > since
+      ? [{ at: line.at, state: line.message.slice(prefix.length) }]
+      : [],
+  );
+}
+
+/**
+ * Once the probe's last state line says `state`, when it was logged: the
+ * lines after it are what a change made from now on brings.
+ */
+async function lastStateAt(state: string): Promise<number> {
+  // The very line the poll took: one written after it would give its time.
+  let last: StateLine | undefined;
+  await expect
+    .poll(
+      () => {
+        last = probeStates().at(-1);
+        return last?.state;
+      },
+      { timeout: DRAWN_TIMEOUT_MS },
+    )
+    .toBe(state);
+  return last?.at ?? Number.NEGATIVE_INFINITY;
+}
+
+/** A run log line of main/windows starting with `message`. */
+function windowsLine(message: string): (line: RunLogLine) => boolean {
+  return (line) =>
+    line.category === 'windows' && line.message.startsWith(message);
+}
+
+/** How many run log lines `match` takes now. */
+function countLines(match: (line: RunLogLine) => boolean): number {
+  return readRunLog(dirs.logs).filter(match).length;
+}
+
+/** Waits `ms`. */
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 test.describe('I/O matrix', () => {
   test("出現: the probe gets init (its actor's character, full parameters, mapped state, display name), then frames; its draw is drawn at the bottom of the canvas", async () => {
     const { view } = await panelsSnapshot();
@@ -235,9 +347,10 @@ test.describe('I/O matrix', () => {
       (each) => each.id === characterId,
     );
     expect(character).toBeDefined();
+    // Neither drawn nor mapped: the state itself (Story 3.7).
     const mapped = character?.states.includes(actor.state)
       ? actor.state
-      : character?.fallback?.[actor.state];
+      : (character?.fallback?.[actor.state] ?? actor.state);
     const defaults = Object.fromEntries(
       (character?.params ?? []).map((param) => [param.key, param.default]),
     );
@@ -399,7 +512,235 @@ test.describe('I/O matrix', () => {
     ).toStrictEqual([]);
   });
 
-  test('加入與移出: the session released, its actor leaves: the probe gets its despawn, nothing is drawn any more (no square or anything else) and nothing takes the mouse', async () => {
+  test('過場: a turn ended is done for 5 seconds, then waiting: StageView has done before T + 5000 and first has waiting no earlier than T + 5000 (T: just before the answer was appended); the probe (probe-one maps done to waiting) gets thinking, then waiting, never done; one actor drawn all along, never the placeholder', async () => {
+    // The previous turn's end has reached the probe, as waiting.
+    const since = await lastStateAt('waiting');
+    /** What was drawn each time the state was read. */
+    const drawn = new Set<string>();
+    async function sample(): Promise<string | undefined> {
+      const data = await overlayData();
+      drawn.add(
+        `placeholders ${data.drawnPlaceholders}, actors ${data.drawnActors}`,
+      );
+      return stateNow();
+    }
+
+    appendClaudeRecord(dirs.home, session, 'prompt');
+    await expect
+      .poll(sample, { intervals: [STATE_POLL_MS], timeout: DRAWN_TIMEOUT_MS })
+      .toBe('thinking');
+    // The probe has had a frame with thinking before the turn ends.
+    await lastStateAt('thinking');
+
+    const answeredAt = Date.now();
+    appendClaudeRecord(dirs.home, session, 'answer');
+    // Each state read, with when it was back (so the state was there by
+    // then): until waiting, or the latest it may come.
+    const seen: { readonly state: string | undefined; readonly at: number }[] =
+      [];
+    while (Date.now() <= answeredAt + WAITING_LATEST_MS) {
+      const state = await sample();
+      seen.push({ state, at: Date.now() });
+      if (state === 'waiting') {
+        break;
+      }
+      await pause(STATE_POLL_MS);
+    }
+    const doneAt = seen.find((each) => each.state === 'done')?.at;
+    const waitingAt = seen.find((each) => each.state === 'waiting')?.at;
+    expect(doneAt, 'done seen').toBeDefined();
+    expect(doneAt ?? Number.POSITIVE_INFINITY).toBeLessThan(
+      answeredAt + DONE_MS,
+    );
+    expect(waitingAt, 'waiting seen').toBeDefined();
+    expect(waitingAt ?? 0).toBeGreaterThanOrEqual(
+      answeredAt + DONE_MS - WAITING_EARLY_MS,
+    );
+    expect(waitingAt ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
+      answeredAt + WAITING_LATEST_MS,
+    );
+    // done held until waiting: nothing else in between.
+    const states = seen
+      .map((each) => each.state)
+      .filter((state, index, all) => index === 0 || state !== all[index - 1]);
+    expect(
+      [
+        ['done', 'waiting'],
+        ['thinking', 'done', 'waiting'],
+      ],
+      `states seen after the answer: ${states.join(', ')}`,
+    ).toContainEqual(states);
+    expect([...drawn]).toStrictEqual(['placeholders 0, actors 1']);
+    await expect
+      .poll(() => probeStates(since).map((line) => line.state))
+      .toStrictEqual(['thinking', 'waiting']);
+  });
+
+  test('佔位: an API error while thinking (its sparkle drawn) is error, which probe-one neither draws nor maps: drawn as the stage’s placeholder, at once without the sparkle or any sprite, one actor that takes the mouse; the probe still gets error itself; the placeholder’s opacity rises and falls; with the WebGL context lost it is not drawn (no opacity), and once restored it is drawn and takes the mouse again, the overlay logging no error', async () => {
+    appendClaudeRecord(dirs.home, session, 'prompt');
+    await expect.poll(stateNow, { timeout: DRAWN_TIMEOUT_MS }).toBe('thinking');
+    await expect
+      .poll(
+        async () => {
+          const data = await overlayData();
+          return [data.particleEmitters, data.drawnEmitters];
+        },
+        { timeout: DRAWN_TIMEOUT_MS },
+      )
+      .toStrictEqual(['1', '1']);
+    const since = await lastStateAt('thinking');
+    // Its draws dropped, or its sandbox in trouble, from here on.
+    const dropped = stageLine('dropped');
+    const droppedBefore = countLines(dropped);
+    const troubleBefore = countLines(stageTrouble);
+
+    // Everything below has to be done within errorHoldMs of this.
+    const errorAt = Date.now();
+    appendClaudeRecord(dirs.home, session, 'error');
+    // The first data drawn with the placeholder: its particles went at once.
+    let first: Record<string, string | undefined> = {};
+    await expect
+      .poll(
+        async () => {
+          first = await overlayData();
+          return first.drawnPlaceholders;
+        },
+        { intervals: [STATE_POLL_MS], timeout: DRAWN_TIMEOUT_MS },
+      )
+      .toBe('1');
+    expect({
+      particleEmitters: first.particleEmitters,
+      drawnEmitters: first.drawnEmitters,
+      drawnSprites: first.drawnSprites,
+      hitAreas: first.hitAreas,
+      drawnActors: first.drawnActors,
+    }).toStrictEqual({
+      particleEmitters: '0',
+      drawnEmitters: '0',
+      drawnSprites: '0',
+      hitAreas: '1',
+      drawnActors: '1',
+    });
+    expect(await stateNow()).toBe('error');
+    // Unmapped, the probe gets the state itself.
+    await expect
+      .poll(() => probeStates(since).map((line) => line.state))
+      .toStrictEqual(['error']);
+
+    /**
+     * 起伏: read about ALPHA_GAP_MS apart, the opacity has moved (the
+     * render loop runs), both within its range. Two times mirrored about
+     * the top or the bottom of its wave give the same opacity, so the
+     * second read is made again, STATE_POLL_MS on, until it differs.
+     */
+    async function expectRiseAndFall(): Promise<void> {
+      const alphaNow = async (): Promise<string | undefined> =>
+        (await overlayData()).placeholderAlpha;
+      const one = await alphaNow();
+      await pause(ALPHA_GAP_MS);
+      let two: string | undefined;
+      await expect
+        .poll(
+          async () => {
+            two = await alphaNow();
+            return two;
+          },
+          { intervals: [STATE_POLL_MS], timeout: DRAWN_TIMEOUT_MS },
+        )
+        .not.toBe(one);
+      for (const alpha of [one, two]) {
+        expect(alpha).toMatch(/^\d\.\d{3}$/);
+        expect(Number(alpha)).toBeGreaterThanOrEqual(PLACEHOLDER_ALPHA_MIN);
+        expect(Number(alpha)).toBeLessThanOrEqual(PLACEHOLDER_ALPHA_MAX);
+      }
+    }
+    await expectRiseAndFall();
+
+    // context 還原 (as bitmap.spec.ts does), the placeholder shown.
+    const lost = windowsLine(
+      'canvas WebGL context lost; nothing is drawn until it is restored',
+    );
+    const restored = windowsLine('canvas WebGL context restored after ');
+    const reloaded = windowsLine('reloading the canvas page');
+    const lostBefore = countLines(lost);
+    const restoredBefore = countLines(restored);
+    const reloadedBefore = countLines(reloaded);
+    const errors: string[] = [];
+    const onConsole = (message: ConsoleMessage): void => {
+      if (message.type() === 'error') {
+        errors.push(message.text());
+      }
+    };
+    const onPageError = (error: Error): void => {
+      errors.push(error.message);
+    };
+    overlay.on('console', onConsole);
+    overlay.on('pageerror', onPageError);
+    try {
+      await loseOverlayContext(overlay);
+
+      await expect
+        .poll(() => countLines(lost), { timeout: DRAWN_TIMEOUT_MS })
+        .toBe(lostBefore + 1);
+      await expect.poll(async () => (await overlayData()).context).toBe('lost');
+      const whileLost = await overlayData();
+      expect([
+        whileLost.drawnPlaceholders,
+        whileLost.placeholderAlpha,
+        whileLost.drawnActors,
+        whileLost.hitAreas,
+      ]).toStrictEqual(['0', 'none', '0', '0']);
+
+      await restoreOverlayContext(overlay);
+
+      await expect
+        .poll(() => countLines(restored), { timeout: DRAWN_TIMEOUT_MS })
+        .toBe(restoredBefore + 1);
+      await expect
+        .poll(
+          async () => {
+            const data = await overlayData();
+            return [data.context, data.drawnPlaceholders, data.hitAreas];
+          },
+          { timeout: DRAWN_TIMEOUT_MS },
+        )
+        .toStrictEqual(['ok', '1', '1']);
+      expect(
+        await stateNow(),
+        `still error ${Date.now() - errorAt} ms after the error (errorHoldMs ${SETTINGS_DEFAULTS.errorHoldMs})`,
+      ).toBe('error');
+      // Not one frame drawn: the render loop runs again.
+      await expectRiseAndFall();
+    } finally {
+      overlay.off('console', onConsole);
+      overlay.off('pageerror', onPageError);
+    }
+    expect(errors).toStrictEqual([]);
+    expect(countLines(reloaded)).toBe(reloadedBefore);
+    expect([countLines(dropped), countLines(stageTrouble)]).toStrictEqual([
+      droppedBefore,
+      troubleBefore,
+    ]);
+  });
+
+  test('加入與移出: a new turn ends the error (drawn by its pack again: sprites, no placeholder, placeholderAlpha none); then the session released, its actor leaves: the probe gets its despawn, nothing is drawn any more (no square or anything else, placeholderAlpha still none) and nothing takes the mouse', async () => {
+    // A turn starting clears the error: thinking, drawn by the pack again.
+    appendClaudeRecord(dirs.home, session, 'prompt');
+    await expect.poll(stateNow, { timeout: DRAWN_TIMEOUT_MS }).toBe('thinking');
+    await expect
+      .poll(
+        async () => {
+          const data = await overlayData();
+          return [
+            data.drawnPlaceholders,
+            data.placeholderAlpha,
+            data.drawnSprites !== '0',
+          ];
+        },
+        { timeout: DRAWN_TIMEOUT_MS },
+      )
+      .toStrictEqual(['0', 'none', true]);
+
     const result = await panels.evaluate(
       (key) =>
         (globalThis as unknown as { awp: PanelsApi }).awp.pool.setReleased(
@@ -417,6 +758,7 @@ test.describe('I/O matrix', () => {
       .toBe('0');
     expect((await overlayData()).drawnSprites).toBe('0');
     expect((await overlayData()).hitAreas).toBe('0');
+    expect((await overlayData()).placeholderAlpha).toBe('none');
     // The despawn came: the probe wrote it back.
     expect(await told('despawn')).toMatchObject({ type: 'despawn' });
   });

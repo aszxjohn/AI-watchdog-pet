@@ -154,6 +154,7 @@ describe('I/O matrix', () => {
       sprites: 2,
       bitmaps: 0,
       placeholders: 0,
+      placeholderAlpha: placeholderAlpha(0),
     });
     expect(layer.children).toHaveLength(2);
     const [first, second] = layer.children as Container[];
@@ -224,6 +225,7 @@ describe('I/O matrix', () => {
       sprites: 0,
       bitmaps: 0,
       placeholders: 0,
+      placeholderAlpha: placeholderAlpha(0),
     });
     expect(partsOf(layer.children[0] as Container).sprites[0]?.visible).toBe(
       false,
@@ -525,6 +527,7 @@ describe('I/O matrix', () => {
       sprites: 0,
       bitmaps: 0,
       placeholders: 0,
+      placeholderAlpha: placeholderAlpha(0),
     });
     expect(layer.children).toHaveLength(1);
   });
@@ -702,6 +705,7 @@ describe('I/O matrix', () => {
       sprites: 1,
       bitmaps: 1,
       placeholders: 0,
+      placeholderAlpha: placeholderAlpha(0),
     });
     const container = layer.children[0] as Container;
     const sprite = spriteOf(container, image);
@@ -954,6 +958,7 @@ describe('I/O matrix', () => {
       sprites: 0,
       bitmaps: 0,
       placeholders: 1,
+      placeholderAlpha: placeholderAlpha(0),
     });
     const container = layer.children[0] as Container;
     expect(layoutOf(container)).toStrictEqual(['mask', 'placeholder']);
@@ -1025,6 +1030,37 @@ describe('I/O matrix', () => {
     expect(graphics?.alpha).toBeCloseTo(PLACEHOLDER_ALPHA_MAX);
   });
 
+  it('佔位 opacity: draw() returns the opacity it drew the placeholders at (main.ts shows it as placeholderAlpha), the Graphics’ own at every draw; with no placeholder it is still worked out, the time going on', () => {
+    const { layer, stage } = setup();
+    const shown = scene([placeholderActor('a1')]);
+
+    let counts = stage.draw(shown);
+    const graphics = placeholderIn(layer.children[0] as Container);
+    expect(counts.placeholderAlpha).toBe(placeholderAlpha(0));
+    expect(graphics?.alpha).toBe(counts.placeholderAlpha);
+
+    // [time given, the render loop's time since the first draw].
+    for (const [dtMs, timeMs] of [
+      [300, 300],
+      [450, 750],
+      // No time: it stands still.
+      [0, 750],
+      // Past a whole period: kept to one.
+      [1500, 250],
+    ] as const) {
+      counts = stage.draw(shown, dtMs);
+      expect(counts.placeholderAlpha).toBe(placeholderAlpha(timeMs));
+      expect(graphics?.alpha).toBe(counts.placeholderAlpha);
+    }
+    expect(new Set([0, 300, 750, 250].map(placeholderAlpha)).size).toBe(4);
+
+    counts = stage.draw(scene([sceneActor('a1')]), 250);
+    expect(counts).toMatchObject({
+      placeholders: 0,
+      placeholderAlpha: placeholderAlpha(500),
+    });
+  });
+
   it('佔位: the same Graphics is kept from frame to frame and drawn again only when the hitbox changes; then it fills the new one', () => {
     const { layer, stage } = setup();
     stage.draw(scene([placeholderActor('a1')]));
@@ -1061,6 +1097,7 @@ describe('I/O matrix', () => {
       sprites: 1,
       bitmaps: 0,
       placeholders: 0,
+      placeholderAlpha: placeholderAlpha(0),
     });
     expect(graphics?.destroyed).toBe(true);
     expect(layer.children[0]).toBe(container);
@@ -1105,6 +1142,7 @@ describe('I/O matrix', () => {
       sprites: 0,
       bitmaps: 0,
       placeholders: 1,
+      placeholderAlpha: placeholderAlpha(0),
     });
     expect(sprite?.destroyed).toBe(true);
     expect(bitmapSprite?.destroyed).toBe(true);

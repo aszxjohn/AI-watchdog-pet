@@ -128,9 +128,42 @@ export function writeClaudeSession(home: string): SyntheticSession {
 /**
  * What a synthetic session can be made to do next, as the Claude Code
  * adapter reads it (Story 2.4): `prompt`, a user prompt (a turn starts:
- * thinking); `answer`, an assistant answer that ends the turn (done).
+ * thinking); `answer`, an assistant answer that ends the turn (done);
+ * `error`, an API error Claude Code writes as an assistant record
+ * (`isApiErrorMessage`, `stop_reason: 'stop_sequence'`): `error` and the
+ * turn's end, so error (it goes before done) for `errorHoldMs`.
  */
-export type SyntheticTurn = 'prompt' | 'answer';
+export type SyntheticTurn = 'prompt' | 'answer' | 'error';
+
+/** The transcript record of `turn` for `session`, timestamped now. */
+function turnRecord(
+  home: string,
+  session: SyntheticSession,
+  turn: SyntheticTurn,
+): Record<string, unknown> {
+  switch (turn) {
+    case 'prompt':
+      return claudeRecord(home, session.sessionId, 'user', {
+        role: 'user',
+        content: 'e2e prompt',
+      });
+    case 'answer':
+      return claudeRecord(home, session.sessionId, 'assistant', {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'e2e answer' }],
+        stop_reason: 'end_turn',
+      });
+    case 'error':
+      return {
+        ...claudeRecord(home, session.sessionId, 'assistant', {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'e2e API error' }],
+          stop_reason: 'stop_sequence',
+        }),
+        isApiErrorMessage: true,
+      };
+  }
+}
 
 /**
  * Appends one record timestamped now to `session`'s transcript in `home`
@@ -141,17 +174,7 @@ export function appendClaudeRecord(
   session: SyntheticSession,
   turn: SyntheticTurn,
 ): void {
-  const record =
-    turn === 'prompt'
-      ? claudeRecord(home, session.sessionId, 'user', {
-          role: 'user',
-          content: 'e2e prompt',
-        })
-      : claudeRecord(home, session.sessionId, 'assistant', {
-          role: 'assistant',
-          content: [{ type: 'text', text: 'e2e answer' }],
-          stop_reason: 'end_turn',
-        });
+  const record = turnRecord(home, session, turn);
   fs.appendFileSync(
     path.join(claudeProjectFolder(home), `${session.sessionId}.jsonl`),
     `${JSON.stringify(record)}\n`,

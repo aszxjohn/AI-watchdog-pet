@@ -40,8 +40,10 @@ import 'pixi.js/unsafe-eval';
 //   `canvas:gpu`; once it is back, drawing starts again from StageView now
 //   and each pack's last draw.
 // The body's data attributes say what was last drawn (bitmaps and
-// placeholders included), how many emitters and particles there are, how
-// many areas take the mouse and whether the context is lost, for DevTools.
+// placeholders included, with the placeholders' opacity, `none` with no
+// placeholder), how many emitters and particles there are, how many areas
+// take the mouse and whether the context is lost, for DevTools and the e2e
+// tests.
 import './index.css';
 import { Application, Assets, Container, type Ticker } from 'pixi.js';
 import { PRELOAD_API_KEY } from '../shared/constants';
@@ -232,6 +234,11 @@ function drawFrame(dtMs = 0): void {
   show('drawnSprites', String(counts.sprites));
   show('drawnBitmaps', String(counts.bitmaps));
   show('drawnPlaceholders', String(counts.placeholders));
+  // The placeholders' opacity this frame (the e2e tests see it move).
+  show(
+    'placeholderAlpha',
+    counts.placeholders > 0 ? counts.placeholderAlpha.toFixed(3) : 'none',
+  );
   // What runs (particles.ts), and what of it is on screen (pixi-stage.ts).
   const live = particles.counts();
   show('particleEmitters', String(live.emitters));

@@ -310,3 +310,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-7-state-placeholder.md`
   summary: `test/e2e/stage.spec.ts` 約 `:238-240` 的 `mapped` 算法在狀態對應不到時得到 `undefined`，跟 3.7 定案的規則（送原狀態）不一致，做 3.7 的 e2e 時要一起改
   evidence: 2026-11-24 Story 3.7（上）審查 B16（low，既有程式）。目前 e2e 起始狀態都對應得到，所以還沒出錯；3.7 的 e2e 會讓 actor 進入 `error`。
+- source_spec: none
+  summary: Claude Code 的 transcript 被刪除（例如在 Claude 桌面 app 刪掉 session，資料夾留下 `<sessionId>.desktop-released.json`、`reason: "delete"`）時，偵測端立刻結束那個 session，讓它離開清單、收回角色，不要等 `sessionExpireMs`（預設 2 小時）過期
+  evidence: 使用者 2026-11-24 實機看到：13:56 刪掉的 session 在面板上一直是「休息中」，而且佔著池子裡唯一的角色（其他 session 都已釋放），直到過期才會消失。原因是 `src/main/detection/adapters/jsonl/log-adapter.ts:76` 規定轉接器從不自己送 `session.end`，transcript 不見只會「forgetting a transcript」（同檔約 `:923`）。要改的話會動到 Epic 2 這條設計：決定是只認 `.desktop-released.json` 這個標記，還是任何 transcript 被刪都算結束，以及其他來源（Gemini、Cursor、Codex）要不要比照。使用者選擇記下來之後再排，不在 3.7 處理。

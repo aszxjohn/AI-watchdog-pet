@@ -46,8 +46,9 @@
  *   into the placeholder, kept from frame to frame and drawn again only
  *   when the hitbox changes; its opacity follows placeholderAlpha() of the
  *   time draw() has been given (the render loop's: none, and it stands
- *   still). It is destroyed when the actor is drawn otherwise again, or is
- *   gone.
+ *   still), and draw() returns that opacity (main.ts shows it, the e2e
+ *   tests read it). It is destroyed when the actor is drawn otherwise
+ *   again, or is gone.
  * - Each preset's texture (particleTextures) is painted in white, from
  *   its PresetDef's shape, on a 2D canvas main.ts makes (not a render
  *   texture: PixiJS uploads the canvas again once a lost WebGL context is
@@ -440,6 +441,11 @@ export interface StageCounts {
   readonly bitmaps: number;
   /** Actors drawn as the placeholder (Story 3.7). */
   readonly placeholders: number;
+  /**
+   * The placeholders' opacity this draw() worked out (placeholderAlpha() of
+   * the time it has been given), whether or not any was drawn.
+   */
+  readonly placeholderAlpha: number;
 }
 
 /** The particles one draw() put on screen. */
@@ -751,7 +757,13 @@ export function createPixiStage(
         }
       }
       particleCounts = { emitters, particles: alive };
-      return { actors: order.length, sprites, bitmaps, placeholders };
+      return {
+        actors: order.length,
+        sprites,
+        bitmaps,
+        placeholders,
+        placeholderAlpha: alpha,
+      };
     },
 
     particleCounts: () => particleCounts,
