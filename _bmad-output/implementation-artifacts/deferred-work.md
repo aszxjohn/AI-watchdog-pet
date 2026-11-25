@@ -316,3 +316,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-8-badges.md`
   summary: 「名牌畫在所有角色之上」只靠 `src/overlay/main.ts` 的 `app.stage.addChild(layer, badgeLayer)` 順序，沒有任何測試鎖住；順序寫反或 badgeLayer 掛到別處，所有測試照過，名牌會被角色或粒子蓋住
   evidence: 2026-11-24 Story 3.8 審查 V2、B6（medium）。`pixi-stage.test.ts` 的兩個圖層沒有共同 parent，e2e 只讀 body data 屬性。要鎖住的話：讓 `createPixiStage` 自己在 `layer.parent` 上建立名牌圖層（再由 pixi-stage 單元測試斷言順序），或新增一個 DevTools data 屬性回報圖層順序。屬於圖層組裝方式的調整，不在 3.8 順手做。
+- source_spec: none
+  summary: Story 3.9（下）角色包當掉偵測與自動重啟：心跳（`heartbeatTicks`，`sandbox.ping`／`sandbox.pong`）、連續 `drawTimeoutMs` 沒有有效 `draw`（含永遠不回的 `frame`）、定義哪些超限算失敗、未捕捉例外；失敗與重建期間該包 actor 改演佔位；新 IPC `packs:runtime-failed`（packId、version、原因）；自動重建沙盒並以原 `actorId` 重新送出，同一包本次執行最多重啟 3 次（次數由 main 記，畫布重載不歸零）；第 4 次失敗由 `main/packs` 把該版本標為失敗（只存在記憶體，不寫回 index.json，視同停用、排出池子，接上 3.9（上）的換角色），角色包管理頁顯示原因
+  evidence: 使用者 2026-11-25 選擇把 3.9 拆兩段，先做換角色。調查結果：四種觸發只有未捕捉例外已有（`host.ts` 的 `fail()`），心跳與 `drawTimeoutMs` 完全沒有，超限只丟訊息不判失敗；失敗後沙盒留在 map 不重建（`host.ts:29-30`）；`shared/packs.ts:120` 的註解打算把失敗標記放進 index 項目，會被 `save()` 寫回檔案，跟「只存在記憶體」衝突。另要決定：開機失敗（`boot-timeout`、`entry-threw`）算不算重啟次數、計時用 world tick 不用牆鐘、失敗的包示範模式還能不能選。「包更新後重載」現有程式已做到（`onView` 換版本時拆舊建新、`init` 帶全部現有 actorId），同版本覆蓋安裝仍是另一筆待討論。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-9-swap-character.md`
+  summary: Story 3.9 第三條 AC「包更新後以原 `actorId` 重新送出」沒有測試鎖住：`test/overlay/pack-host.test.ts` 約 `:903` 只驗證舊沙盒移除、新沙盒的 `load` 來源，`test/overlay/pack-host-draw.test.ts` 約 `:860` 只驗證舊 draw 清掉；沒有斷言新沙盒第一個 tick 的 `init` 帶著原來的 actorId
+  evidence: 2026-11-25 3.9（上）審查第 6 條（medium，測試缺口，行為本身由 `stage-messages.ts` 的 `composeTick` 在新 stage state 第一個 tick 送 `init`、內容是當下所有 actor 而來）。適合在 3.9（下）改 pack-host 重建流程時一起補，因為重建後同樣要以原 actorId 重送。

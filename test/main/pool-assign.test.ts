@@ -819,39 +819,154 @@ describe('I/O matrix', () => {
     expect(cast()).toContainEqual(['codex:c', ONE, 'actor-3']);
   });
 
-  it('池子變小: a pack no longer 上場, a character out of the pool, a pack removed: the assigned stay as they are; later picks no longer take them', () => {
-    const { heard, settings, packs, ready, start, cast } = wire({
+  it('換角色: a pack no longer 上場: its actor ends and the session gets a pool character off stage, with a new actor id and an appearance, in one change; 上場 again swaps no one back', () => {
+    const { heard, settings, ready, start, cast, savedAssignments } = wire({
       installed: [SAMPLE, ANOTHER],
     });
     ready();
     start('codex:a');
     start('codex:b');
-    const before = cast();
-    expect(before).toStrictEqual([
+    expect(cast()).toStrictEqual([
       ['codex:a', THREE, 'actor-1'],
       ['codex:b', ONE, 'actor-2'],
     ]);
     heard.length = 0;
 
     settings.set({ packEnabled: { 'another-pack': false } });
+
+    expect(cast()).toStrictEqual([
+      ['codex:a', TWO, 'actor-3'],
+      ['codex:b', ONE, 'actor-2'],
+    ]);
+    expect(heard).toStrictEqual([{ actors: expect.any(Array) }]);
+    expect(savedAssignments()).toHaveLength(2);
+    expect(savedAssignments()).toStrictEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionKey: 'codex:a',
+          characterKey: TWO,
+          actorId: 'actor-3',
+        }),
+        expect.objectContaining({
+          sessionKey: 'codex:b',
+          characterKey: ONE,
+          actorId: 'actor-2',
+        }),
+      ]),
+    );
+    expect(poolLines()).toContain(
+      '[pool] assignments: 1 new, 0 kept from the last run, 1 ended (1 out of the pool), 0 dropped (2 actors, 2 characters in the pool)',
+    );
+    // TWO's swap counted: ONE and TWO both appeared once, ONE comes first.
+    start('codex:c');
+    expect(cast()).toContainEqual(['codex:c', ONE, 'actor-4']);
+    heard.length = 0;
+
+    settings.set({ packEnabled: {} });
+
+    expect(cast()).toStrictEqual([
+      ['codex:a', TWO, 'actor-3'],
+      ['codex:b', ONE, 'actor-2'],
+      ['codex:c', ONE, 'actor-4'],
+    ]);
+    expect(heard).toStrictEqual([]);
+  });
+
+  it('換角色: a character out of the pool, with no other pool character off stage: the session takes one on stage already', () => {
+    const { settings, ready, start, cast } = wire();
+    ready();
+    start('codex:a');
+    start('codex:b');
+    expect(cast()).toStrictEqual([
+      ['codex:a', ONE, 'actor-1'],
+      ['codex:b', TWO, 'actor-2'],
+    ]);
+
     settings.set({ fixedOverrides: { [TWO]: { inPool: false } } });
 
-    expect(cast()).toStrictEqual(before);
-    expect(heard).toStrictEqual([]);
-    // Only ONE is left, on stage already: the whole pool, ONE.
+    expect(cast()).toStrictEqual([
+      ['codex:a', ONE, 'actor-1'],
+      ['codex:b', ONE, 'actor-3'],
+    ]);
+  });
+
+  it('換角色: a pack removed and a new version without a character, in one update: every affected actor swaps in one change; the rest stay', () => {
+    const { heard, packs, ready, start, cast } = wire({
+      installed: [SAMPLE, ANOTHER],
+    });
+    ready();
+    start('codex:a');
+    start('codex:b');
     start('codex:c');
-    expect(cast()).toContainEqual(['codex:c', ONE, 'actor-3']);
-
-    packs.update([ANOTHER]);
-
     expect(cast()).toStrictEqual([
       ['codex:a', THREE, 'actor-1'],
       ['codex:b', ONE, 'actor-2'],
-      ['codex:c', ONE, 'actor-3'],
+      ['codex:c', TWO, 'actor-3'],
     ]);
-    // ANOTHER is not 上場: the pool is empty now.
-    start('codex:d');
-    expect(cast()).toHaveLength(3);
+    heard.length = 0;
+
+    packs.update([
+      { ...SAMPLE, version: '1.1.0', characters: SAMPLE.characters.slice(1) },
+    ]);
+
+    // Only TWO is left, on stage already: the whole pool, TWO.
+    expect(cast()).toStrictEqual([
+      ['codex:a', TWO, 'actor-4'],
+      ['codex:b', TWO, 'actor-5'],
+      ['codex:c', TWO, 'actor-3'],
+    ]);
+    expect(heard).toStrictEqual([{ actors: expect.any(Array) }]);
+  });
+
+  it('換角色: a pack that no longer fits this stage: its actors swap', () => {
+    const { packs, ready, start, cast } = wire({
+      installed: [SAMPLE, ANOTHER],
+    });
+    ready();
+    start('codex:a');
+    expect(cast()).toStrictEqual([['codex:a', THREE, 'actor-1']]);
+
+    packs.update([
+      SAMPLE,
+      {
+        ...ANOTHER,
+        apiVersion: '1.9',
+        compatibility: {
+          compatible: false,
+          reason: 'pack-newer',
+          required: '1.9',
+        },
+      },
+    ]);
+
+    expect(cast()).toStrictEqual([['codex:a', ONE, 'actor-2']]);
+  });
+
+  it('池子空了: every actor is taken back, each session stays listed with none; the pool growing again gives them characters', () => {
+    const { heard, packs, ready, start, cast, sessionKeys, savedAssignments } =
+      wire();
+    ready();
+    start('codex:a');
+    start('codex:b');
+    expect(cast()).toHaveLength(2);
+    heard.length = 0;
+
+    packs.update([]);
+
+    expect(cast()).toStrictEqual([]);
+    expect(sessionKeys()).toStrictEqual(['codex:a', 'codex:b']);
+    expect(heard).toStrictEqual([{ actors: [] }]);
+    expect(savedAssignments()).toStrictEqual([]);
+    start('codex:c');
+    expect(cast()).toStrictEqual([]);
+
+    packs.update([SAMPLE]);
+
+    expect(cast()).toStrictEqual([
+      ['codex:a', ONE, 'actor-3'],
+      ['codex:b', TWO, 'actor-4'],
+      ['codex:c', ONE, 'actor-5'],
+    ]);
   });
 
   it('狀態變: a session with a character changes state or name: sessions and actors in one change', () => {
@@ -1713,6 +1828,23 @@ describe("demo mode's stage", () => {
     packs.update([SAMPLE]);
     expect(cast()).toStrictEqual([]);
     expect(sessionKeys()).toStrictEqual(['demo:1']);
+  });
+
+  it('換角色 leaves the demo alone: its character’s pack no longer 上場, or the character out of the pool, keeps the demo actor', () => {
+    const { ready, cast, settings, assigner, detection, heard } = wire({
+      installed: [SAMPLE, ANOTHER],
+    });
+    ready();
+    assigner.setDemo({ characterKey: THREE });
+    detection.setDemo('idle');
+    expect(cast()).toStrictEqual([['demo:1', THREE, 'actor-1']]);
+    heard.length = 0;
+
+    settings.set({ packEnabled: { 'another-pack': false } });
+    settings.set({ fixedOverrides: { [THREE]: { inPool: false } } });
+
+    expect(cast()).toStrictEqual([['demo:1', THREE, 'actor-1']]);
+    expect(heard).toStrictEqual([]);
   });
 
   it('a character of a pack that does not fit this stage is not shown', () => {

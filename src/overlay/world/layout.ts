@@ -3,7 +3,10 @@
  * wander (Epic 4), they stand in one row near the bottom right of the
  * world (shared/constants: STAGE_ROW_*), in the order given (StageView's
  * `actors`): the first rightmost, each next one to its left, so a new
- * actor never moves the ones already there. Pure.
+ * session's actor never moves the ones already there. An actor that
+ * leaves moves those after it right; one that takes another's place (a
+ * swap of character, Story 3.9) keeps its slot, and moves those after it
+ * when its width differs. Pure.
  *
  * An actor takes its `bounds`' width times its 大小 (the `scale` fixed
  * parameter), then STAGE_ROW_GAP to the next. Its position is its local

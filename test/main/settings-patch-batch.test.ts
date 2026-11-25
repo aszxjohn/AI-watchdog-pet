@@ -315,6 +315,57 @@ describe('I/O matrix', () => {
     ]);
   });
 
+  it('合併：換角色: a patch that takes a shown session’s character out of the pool gives the session another one, with a new actor id: settings and actors in the same delta', async () => {
+    const { hub, deltas, emit, event, ready, patch } = await startMain();
+    ready();
+    emit(event('turn.start'));
+    const [first] = hub.snapshot().view.actors;
+    expect(first).toMatchObject({ sessionKey: 'codex:s1', characterKey: ONE });
+    const before = deltas().length;
+    const rev = hub.snapshot().rev;
+
+    await patch({
+      op: 'setFixed',
+      characterKey: ONE,
+      param: 'inPool',
+      value: false,
+    });
+
+    const after = deltas().slice(before);
+    // 加入池子 is a fixed parameter: the character's values change too.
+    expect(sectionsOf(after)).toStrictEqual([
+      ['actors', 'characters', 'settings'],
+    ]);
+    expect(after[0]?.rev).toBe(rev + 1);
+    const [swapped] = hub.snapshot().view.actors;
+    expect(swapped).toMatchObject({
+      sessionKey: 'codex:s1',
+      characterKey: TWO,
+    });
+    expect(swapped?.actorId).not.toBe(first?.actorId);
+  });
+
+  it('合併：收回: a patch that takes the only pack off the stage takes the shown session’s actor back: settings and actors in the same delta', async () => {
+    const { hub, deltas, emit, event, ready, patch } = await startMain();
+    ready();
+    emit(event('turn.start'));
+    expect(hub.snapshot().view.actors).toHaveLength(1);
+    const before = deltas().length;
+    const rev = hub.snapshot().rev;
+
+    await patch({
+      op: 'setPackEnabled',
+      packId: CONTRACT_PACK_ID,
+      value: false,
+    });
+
+    const after = deltas().slice(before);
+    expect(sectionsOf(after)).toStrictEqual([['actors', 'settings']]);
+    expect(after[0]?.rev).toBe(rev + 1);
+    expect(hub.snapshot().view.actors).toStrictEqual([]);
+    expect(hub.snapshot().view.sessions).toHaveLength(1);
+  });
+
   it('合併：池子: a patch that puts a pack back 上場 and gives a shown session its actor: settings and actors in the same delta', async () => {
     const { hub, deltas, emit, event, ready, patch } = await startMain();
     await patch({
@@ -442,7 +493,7 @@ describe('a pack installed or removed in one StageView batch, as main.ts wires t
     }
   });
 
-  it('a removal through packs:remove: one delta carries packs and characters (the actor stays until 3.9)', async () => {
+  it('a removal through packs:remove: one delta carries packs, characters and actors (換角色: the pool is empty, the actor is taken back)', async () => {
     const { hub, deltas, emit, event, ready } = await startMain();
     ready();
     emit(event('turn.start'));
@@ -457,9 +508,13 @@ describe('a pack installed or removed in one StageView batch, as main.ts wires t
 
     expect(reply).toStrictEqual({ ok: true, data: { ok: true } });
     const after = deltas().slice(before);
-    expect(sectionsOf(after)).toStrictEqual([['characters', 'packs']]);
+    expect(sectionsOf(after)).toStrictEqual([
+      ['actors', 'characters', 'packs'],
+    ]);
     expect(after[0]?.rev).toBe(rev + 1);
     expect(hub.snapshot().view.characters).toStrictEqual({});
     expect(hub.snapshot().view.packs.installed).toStrictEqual([]);
+    expect(hub.snapshot().view.actors).toStrictEqual([]);
+    expect(hub.snapshot().view.sessions).toHaveLength(1);
   });
 });

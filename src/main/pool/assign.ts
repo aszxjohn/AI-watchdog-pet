@@ -33,10 +33,16 @@
  * - An assignment ends, and its actor with it, when its session leaves
  *   `sessions` (it ended or expired) or is released. Showing a released
  *   session again makes a new assignment, with a new `actorId`.
- * - The pool shrinking (a pack no longer 上場 or removed, a character out
- *   of the pool) leaves every assignment as it is: only later picks see
- *   it. The pool growing gives a character to each shown session still
- *   without one, at once. An actor never changes character here (3.9).
+ * - The pool shrinking (a pack no longer 上場, removed or not fitting
+ *   this stage any more, a character out of the pool or gone from a new
+ *   version) swaps characters at once (Story 3.9): outside demo mode,
+ *   every assignment whose character is not in the pool ends, its actor
+ *   with it, and its session, still shown and not released, gets a
+ *   character by the usual pick in the same change, with a new `actorId`
+ *   and an appearance counted. All of them end before any pick, so none
+ *   picks a character leaving the stage. An empty pool gives none. The
+ *   pool growing gives a character to each shown session still without
+ *   one, at once, and moves no one who has one.
  * - The pool is worked out from the settings values and installed packs
  *   the assigner last heard, through watchPool(), which main.ts calls right
  *   after createStageView: StageView hears a settings or packs change
@@ -404,7 +410,8 @@ export function createAssigner({
   }
 
   /**
-   * After sync: ends the assignments of sessions gone or released, gives
+   * After sync: ends the assignments of sessions gone or released and,
+   * outside demo mode, those whose character is out of the pool, gives
    * shown sessions their kept assignment, then a character to each one
    * still without, and publishes `actors` if they changed. While demo mode
    * is on, it parks the other sources' actors and gives the demo sessions
@@ -426,7 +433,10 @@ export function createAssigner({
       isInstalled(demo.characterKey)
         ? demo.characterKey
         : null;
+    const pool = currentPool();
+    const inPool = new Set(pool);
     let ended = 0;
+    let leftPool = 0;
     let dropped = 0;
     let kept = 0;
     let added = 0;
@@ -439,7 +449,16 @@ export function createAssigner({
       if (!shownKeys.has(key)) {
         ends = true;
       } else if (demo === null) {
-        ends = demoActors.has(key) || released.has(key);
+        // Out of the pool (3.9): it ends here and, its session still due,
+        // gets a character by the usual pick below.
+        const outOfPool =
+          !demoActors.has(key) &&
+          !released.has(key) &&
+          !inPool.has(assignment.characterKey);
+        if (outOfPool) {
+          leftPool += 1;
+        }
+        ends = demoActors.has(key) || released.has(key) || outOfPool;
       } else if (isDemoSession(key)) {
         ends =
           restartDemo ||
@@ -472,7 +491,6 @@ export function createAssigner({
       }
     }
 
-    const pool = currentPool();
     if (demo !== null) {
       for (const { sessionKey } of shown) {
         if (
@@ -491,7 +509,6 @@ export function createAssigner({
         added += 1;
       }
     } else {
-      const inPool = new Set(pool);
       const due = shown.filter(
         (session) =>
           !released.has(session.sessionKey) && !live.has(session.sessionKey),
@@ -572,7 +589,7 @@ export function createAssigner({
 
     if (ended + dropped + kept + added > 0) {
       log(
-        `assignments: ${added} new, ${kept} kept from the last run, ${ended} ended, ${dropped} dropped (${live.size} actors, ${pool.length} characters in the pool)`,
+        `assignments: ${added} new, ${kept} kept from the last run, ${ended} ended (${leftPool} out of the pool), ${dropped} dropped (${live.size} actors, ${pool.length} characters in the pool)`,
       );
     }
     if (force || ended + dropped + kept + added + offStage + back > 0) {
