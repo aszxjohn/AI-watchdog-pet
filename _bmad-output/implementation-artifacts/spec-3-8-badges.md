@@ -88,7 +88,9 @@ context:
 - **開發代理自行決定的外觀細節（可推翻）：** 狀態色：等你回覆黃、思考中紫、工作中綠、要你批准橙、要你決定粉、做完了青、休息中灰、出錯了紅；字級 11px（狀態名粗體）；名稱最寬 140 DIP；名牌左上角對齊整數裝置像素。
 - **第 1 輪審查修補（2026-11-24）：** 名牌依場景順序擺放、相交就往上錯開一層（`stackBadges`，間距 `BADGE_STACK_GAP` 2 DIP）；先夾回畫布左右，錯開後上緣再夾回 ≥ 0（在頂端時可能跟別張重疊）；`Scene` 帶 `canvasWidth`；`fitText` 改用 `Intl.Segmenter` 依字素切；底色不透明度 0.9；e2e 還原後檢查 `drawnBadges`；作者文件 3.3 補尺寸與擺放規則。
 - **本機驗證（2026-11-24，修補後）：** typecheck、lint、depcruise 通過；`npx vitest run` 5561 通過、2 略過。e2e 等 push 後的 CI。
-- **sprint-status：** `3-8-名牌與狀態標記` 改為 `review`；CI 通過、使用者實機驗收後再標 `done`。
+- **CI（2026-11-24）：** commit `890e320` 後，GitHub Actions 的 unit（check）與 e2e 在 macOS、Windows 都通過（run 45368636270），含 e2e 的 `drawnBadges` 斷言。
+- **實機驗收（2026-11-24，17:48 重新打包的 `out/`）：** 使用者回覆通過。
+- **sprint-status：** `3-8-名牌與狀態標記` CI 通過、實機驗收後標為 `done`。
 
 ## Spec Change Log
 
