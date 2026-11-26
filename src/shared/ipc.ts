@@ -10,7 +10,11 @@ import {
   packsRemoveInputSchema,
 } from './packs';
 import { poolSetReleasedInputSchema } from './pool';
-import { packsLogInputSchema } from './sandbox';
+import {
+  packRuntimeFailedResultSchema,
+  packsLogInputSchema,
+  packsRuntimeFailedInputSchema,
+} from './sandbox';
 import {
   settingsPatchResultSchema,
   settingsPatchSchema,
@@ -247,6 +251,20 @@ export const packsLog = {
   channel: 'packs:log',
   input: packsLogInputSchema,
   output: z.null(),
+} as const satisfies IpcContract;
+
+/**
+ * `packs:runtime-failed` (overlay only, Story 3.9): a pack's sandbox
+ * failed (its version, and why). main/packs counts it for that pack at
+ * that version and answers whether the overlay builds the pack a new
+ * sandbox: yes for the first PACK_RESTART_LIMIT failures of a version
+ * installed now, no after that, or for a version not installed (not
+ * counted).
+ */
+export const packsRuntimeFailed = {
+  channel: 'packs:runtime-failed',
+  input: packsRuntimeFailedInputSchema,
+  output: packRuntimeFailedResultSchema,
 } as const satisfies IpcContract;
 
 /**

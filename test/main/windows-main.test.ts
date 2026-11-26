@@ -87,6 +87,7 @@ const state = vi.hoisted(() => {
           readEntry(packId: string): unknown;
           log(entry: unknown): void;
           readPackManifest(packId: string, version: string): unknown;
+          runtimeFailed(failure: unknown): unknown;
         }
       | undefined,
     /** The build folder main.ts passed to handlePackProtocol. */
@@ -450,9 +451,22 @@ vi.mock('../../src/main/packs/ipc', () => ({
     readEntry: (packId: string) => unknown,
     log: (entry: unknown) => void,
     readPackManifest: (packId: string, version: string) => unknown,
+    runtimeFailed: (failure: unknown) => unknown,
   ) => {
     state.order.push('registerPackSandboxHandlers');
-    state.sandboxHandlers = { readEntry, log, readPackManifest };
+    state.sandboxHandlers = { readEntry, log, readPackManifest, runtimeFailed };
+  },
+}));
+
+vi.mock('../../src/main/packs/runtime-failures', () => ({
+  createRuntimeFailures: (store: { fake: string }) => {
+    state.order.push(`createRuntimeFailures ${store.fake}`);
+    return {
+      report: (failure: unknown) => {
+        state.order.push(`runtimeFailures.report ${JSON.stringify(failure)}`);
+        return { restart: true };
+      },
+    };
   },
 }));
 
@@ -910,6 +924,7 @@ describe('the primary instance', () => {
       'registerSettingsHandlers settings stage-view',
       'registerPoolHandlers pool',
       'registerPackHandlers importer exporter',
+      'createRuntimeFailures packs',
       'registerPackSandboxHandlers',
       'registerStageViewHandlers',
       'registerCanvasReadyHandler',
@@ -1434,6 +1449,22 @@ describe('the packs sandboxes (Story 3.5)', () => {
     expect(state.order).toStrictEqual([
       'readPackEntry packs sample-pack',
       'logPackEntry {"kind":"sandbox-destroyed","packId":"x","reason":"idle"}',
+    ]);
+  });
+
+  it("packs:runtime-failed goes to main/packs' failure counter over its store (Story 3.9)", async () => {
+    await startMain();
+    state.order = [];
+
+    expect(
+      state.sandboxHandlers?.runtimeFailed({
+        packId: 'sample-pack',
+        version: '1.2.0',
+        reason: 'draw-timeout',
+      }),
+    ).toStrictEqual({ restart: true });
+    expect(state.order).toStrictEqual([
+      'runtimeFailures.report {"packId":"sample-pack","version":"1.2.0","reason":"draw-timeout"}',
     ]);
   });
 

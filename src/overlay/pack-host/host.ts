@@ -24,10 +24,12 @@
  *   skip line, or a sandbox for the new version).
  * - A failure (the bootstrap's `sandbox.failed`, an uncaught error or
  *   rejection in the Worker, the iframe saying its Worker failed, a report
- *   that does not fit, or neither `sandbox.ready` nor `sandbox.failed`
- *   within SANDBOX_BOOT_TIMEOUT_MS of adding the iframe) removes that
- *   pack's iframe at once, with one error line. The pack gets no new sandbox until its actors have left and
- *   SANDBOX_IDLE_MS has passed (rebuilding, with its limit, is Story 3.9).
+ *   that does not fit, neither `sandbox.ready` nor `sandbox.failed`
+ *   within SANDBOX_BOOT_TIMEOUT_MS of adding the iframe, and from Story
+ *   3.9 the heartbeat or the draw timeout, below) removes that pack's
+ *   iframe at once, with one error line, and the failed sandbox stays
+ *   until main says to rebuild it (Story 3.9, below) or the pack's actors
+ *   have left and SANDBOX_IDLE_MS has passed.
  * - Every other message from a sandbox is a pack's `stage.*` call, checked
  *   in this order: the pack's message rate (PACK_MESSAGE_RATE_LIMIT), its
  *   size and the shared schema, and an `actorId` of the pack's own actors
@@ -67,9 +69,56 @@
  * - A sandbox destroyed or failed takes its latest draw and its unanswered
  *   frame with it.
  *
+ * Story 3.9, a sandbox that stops working:
+ * - The heartbeat and the draw timeout are counted in world ticks, never
+ *   by the wall clock, and only in the ticks tick() handles the sandbox in
+ *   (ready, the pack's look at its version come): none while the system
+ *   sleeps, the screen is locked or the WebGL context is lost (the world
+ *   does not tick), nor while the look has not come. (The boot timeout is
+ *   not: SANDBOX_BOOT_TIMEOUT_MS of the clock from adding the iframe.)
+ * - Heartbeat: every HEARTBEAT_TICKS of those ticks, after its stage
+ *   messages, the sandbox gets a SandboxPingMessage, which the Worker
+ *   bootstrap answers with `sandbox.pong` outside the pack's Compartment;
+ *   HEARTBEAT_TIMEOUT_TICKS of them with no pong fail it
+ *   (`heartbeat-timeout`). A Worker busy in any of the pack's handlers
+ *   (not only `frame`) answers no ping meanwhile: the count runs from the
+ *   last pong and a ping goes only every HEARTBEAT_TICKS, so a handler
+ *   busy for HEARTBEAT_TIMEOUT_TICKS − HEARTBEAT_TICKS ticks (about 4
+ *   seconds) or more may fail it.
+ * - Draw timeout: each of those ticks in which the pack has an own actor
+ *   (one the stage has told it about) is 1000 / TICK_HZ ms with no valid
+ *   draw, until a valid draw (an empty one too) starts the count again;
+ *   DRAW_TIMEOUT_TICKS of them (DRAW_TIMEOUT_MS) fail it
+ *   (`draw-timeout`). A draw dropped for any reason (a limit gone over
+ *   included), a `sandbox.no-draw` and a `frame` never answered are no
+ *   valid draw, so only a pack that keeps giving none fails. A `stage.*`
+ *   call over a limit is only dropped; but `stage.*` calls and draws
+ *   share the pack's message rate, so a pack filling it all the time has
+ *   its draws dropped too, and fails that way.
+ * - Every failure, a boot failure included, once its line is written, is
+ *   told to main (`packs:runtime-failed`: the pack, the version and why),
+ *   which answers whether to rebuild. A yes builds the pack a new sandbox
+ *   (start(), as for its first actor: its entry asked for again, then
+ *   `init` with every actor on stage, so its actors keep their actorId),
+ *   unless by then the pack has another sandbox (a new version, say):
+ *   then nothing; or no actor: then the failed sandbox goes, so an actor
+ *   coming back gets a sandbox as a first one does. A rebuild whose entry
+ *   main does not hand over stays, failed (its line as for a first
+ *   actor), until its actors have left and SANDBOX_IDLE_MS has passed. A
+ *   no leaves the failed sandbox as it is, and so its actors in the
+ *   placeholder, until the same; so does a call that throws or an answer
+ *   that is not ok (on the console).
+ * - troubled(): from the failure until the rebuilt sandbox's first valid
+ *   draw, the pack's actors are drawn as the placeholder (scene.ts). A
+ *   sandbox built for a pack's first actor, or for a new version, is not
+ *   troubled while it boots: its actors are not drawn until it draws.
+ *
  * Every line goes to the run log through `packs:log`.
  */
 import {
+  DRAW_TIMEOUT_TICKS,
+  HEARTBEAT_TICKS,
+  HEARTBEAT_TIMEOUT_TICKS,
   PACK_DROP_LOG_INTERVAL_MS,
   SANDBOX_BOOT_TIMEOUT_MS,
   PACK_MESSAGE_RATE_LIMIT,
@@ -85,12 +134,16 @@ import type { PackEntryResult } from '../../shared/packs';
 import {
   type PackLogEntry,
   type PackMessageDropReason,
+  type PackRuntimeFailedResult,
+  type PackRuntimeFailure,
   type SandboxBitmapCharactersMessage,
   sandboxBitmapCharactersMessage,
   SANDBOX_REPORT_PREFIX,
   type SandboxDestroyReason,
   type SandboxFailureReason,
   type SandboxLoadMessage,
+  type SandboxPingMessage,
+  sandboxPingMessage,
   type SandboxRemoval,
   sandboxLoadMessage,
   sandboxReportSchema,
@@ -132,9 +185,13 @@ export interface SandboxFrameHandlers {
 
 /**
  * What pack-host posts on its end of a sandbox's port: the stage messages
- * (Story 3.6), and its own to the bootstrap (Story 3.6's last part).
+ * (Story 3.6), and its own to the bootstrap (Story 3.6's last part; the
+ * ping, Story 3.9).
  */
-export type SandboxPost = StageMessage | SandboxBitmapCharactersMessage;
+export type SandboxPost =
+  | StageMessage
+  | SandboxBitmapCharactersMessage
+  | SandboxPingMessage;
 
 /** One sandbox iframe. */
 export interface SandboxFrame {
@@ -165,6 +222,10 @@ export interface SandboxFrames {
 export interface PackHostApi {
   getEntry(packId: string): Promise<IpcResult<PackEntryResult>>;
   log(entry: PackLogEntry): Promise<IpcResult<null>>;
+  /** Tells main a sandbox failed; whether to rebuild it (Story 3.9). */
+  runtimeFailed(
+    failure: PackRuntimeFailure,
+  ): Promise<IpcResult<PackRuntimeFailedResult>>;
 }
 
 /** A monotonic clock in milliseconds, with timers. */
@@ -212,6 +273,12 @@ export interface PackHost {
   drawOf(packId: string): PackDraw | undefined;
   /** Each pack with a sandbox (or one on its way, or failed), by id. */
   phases(): ReadonlyMap<string, SandboxPhase>;
+  /**
+   * Whether `packId`'s actors are drawn as the placeholder (Story 3.9):
+   * its sandbox failed, or rebuilt after a failure and has not given a
+   * valid draw yet.
+   */
+  troubled(packId: string): boolean;
 }
 
 interface Sandbox {
@@ -242,6 +309,20 @@ interface Sandbox {
   frameCharacters: ReadonlyMap<string, string>;
   /** Each actor's bitmaps of the draws that passed, over a sliding window. */
   readonly bitmaps: BitmapWindow;
+  /**
+   * Whether it rebuilds a sandbox of the pack that failed and has not
+   * given a valid draw yet (Story 3.9).
+   */
+  recovering: boolean;
+  /** The ticks handled since it became ready, for the ping (Story 3.9). */
+  ticks: number;
+  /** The ticks handled since the last `sandbox.pong`, or since ready. */
+  sincePong: number;
+  /**
+   * The ticks handled with an own actor since the last valid draw, or
+   * since ready.
+   */
+  sinceDraw: number;
 }
 
 /** Why a pack with an actor has no sandbox; `sticky` until its actors leave. */
@@ -370,6 +451,57 @@ export function createPackHost({
     removeFrame(sandbox);
     flushDrops(sandbox);
     log({ kind: 'sandbox-failed', packId: sandbox.packId, reason, ...details });
+    askRestart(sandbox, reason);
+  }
+
+  /** Asks main whether to rebuild `failed`, and does so on a yes. */
+  function askRestart(failed: Sandbox, reason: SandboxFailureReason): void {
+    const { packId, version } = failed;
+    if (version === null) {
+      // Never: a sandbox can fail only once main gave its version.
+      return;
+    }
+    let reply: Promise<IpcResult<PackRuntimeFailedResult>>;
+    try {
+      reply = api.runtimeFailed({ packId, version, reason });
+    } catch (error) {
+      logError(`[overlay] packs:runtime-failed failed (${packId})`, error);
+      return;
+    }
+    void reply.then(
+      (result) => {
+        if (!result.ok) {
+          logError(
+            `[overlay] packs:runtime-failed (${packId}): ${result.error.code}: ${result.error.message}`,
+          );
+          return;
+        }
+        if (result.data.restart) {
+          restart(failed);
+        }
+      },
+      (error: unknown) => {
+        logError(`[overlay] packs:runtime-failed failed (${packId})`, error);
+      },
+    );
+  }
+
+  /**
+   * Builds `failed`'s pack a new sandbox, unless by now the pack has
+   * another sandbox (or none); with no actor, `failed` goes instead, so
+   * an actor coming back gets a sandbox as a first one does.
+   */
+  function restart(failed: Sandbox): void {
+    if (sandboxes.get(failed.packId) !== failed) {
+      return;
+    }
+    if (!owners.has(failed.packId)) {
+      // Its iframe went at the failure: no line.
+      destroy(failed, 'idle');
+      return;
+    }
+    keep(failed);
+    void start(failed.packId, true);
   }
 
   function stopBootTimer(sandbox: Sandbox): void {
@@ -410,10 +542,18 @@ export function createPackHost({
     }
   }
 
-  /** Main did not hand the entry over: no sandbox until the actors leave. */
+  /**
+   * Main did not hand the entry over: no sandbox until the actors leave.
+   * A rebuild (Story 3.9) stays, failed, so its actors stay in the
+   * placeholder; the idle rules remove it once they have left.
+   */
   function noEntry(sandbox: Sandbox, reason: SandboxSkipReason): void {
-    sandboxes.delete(sandbox.packId);
-    keep(sandbox);
+    if (sandbox.recovering) {
+      sandbox.phase = 'failed';
+    } else {
+      sandboxes.delete(sandbox.packId);
+      keep(sandbox);
+    }
     if (owners.has(sandbox.packId)) {
       skip(sandbox.packId, reason, true);
     }
@@ -466,6 +606,13 @@ export function createPackHost({
           sandbox,
           message.fault === 'error' ? 'worker-error' : 'unhandled-rejection',
         );
+        return;
+      case 'sandbox.pong':
+        if (sandbox.phase !== 'ready') {
+          fail(sandbox, 'bad-report');
+          return;
+        }
+        sandbox.sincePong = 0;
         return;
       case 'sandbox.no-draw':
         if (sandbox.phase !== 'ready') {
@@ -525,6 +672,8 @@ export function createPackHost({
         .map(([actorId]) => actorId),
     );
     sandbox.draw = { version: sandbox.version, actors: check.actors };
+    sandbox.sinceDraw = 0;
+    sandbox.recovering = false;
   }
 
   function receive(sandbox: Sandbox, data: unknown): void {
@@ -575,7 +724,11 @@ export function createPackHost({
     });
   }
 
-  async function start(packId: string): Promise<void> {
+  /**
+   * Builds `packId` a sandbox; `recovering` when it replaces one that
+   * failed (Story 3.9).
+   */
+  async function start(packId: string, recovering = false): Promise<void> {
     const sandbox: Sandbox = {
       packId,
       phase: 'requesting',
@@ -599,6 +752,10 @@ export function createPackHost({
       draw: null,
       frameCharacters: new Map(),
       bitmaps: createBitmapWindow(() => clock.now()),
+      recovering,
+      ticks: 0,
+      sincePong: 0,
+      sinceDraw: 0,
     };
     sandboxes.set(packId, sandbox);
     let result: IpcResult<PackEntryResult> | undefined;
@@ -726,6 +883,20 @@ export function createPackHost({
         if (look === undefined || look.version !== sandbox.version) {
           continue;
         }
+        // A tick handled (Story 3.9): the heartbeat and the draw timeout.
+        sandbox.ticks += 1;
+        sandbox.sincePong += 1;
+        if (sandbox.stage.actors.size > 0) {
+          sandbox.sinceDraw += 1;
+        }
+        if (sandbox.sincePong >= HEARTBEAT_TIMEOUT_TICKS) {
+          fail(sandbox, 'heartbeat-timeout');
+          continue;
+        }
+        if (sandbox.sinceDraw >= DRAW_TIMEOUT_TICKS) {
+          fail(sandbox, 'draw-timeout');
+          continue;
+        }
         const messages: SandboxPost[] = [];
         if (!sandbox.stage.inited) {
           const bitmapCharacters = look.manifest.characters
@@ -757,6 +928,9 @@ export function createPackHost({
             }),
           );
         }
+        if (sandbox.ticks % HEARTBEAT_TICKS === 0) {
+          messages.push(sandboxPingMessage());
+        }
         post(sandbox, messages);
       }
     },
@@ -771,6 +945,14 @@ export function createPackHost({
     phases() {
       return new Map(
         [...sandboxes.values()].map(({ packId, phase }) => [packId, phase]),
+      );
+    },
+
+    troubled(packId) {
+      const sandbox = sandboxes.get(packId);
+      return (
+        sandbox !== undefined &&
+        (sandbox.phase === 'failed' || sandbox.recovering)
       );
     },
   };

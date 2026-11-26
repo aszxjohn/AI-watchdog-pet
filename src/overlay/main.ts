@@ -30,7 +30,9 @@ import 'pixi.js/unsafe-eval';
 //   texture up takes the mouse. An actor whose state its character neither
 //   draws nor maps through `fallback` is drawn as the stage's placeholder
 //   (Story 3.7, renderer/placeholder.ts) instead of its pack's draw, takes
-//   the mouse, and its opacity moves on by the render loop's time too.
+//   the mouse, and its opacity moves on by the render loop's time too; so
+//   is every actor of a pack whose sandbox failed, until a rebuilt one has
+//   drawn (Story 3.9, pack-host's troubled()).
 //   Each actor drawn, its character's `badges` on, has its name tag and
 //   state badge (Story 3.8) at its `anchor`, in a layer above the
 //   characters', painted on canvases made here at the display's
@@ -225,6 +227,7 @@ function drawFrame(dtMs = 0): void {
     view,
     look: (packId) => looks?.get(packId),
     draw: (packId) => packHost.drawOf(packId),
+    troubled: (packId) => packHost.troubled(packId),
     ready: (packId, version, asset, frame) =>
       textures.get(packId, version, asset, frame) !== undefined,
     bitmapReady: (actorId) => drawing.bitmapShown(actorId),

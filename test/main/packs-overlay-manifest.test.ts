@@ -300,6 +300,7 @@ describe('packs:get-manifest', () => {
         reads.push([packId, version]);
         return readPackManifest(store, packId, version);
       },
+      () => ({ restart: false }),
     );
     fake.sender.mainFrame.url = OVERLAY_URL;
   });

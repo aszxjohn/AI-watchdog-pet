@@ -27,7 +27,9 @@ import { z } from './zod-setup';
  *    on that port (before `init`, the bootstrap alone may get one
  *    SandboxBitmapCharactersMessage), and the bootstrap answers each
  *    `frame` with the pack's `draw`, its ImageBitmaps transferred, or with
- *    `sandbox.no-draw` when the pack gave none it could send.
+ *    `sandbox.no-draw` when the pack gave none it could send. Every
+ *    HEARTBEAT_TICKS world ticks the overlay also posts a SandboxPingMessage
+ *    (Story 3.9), which the bootstrap answers with `sandbox.pong`.
  * 5. The overlay writes what happened to the run log (`packs:log`,
  *    PackLogEntry).
  *
@@ -77,6 +79,23 @@ export function sandboxBitmapCharactersMessage(
   characterIds: readonly string[],
 ): SandboxBitmapCharactersMessage {
   return { type: 'sandbox.bitmap-characters', characterIds: [...characterIds] };
+}
+
+/**
+ * What pack-host posts a ready sandbox on the port every HEARTBEAT_TICKS
+ * world ticks (Story 3.9). Like SandboxBitmapCharactersMessage, its `type`
+ * starts with SANDBOX_REPORT_PREFIX: the Worker bootstrap answers it at
+ * once with `sandbox.pong`, outside the Compartment, and the pack never
+ * sees it. A Worker busy in the pack's code (a `frame` that never
+ * returns) answers none.
+ */
+export interface SandboxPingMessage {
+  readonly type: 'sandbox.ping';
+}
+
+/** The SandboxPingMessage. */
+export function sandboxPingMessage(): SandboxPingMessage {
+  return { type: 'sandbox.ping' };
 }
 
 /**
@@ -216,7 +235,8 @@ export const SANDBOX_REPORT_PREFIX = 'sandbox.';
  * - `sandbox.failed`: why not (the removals and console lines so far);
  * - `sandbox.fault`: uncaught trouble later on;
  * - `sandbox.no-draw` (Story 3.6): the `frame` of `seq` gets no `draw`, and
- *   why.
+ *   why;
+ * - `sandbox.pong` (Story 3.9): the answer to a SandboxPingMessage.
  */
 export const sandboxReportSchema = z.discriminatedUnion('type', [
   z.strictObject({
@@ -239,6 +259,9 @@ export const sandboxReportSchema = z.discriminatedUnion('type', [
     seq: z.int().nonnegative(),
     reason: z.enum(SANDBOX_NO_DRAW_REASONS),
   }),
+  z.strictObject({
+    type: z.literal('sandbox.pong'),
+  }),
 ]);
 
 export type SandboxReport = z.infer<typeof sandboxReportSchema>;
@@ -251,7 +274,11 @@ export type SandboxReport = z.infer<typeof sandboxReportSchema>;
  * the Worker failing (`worker-error`, its iframe or bootstrap says so), an
  * unhandled rejection in it, a report that does not fit the protocol
  * (`bad-report`), and no `sandbox.ready` or `sandbox.failed` within
- * SANDBOX_BOOT_TIMEOUT_MS of adding its iframe (`boot-timeout`).
+ * SANDBOX_BOOT_TIMEOUT_MS of adding its iframe (`boot-timeout`). And
+ * (Story 3.9), once ready: no `sandbox.pong` in HEARTBEAT_TIMEOUT_TICKS
+ * of the ticks the overlay handled it in (`heartbeat-timeout`), and no
+ * valid `draw` in DRAW_TIMEOUT_MS of them while the pack had an own actor
+ * (`draw-timeout`).
  */
 export const SANDBOX_FAILURE_REASONS = [
   ...SANDBOX_BOOT_FAILURES,
@@ -259,6 +286,8 @@ export const SANDBOX_FAILURE_REASONS = [
   'unhandled-rejection',
   'bad-report',
   'boot-timeout',
+  'heartbeat-timeout',
+  'draw-timeout',
 ] as const;
 
 export type SandboxFailureReason = (typeof SANDBOX_FAILURE_REASONS)[number];
@@ -413,3 +442,36 @@ export type PackLogEntry = z.infer<typeof packLogEntrySchema>;
 
 /** `packs:log`'s arguments: one entry. */
 export const packsLogInputSchema = z.tuple([packLogEntrySchema]);
+
+// ---------------------------------------------------------------------------
+// What the overlay asks main once a sandbox failed (Story 3.9).
+
+/**
+ * One failure of a pack's sandbox, as the overlay tells main
+ * (`packs:runtime-failed`): the pack, the version its sandbox ran, and
+ * why it failed (any SandboxFailureReason: a boot failure counts too).
+ */
+export const packRuntimeFailureSchema = z.strictObject({
+  packId: packIdSchema,
+  version: packVersionSchema,
+  reason: z.enum(SANDBOX_FAILURE_REASONS),
+});
+
+export type PackRuntimeFailure = z.infer<typeof packRuntimeFailureSchema>;
+
+/** `packs:runtime-failed`'s arguments: one failure. */
+export const packsRuntimeFailedInputSchema = z.tuple([
+  packRuntimeFailureSchema,
+]);
+
+/**
+ * `packs:runtime-failed`'s answer: whether the overlay builds the pack a
+ * new sandbox (`restart`), or leaves the failed one as it is.
+ */
+export const packRuntimeFailedResultSchema = z.strictObject({
+  restart: z.boolean(),
+});
+
+export type PackRuntimeFailedResult = z.infer<
+  typeof packRuntimeFailedResultSchema
+>;

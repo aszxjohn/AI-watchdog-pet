@@ -3,7 +3,8 @@
  * StageView's actors and packs, the checks on what a sandbox sends, and the
  * run log lines, with fake iframes, a fake main and fake timers; and the
  * real iframe factory (dom.ts) over a fake document with Node's
- * MessageChannel.
+ * MessageChannel. Since Story 3.9 a failed sandbox is told to main, which
+ * answers whether to rebuild it (yes, unless a test says otherwise).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -42,6 +43,9 @@ import type { StageActor } from '../../src/shared/pool';
 import {
   type PackLogEntry,
   packLogEntrySchema,
+  type PackRuntimeFailedResult,
+  type PackRuntimeFailure,
+  packRuntimeFailureSchema,
   SANDBOX_DOCUMENT_URL,
   type SandboxLoadMessage,
 } from '../../src/shared/sandbox';
@@ -114,6 +118,12 @@ function setup(
     entry?: (
       packId: string,
     ) => IpcResult<PackEntryResult> | Promise<IpcResult<PackEntryResult>>;
+    /** main's answer to `packs:runtime-failed`; a rebuild by default. */
+    restart?: (
+      failure: PackRuntimeFailure,
+    ) =>
+      | IpcResult<PackRuntimeFailedResult>
+      | Promise<IpcResult<PackRuntimeFailedResult>>;
   } = {},
 ) {
   const clock: FakeClock = fakeClock();
@@ -122,6 +132,9 @@ function setup(
   const order: string[] = [];
   const frames: FakeFrame[] = [];
   const calls: unknown[][] = [];
+  /** What `packs:runtime-failed` was called with, in order (Story 3.9). */
+  const failures: PackRuntimeFailure[] = [];
+  const consoleErrors: string[] = [];
   const api: PackHostApi = {
     getEntry: vi.fn(async (...args: unknown[]) => {
       requests.push(args);
@@ -143,6 +156,17 @@ function setup(
       expect(packLogEntrySchema.safeParse(entry).success).toBe(true);
       logs.push(entry);
       return { ok: true as const, data: null };
+    }),
+    runtimeFailed: vi.fn(async (failure: PackRuntimeFailure) => {
+      expect(packRuntimeFailureSchema.safeParse(failure).success).toBe(true);
+      failures.push(failure);
+      order.push(`runtimeFailed ${failure.packId}`);
+      return (
+        options.restart?.(failure) ?? {
+          ok: true as const,
+          data: { restart: true },
+        }
+      );
     }),
   };
   const sandboxFrames: SandboxFrames = {
@@ -180,9 +204,27 @@ function setup(
     onCall: (packId, call) => {
       calls.push([packId, call]);
     },
-    logError: () => {},
+    logError: (message) => {
+      consoleErrors.push(message);
+    },
   });
-  return { host, api, clock, logs, requests, order, frames, calls };
+  return {
+    host,
+    api,
+    clock,
+    logs,
+    requests,
+    order,
+    frames,
+    calls,
+    failures,
+    consoleErrors,
+  };
+}
+
+/** main's `packs:runtime-failed` answer: rebuild or not (Story 3.9). */
+function answer(restart: boolean): IpcResult<PackRuntimeFailedResult> {
+  return { ok: true, data: { restart } };
 }
 
 /** Lets main's answer (a resolved promise) reach pack-host. */
@@ -511,7 +553,7 @@ describe('I/O matrix', () => {
       {},
     ],
   ])(
-    '%s: when %s, the iframe goes at once with one error line, and no new sandbox comes while the actors stay',
+    '%s: when %s, the iframe goes at once with one error line, then main is asked (pack, version, why) and its yes rebuilds the sandbox for the actors still there',
     async (_row, _label, report, reason, details) => {
       const t = setup();
       t.host.onView(view([actor('a1', ALPHA)]));
@@ -526,21 +568,181 @@ describe('I/O matrix', () => {
         { kind: 'sandbox-failed', packId: ALPHA, reason, ...details },
       ]);
       expect(t.host.phases()).toStrictEqual(new Map([[ALPHA, 'failed']]));
+      // Story 3.9: the line first, then main; its actors in the placeholder.
+      expect(t.failures).toStrictEqual([
+        { packId: ALPHA, version: '1.0.0', reason },
+      ]);
+      expect(t.host.troubled(ALPHA)).toBe(true);
 
-      t.host.onView(view([actor('a1', ALPHA), actor('a2', ALPHA)]));
       await settle();
-      expect(t.frames).toHaveLength(1);
-
-      // Once the actors have left and the wait is over, a new actor gets a
-      // new sandbox (rebuilding with a limit is Story 3.9).
-      t.host.onView(view([]));
-      t.clock.advance(SANDBOX_IDLE_MS);
-      expect(t.logs).toHaveLength(1);
-      t.host.onView(view([actor('a3', ALPHA)]));
-      await settle();
+      expect(t.order).toStrictEqual([
+        `getEntry ${ALPHA}`,
+        'create',
+        'hand',
+        `runtimeFailed ${ALPHA}`,
+        `getEntry ${ALPHA}`,
+        'create',
+      ]);
       expect(t.frames).toHaveLength(2);
+      expect(t.host.phases()).toStrictEqual(new Map([[ALPHA, 'loading']]));
+      // Still the placeholder until the new sandbox draws.
+      expect(t.host.troubled(ALPHA)).toBe(true);
+      t.frames[1]?.handlers.onLoad();
+      t.frames[1]?.handlers.onMessage(READY);
+      expect(t.host.phases()).toStrictEqual(new Map([[ALPHA, 'ready']]));
+      expect(t.host.troubled(ALPHA)).toBe(true);
     },
   );
+
+  it('重啟: main saying no leaves the failed sandbox (its actors in the placeholder) and builds none while the actors stay; once they have left and the wait is over, a new actor gets a new sandbox, not in trouble', async () => {
+    const t = setup({ restart: () => answer(false) });
+    t.host.onView(view([actor('a1', ALPHA)]));
+    await settle();
+    t.frames[0]?.handlers.onLoad();
+    t.frames[0]?.handlers.onMessage({ type: 'sandbox.fault', fault: 'error' });
+    await settle();
+
+    expect(t.failures).toHaveLength(1);
+    expect(t.frames).toHaveLength(1);
+    expect(t.host.phases()).toStrictEqual(new Map([[ALPHA, 'failed']]));
+    expect(t.host.troubled(ALPHA)).toBe(true);
+
+    t.host.onView(view([actor('a1', ALPHA), actor('a2', ALPHA)]));
+    await settle();
+    expect(t.frames).toHaveLength(1);
+    expect(t.host.troubled(ALPHA)).toBe(true);
+
+    t.host.onView(view([]));
+    t.clock.advance(SANDBOX_IDLE_MS);
+    // Its iframe went at the failure: no second line.
+    expect(t.logs).toHaveLength(1);
+    expect(t.host.troubled(ALPHA)).toBe(false);
+    t.host.onView(view([actor('a3', ALPHA)]));
+    await settle();
+    expect(t.frames).toHaveLength(2);
+    expect(t.host.troubled(ALPHA)).toBe(false);
+  });
+
+  it.each<[string, () => Promise<IpcResult<PackRuntimeFailedResult>>]>([
+    ['throws', () => Promise.reject(new Error('no handler'))],
+    [
+      'answers not ok',
+      async () => ({
+        ok: false,
+        error: { code: 'invoke-failed', message: 'x' },
+      }),
+    ],
+  ])(
+    'IPC 失敗: when packs:runtime-failed %s, no sandbox is rebuilt and it goes to the console',
+    async (_label, restart) => {
+      const t = setup({ restart });
+      t.host.onView(view([actor('a1', ALPHA)]));
+      await settle();
+      t.frames[0]?.handlers.onLoad();
+
+      t.frames[0]?.handlers.onWorkerError();
+      await settle();
+
+      expect(t.failures).toHaveLength(1);
+      expect(t.frames).toHaveLength(1);
+      expect(t.host.phases()).toStrictEqual(new Map([[ALPHA, 'failed']]));
+      expect(t.host.troubled(ALPHA)).toBe(true);
+      expect(t.consoleErrors).toStrictEqual([
+        expect.stringContaining('packs:runtime-failed'),
+      ]);
+    },
+  );
+
+  it('IPC 失敗: a packs:runtime-failed call that throws at once rebuilds nothing either', async () => {
+    const t = setup();
+    vi.mocked(t.api.runtimeFailed).mockImplementation(() => {
+      throw new Error('preload gone');
+    });
+    t.host.onView(view([actor('a1', ALPHA)]));
+    await settle();
+    t.frames[0]?.handlers.onLoad();
+
+    t.frames[0]?.handlers.onWorkerError();
+    await settle();
+
+    expect(t.frames).toHaveLength(1);
+    expect(t.host.troubled(ALPHA)).toBe(true);
+    expect(t.consoleErrors).toStrictEqual([
+      expect.stringContaining('packs:runtime-failed'),
+    ]);
+  });
+
+  it('重啟: a yes that comes once the pack has no actor rebuilds nothing and lets the failed sandbox go: an actor coming back within the wait gets a new sandbox, not in trouble', async () => {
+    let reply: (result: IpcResult<PackRuntimeFailedResult>) => void = () => {};
+    const t = setup({
+      restart: () =>
+        new Promise((resolve) => {
+          reply = resolve;
+        }),
+    });
+    t.host.onView(view([actor('a1', ALPHA)]));
+    await settle();
+    t.frames[0]?.handlers.onLoad();
+    t.frames[0]?.handlers.onWorkerError();
+
+    t.host.onView(view([]));
+    reply(answer(true));
+    await settle();
+
+    expect(t.frames).toHaveLength(1);
+    expect(t.requests).toStrictEqual([[ALPHA]]);
+    // The failed sandbox is gone at once, with no line (its iframe went
+    // at the failure), and no timer is left.
+    expect(t.host.phases().size).toBe(0);
+    expect(t.logs).toHaveLength(1);
+    expect(t.clock.pendingCount()).toBe(0);
+
+    // An actor coming back well within SANDBOX_IDLE_MS gets a sandbox as a
+    // first one does. The old iframe's late trouble is nobody's: main is
+    // not asked again.
+    t.clock.advance(SANDBOX_IDLE_MS / 2);
+    t.host.onView(view([actor('a2', ALPHA)]));
+    t.frames[0]?.handlers.onWorkerError();
+    await settle();
+    expect(t.requests).toStrictEqual([[ALPHA], [ALPHA]]);
+    expect(t.frames).toHaveLength(2);
+    expect(t.failures).toHaveLength(1);
+    expect(t.host.troubled(ALPHA)).toBe(false);
+  });
+
+  it('重啟: a yes whose rebuild main refuses the entry to leaves the actors in the placeholder (troubled), with the skip line; once they have left and the wait is over, it goes', async () => {
+    let entries = 0;
+    const t = setup({
+      entry: (packId) => {
+        entries += 1;
+        return entries === 1
+          ? {
+              ok: true,
+              data: { ok: true, packId, version: '1.0.0', source: 'x' },
+            }
+          : { ok: true, data: { ok: false, code: 'read-failed' } };
+      },
+    });
+    t.host.onView(view([actor('a1', ALPHA)]));
+    await settle();
+    t.frames[0]?.handlers.onLoad();
+    t.frames[0]?.handlers.onWorkerError();
+    await settle();
+
+    expect(t.requests).toStrictEqual([[ALPHA], [ALPHA]]);
+    expect(t.frames).toHaveLength(1);
+    expect(t.host.phases()).toStrictEqual(new Map([[ALPHA, 'failed']]));
+    expect(t.host.troubled(ALPHA)).toBe(true);
+    expect(t.logs).toStrictEqual([
+      { kind: 'sandbox-failed', packId: ALPHA, reason: 'worker-error' },
+      { kind: 'sandbox-skipped', packId: ALPHA, reason: 'read-failed' },
+    ]);
+
+    t.host.onView(view([]));
+    t.clock.advance(SANDBOX_IDLE_MS);
+    expect(t.host.phases().size).toBe(0);
+    expect(t.host.troubled(ALPHA)).toBe(false);
+  });
 
   it('入口: the iframe saying its Worker failed, or a second ready, takes the sandbox down', async () => {
     const t = setup();
@@ -555,6 +757,15 @@ describe('I/O matrix', () => {
       { kind: 'sandbox-failed', packId: ALPHA, reason: 'worker-error' },
       { kind: 'sandbox-failed', packId: BRAVO, reason: 'bad-report' },
     ]);
+    expect(t.failures).toStrictEqual([
+      { packId: ALPHA, version: '1.0.0', reason: 'worker-error' },
+      { packId: BRAVO, version: '1.0.0', reason: 'bad-report' },
+    ]);
+
+    // Each rebuilt on its own.
+    await settle();
+    expect(t.frames).toHaveLength(4);
+    expect(t.requests).toStrictEqual([[ALPHA], [BRAVO], [ALPHA], [BRAVO]]);
   });
 
   it.each<[string, unknown]>([
@@ -797,10 +1008,18 @@ describe('I/O matrix', () => {
     expect(t.host.phases()).toStrictEqual(new Map([[ALPHA, 'failed']]));
     t.frames[0]?.handlers.onMessage(READY);
     expect(t.logs).toHaveLength(1);
+    // A boot failure is told to main too (Story 3.9), and counts there.
+    expect(t.failures).toStrictEqual([
+      { packId: ALPHA, version: '1.0.0', reason: 'boot-timeout' },
+    ]);
+    await settle();
+    expect(t.frames).toHaveLength(2);
+    expect(t.host.troubled(ALPHA)).toBe(true);
   });
 
   it('入口: the boot timer stops at the ready or failed report, and when the sandbox goes', async () => {
-    const t = setup();
+    // main does not rebuild the failed one: no new boot timer.
+    const t = setup({ restart: () => answer(false) });
     const installed = [
       stagePack(ALPHA),
       stagePack(BRAVO),
@@ -825,6 +1044,10 @@ describe('I/O matrix', () => {
     });
     // charlie-pack removed while booting: its sandbox goes at once.
     t.host.onView(view(actors, installed.slice(0, 2)));
+    await settle();
+    expect(t.failures).toStrictEqual([
+      { packId: BRAVO, version: '1.0.0', reason: 'factory-threw' },
+    ]);
     t.logs.length = 0;
     // Every actor is still on stage: no idle timer, and no boot timer left.
     expect(t.clock.pendingCount()).toBe(0);
@@ -938,7 +1161,7 @@ describe('a pack updated while its actors stay', () => {
     ]);
   });
 
-  it('a failed sandbox of the old version gives way to one for the new version', async () => {
+  it("等回覆時換版本: a failed sandbox of the old version gives way to one for the new version; main's yes for the old one, coming after, is ignored", async () => {
     const t = setup();
     const actors = [actor('a1', ALPHA)];
     t.host.onView(view(actors));
@@ -949,8 +1172,13 @@ describe('a pack updated while its actors stay', () => {
     t.host.onView(view(actors, [{ ...stagePack(ALPHA), version: '2.0.0' }]));
     await settle();
 
+    expect(t.failures).toStrictEqual([
+      { packId: ALPHA, version: '1.0.0', reason: 'worker-error' },
+    ]);
     expect(t.frames).toHaveLength(2);
     expect(t.requests).toStrictEqual([[ALPHA], [ALPHA]]);
+    // The new version's sandbox boots as a first one does: not in trouble.
+    expect(t.host.troubled(ALPHA)).toBe(false);
   });
 });
 

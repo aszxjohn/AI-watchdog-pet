@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-03-2026 15:49
-last_updated: 11-25-2026 15:50
+last_updated: 11-26-2026 16:40
 project: gundam-pet
 project_key: NOKEY
 tracking_system: file-system
@@ -65,7 +65,7 @@ development_status:
   3-6-世界節拍與統一繪圖: done
   3-7-依狀態演出-後備與佔位: done
   3-8-名牌與狀態標記: done
-  3-9-角色包當掉與換角色: in-progress # （上）換角色 spec-3-9-swap-character 已完成；（下）當掉偵測與重啟待做（deferred-work）
+  3-9-角色包當掉與換角色: in-progress # （上）換角色、（中）當掉偵測與重啟已完成；（中）的 e2e 與（下）第 4 次失敗的標記、管理頁原因待做（deferred-work）
   epic-3-retrospective: optional
 
   epic-4: backlog

@@ -1,5 +1,5 @@
 /**
- * overlay/renderer (Stories 3.6, 3.7, 3.8): what to draw this display frame,
+ * overlay/renderer (Stories 3.6 to 3.9): what to draw this display frame,
  * worked out as plain data: no PixiJS and no DOM, so it is unit-tested
  * under Node. pixi-stage.ts draws it.
  *
@@ -26,6 +26,9 @@
  *   out, so particles.ts removes its emitters and their particles at once,
  *   as for an actor not drawn). Only its state now counts: once it maps
  *   again, the pack's latest draw is drawn, as at any change of state.
+ *   So is every placed actor of a pack in trouble (Story 3.9, `troubled`:
+ *   its sandbox failed, or was rebuilt and has not drawn yet), whatever
+ *   its state, until the pack is out of trouble.
  * - Each drawn actor sits at its position, scaled by its 大小 (the `scale`
  *   fixed parameter), clipped to its manifest `bounds`. Actors are drawn
  *   by `y`, lower on the screen on top (ties keep StageView's order),
@@ -199,6 +202,12 @@ export interface SceneInput {
    */
   readonly bitmapReady?: (actorId: string) => boolean;
   /**
+   * Whether a pack's actors are drawn as the placeholder whatever their
+   * state (Story 3.9, pack-host's troubled()). No default: the overlay
+   * cannot leave it out by mistake.
+   */
+  readonly troubled: (packId: string) => boolean;
+  /**
    * Where the actors stand (world/layout.ts's row by default; Epic 4's
    * wandering gives its own).
    */
@@ -317,6 +326,7 @@ export function buildScene({
   draw,
   ready,
   bitmapReady = () => false,
+  troubled,
   place = rowLayout,
 }: SceneInput): Scene {
   const { canvas } = view;
@@ -389,7 +399,7 @@ export function buildScene({
           }
         : {}),
     };
-    if (mappedState(character, actor.state) === null) {
+    if (mappedState(character, actor.state) === null || troubled(packId)) {
       // The placeholder; the pack's draw is not used, whatever it has.
       drawn.push({
         actor: {

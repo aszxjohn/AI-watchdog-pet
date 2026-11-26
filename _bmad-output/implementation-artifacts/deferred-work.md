@@ -322,3 +322,15 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-9-swap-character.md`
   summary: Story 3.9 第三條 AC「包更新後以原 `actorId` 重新送出」沒有測試鎖住：`test/overlay/pack-host.test.ts` 約 `:903` 只驗證舊沙盒移除、新沙盒的 `load` 來源，`test/overlay/pack-host-draw.test.ts` 約 `:860` 只驗證舊 draw 清掉；沒有斷言新沙盒第一個 tick 的 `init` 帶著原來的 actorId
   evidence: 2026-11-25 3.9（上）審查第 6 條（medium，測試缺口，行為本身由 `stage-messages.ts` 的 `composeTick` 在新 stage state 第一個 tick 送 `init`、內容是當下所有 actor 而來）。適合在 3.9（下）改 pack-host 重建流程時一起補，因為重建後同樣要以原 actorId 重送。
+- source_spec: none
+  summary: Story 3.9（下）第 4 次執行失敗的後果：`main/packs` 把該版本標為失敗（只存在記憶體，不寫回 index.json；合併進 StageView 的 `StagePack`，在 `stageView.batch` 裡發佈），`poolOf` 排除失敗的包（走 3.9（上）的換角色），角色包管理頁顯示失敗原因，重新匯入清除標記並讓 overlay 重建停住的沙盒，決定示範模式遇到失敗的包要怎麼處理
+  evidence: 使用者 2026-11-25 選擇把「當掉處理」再拆兩段，先做 3.9（中）偵測與自動重啟（spec-3-9-crash-restart.md）：中段第 4 次失敗只停止重啟、角色留在佔位。`shared/packs.ts:120` 註解打算把失敗標記放進 index 項目，會被 `save()` 寫回檔案，跟「只存在記憶體」衝突，要改放 store 內的 Map、在 `stagePackOf`（`store.ts:217`）合併；overlay 發佈失敗標記不能走沒包 batch 的 `packs:log`（`main.ts:387`）。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-9-crash-restart.md`
+  summary: Story 3.9（中）的 e2e：用 `writeProbePack` 做一個收到 `frame` 就讓 Worker 出現未捕捉錯誤或 rejection 的探針包，在 CI 斷言 run log 有 4 行 `sandbox failed`、main 第 4 次記「不重啟」、畫面有佔位；`probeSandboxTrouble`（`test/e2e/helpers.ts:654`）要讓這個測試可以預期失敗，其他 e2e 照樣把任何失敗視為故障
+  evidence: 使用者 2026-11-25 在規格約 2000 token 時選擇把 e2e 拆出去（比照 3.7 的上下段）。中段交付時只有單元測試；IPC `packs:runtime-failed` 與 bootstrap 回 `pong` 的實際接線，以及「健康的包不被心跳誤判」，暫時只靠現有 e2e 把任何 `sandbox failed` 視為故障來間接驗證。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-9-crash-restart.md`
+  summary: （未驗證，若不成立為 high）卡死在包程式裡的 Worker（例如 `frame` 進無窮迴圈）是否真的會因為移除 iframe 而停止；3.9（中）的探針 e2e 要加一個 `frame` 內 `while (true) {}` 的案例，斷言出現 `heartbeat-timeout`、重建成功，而且沒有殘留的 Worker 持續吃 CPU
+  evidence: 2026-11-26 3.9（中）審查 B6。「移除 iframe 連帶終止 Worker」是架構文件（AD-7）的假設，單元測試只用假的 frame 與 port；原本記下的探針 e2e 只用未捕捉例外，走不到心跳逾時。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-9-crash-restart.md`
+  summary: 決定 `stage.*` 訊息洪水能不能經由 `draw` 被限速而讓包判 `draw-timeout`：現在 `draw` 與 `stage.*` 共用每包訊息額度（`PACK_MESSAGE_RATE_LIMIT` 120 則／秒，3.6 起），一直塞滿額度的包 10 秒後會失敗重啟；若不應該，回答 `frame` 的那則 `draw` 不計入額度（會改到 `pack-host-draw.test.ts` 3.6 的「在途」測試）
+  evidence: 2026-11-26 3.9（中）審查 B7、E5、VG-2（medium）。使用者定案「`stage.*` 訊息超過頻率照舊只丟、不判失敗」；文件已改寫成實際行為（`stage.*` 本身只丟，但會連帶擠掉 `draw`），行為是否要改留給使用者決定。

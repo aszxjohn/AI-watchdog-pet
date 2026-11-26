@@ -16,6 +16,7 @@ import {
   packsConfirm,
   packsExport,
   packsRemove,
+  packsRuntimeFailed,
   poolSetReleased,
   settingsGet,
   settingsPatch,
@@ -516,5 +517,52 @@ describe('packs:export and packs:remove contracts (Story 3.3)', () => {
     expectRejected(packsRemove.output, null);
     expectRejected(packsRemove.output, { ok: false, code: 'disk-full' });
     expectRejected(packsRemove.output, { ok: true, code: 'not-installed' });
+  });
+});
+
+describe('packs:runtime-failed contract (Story 3.9)', () => {
+  const FAILURE = {
+    packId: 'sample-pack',
+    version: '1.0.0',
+    reason: 'heartbeat-timeout',
+  };
+
+  it('has a <domain>:<action> name', () => {
+    expect(packsRuntimeFailed.channel).toBe('packs:runtime-failed');
+    expect(isIpcChannelName(packsRuntimeFailed.channel)).toBe(true);
+  });
+
+  it.each([
+    ['heartbeat-timeout'],
+    ['draw-timeout'],
+    ['boot-timeout'],
+    ['entry-threw'],
+    ['worker-error'],
+  ])('takes one failure: { packId, version, reason: %s }', (reason) => {
+    expectRoundTrip(packsRuntimeFailed.input, [{ ...FAILURE, reason }]);
+  });
+
+  it.each([
+    ['nothing', []],
+    ['two failures', [FAILURE, FAILURE]],
+    ['an unknown reason', [{ ...FAILURE, reason: 'tired' }]],
+    ['a drop reason', [{ ...FAILURE, reason: 'too-large' }]],
+    ['no version', [{ packId: 'sample-pack', reason: 'draw-timeout' }]],
+    ['a bad version', [{ ...FAILURE, version: 'v1' }]],
+    ['a bad pack id', [{ ...FAILURE, packId: 'Sample' }]],
+    ['an extra field', [{ ...FAILURE, count: 1 }]],
+    ['the fields as arguments', ['sample-pack', '1.0.0', 'draw-timeout']],
+  ])('rejects %s', (_label, args) => {
+    expectRejected(packsRuntimeFailed.input, args);
+  });
+
+  it('answers { restart } and nothing else', () => {
+    expectRoundTrip(packsRuntimeFailed.output, { restart: true });
+    expectRoundTrip(packsRuntimeFailed.output, { restart: false });
+    expectRejected(packsRuntimeFailed.output, null);
+    expectRejected(packsRuntimeFailed.output, true);
+    expectRejected(packsRuntimeFailed.output, {});
+    expectRejected(packsRuntimeFailed.output, { restart: 1 });
+    expectRejected(packsRuntimeFailed.output, { restart: true, count: 1 });
   });
 });

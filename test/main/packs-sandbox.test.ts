@@ -384,8 +384,10 @@ describe('packs:get-entry and packs:log', () => {
       (entry) => {
         logged.push(entry);
       },
-      // packs:get-manifest (Story 3.6) has its own tests.
+      // packs:get-manifest (Story 3.6) and packs:runtime-failed (Story
+      // 3.9) have their own tests.
       () => ({ ok: false, code: 'not-installed' }),
+      () => ({ restart: false }),
     );
     fake.sender.mainFrame.url = OVERLAY_URL;
   });

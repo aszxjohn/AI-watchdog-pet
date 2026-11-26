@@ -25,7 +25,8 @@
  *    (the tray's 示範模式 goes through it) and the IPC handlers
  *    (a settings patch, an install and a removal each run in one StageView
  *    batch; removing a pack among them; the overlay's packs' entries and
- *    sandbox log lines, and what it draws each pack with), and guards
+ *    sandbox log lines, what it draws each pack with, and whether to
+ *    rebuild a failed sandbox), and guards
  *    every window webContents. The canvas's hover, right-click and WebGL
  *    context handlers come once the canvas windows exist; no right-click
  *    opens a menu yet (a character's menu is Story 4.3), and demo mode is
@@ -104,6 +105,7 @@ import { readInstalledManifest } from './packs/manifest';
 import { readPackManifest } from './packs/overlay-manifest';
 import { handlePackProtocol } from './packs/protocol';
 import { removePack } from './packs/remove';
+import { createRuntimeFailures } from './packs/runtime-failures';
 import { logPackEntry } from './packs/sandbox-log';
 import { loadPacks } from './packs/store';
 import { flushOnQuit } from './persist/quit';
@@ -382,12 +384,15 @@ function startPrimaryInstance(): void {
     stageView.batch(() => removePack(packs, packId)),
   );
   // The overlay's: each pack's entry for its sandbox, the run log lines
-  // about the sandboxes (Story 3.5), and what it draws each pack with
-  // (Story 3.6).
+  // about the sandboxes (Story 3.5), what it draws each pack with (Story
+  // 3.6), and whether to rebuild a failed sandbox, counted per pack and
+  // version in memory (Story 3.9).
+  const runtimeFailures = createRuntimeFailures(packs);
   registerPackSandboxHandlers(
     (packId) => readPackEntry(packs, packId),
     logPackEntry,
     (packId, version) => readPackManifest(packs, packId, version),
+    (failure) => runtimeFailures.report(failure),
   );
   registerStageViewHandlers(stageView);
   // Each report is logged; a canvas that did not initialise after a

@@ -93,6 +93,10 @@ function fakeApi(
         order.push('log');
         return { ok: true, data: null };
       },
+      async runtimeFailed() {
+        order.push('runtimeFailed');
+        return { ok: true, data: { restart: false } };
+      },
     },
   };
   return {
