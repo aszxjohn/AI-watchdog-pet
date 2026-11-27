@@ -105,7 +105,7 @@ test.beforeAll(async () => {
     dirs.logs,
     probeLine('sandbox ready'),
     READY_TIMEOUT_MS,
-    probeSandboxTrouble,
+    probeSandboxTrouble(),
   );
   overlay = await windowAt(app, 'app://overlay/');
   panels = await windowAt(app, 'app://panels/');

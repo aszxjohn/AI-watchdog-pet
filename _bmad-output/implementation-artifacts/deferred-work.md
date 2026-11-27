@@ -343,3 +343,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-session-bulk-lock.md`
   summary: 「管理 session」頁的工具列（全部釋放與確認、全部顯示、鎖定展示開關）、每列的鎖定勾選框，以及鎖定展示開著時釋放鈕停用，這些 `App.tsx` 接線沒有任何測試；補一個在頁面上實際按這些控制項、再用 StageView 斷言結果的 e2e
   evidence: 2026-11-27 插單審查 VG-1／B10。repo 沒有 React 渲染測試（vitest 只跑 node 環境），現有 e2e 只直接呼叫 `awp.pool.setReleased`；把開關誤接成送出目前值、或釋放鈕停用條件改回舊的，所有測試仍會通過。使用者 2026-11-26 實機預覽時手動確認過。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-9-probe-e2e.md`
+  summary: 「管理 session」頁的 e2e：2 個 session，在頁面上實際按「全部釋放（N）」與確認、「全部顯示（M）」、每列的鎖定勾選框與「鎖定展示」開關，用 StageView 與 DOM 斷言結果（含鎖定展示開著時釋放類按鈕全部停用、取消最後一勾時鎖定自動關掉）
+  evidence: 使用者 2026-11-27 原本選擇併入 Story 3.9 探針 e2e，spec 寫完約 3,700 token，改選拆開。規劃時的做法可沿用：面板操作用 `locator.dispatchEvent('click')`（舞台視窗蓋在面板上，`click()` 的 rAF 穩定檢查可能卡住）、換頁用 `location.hash = panelPageHash('sessions')`、兩個 session 名稱可能相同所以用 `sessionRows(view)` 算出第幾列再定位、標籤從 `src/panels/session-rows.ts` import；工具列在 `App.tsx:384-470`、表格列在 `:547-610`。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-9-probe-e2e.md`
+  summary: stuck.spec「沒有殘留」的 CPU 判定把收回後每個行程拿去比對照時最忙行程的一半，若某個非 Worker 行程（例如沒有 GPU 時做軟體算圖的 GPU 行程）兩段都穩定 ≥ 一半，Worker 全關了也會誤判失敗（未驗證，若成立為 medium）
+  evidence: 2026-11-27 Story 3.9 探針 e2e 審查 B1／V3。靜態看不出 CI 上會不會發生；兩個 CPU 斷言的失敗訊息已附上對照與收回後各行程的速率。CI 若因此失敗，可改成以對照時最忙的那個 pid@creationTime 為準（收回後不見或低於它自己對照值的一半），或照 spec 定案只留 Worker 關閉的斷言。

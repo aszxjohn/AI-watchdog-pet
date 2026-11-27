@@ -1,9 +1,11 @@
 /**
  * What the end-to-end tests (Story 3.5) need around the app: a temporary
  * HOME and userData, a synthetic Claude Code session in that HOME, the
- * sandbox probe pack, a 127.0.0.1 server the probe aims at, launching the
- * production build (`.vite/`, from scripts/e2e-build.mjs) with Playwright's
- * `_electron`, and reading the run log.
+ * sandbox probe pack (from Story 3.9 also at another version, with an
+ * entry that crashes or hangs), a 127.0.0.1 server the probe aims at,
+ * launching the production build (`.vite/`, from scripts/e2e-build.mjs)
+ * with Playwright's `_electron`, and reading the run log (from Story 3.9
+ * also what it says of a sandbox's failures and main's answers).
  *
  * Nothing here touches the real HOME or userData, and nothing connects
  * anywhere but 127.0.0.1.
@@ -19,8 +21,12 @@ import http from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { STAGE_LOG_MAX_LENGTH } from '../../src/shared/constants';
+import {
+  PACK_RESTART_LIMIT,
+  STAGE_LOG_MAX_LENGTH,
+} from '../../src/shared/constants';
 import type { PanelsApi } from '../../src/shared/preload-api';
+import type { SandboxFailureReason } from '../../src/shared/sandbox';
 import type { StageViewSnapshot } from '../../src/shared/stage-view';
 import {
   contractManifest,
@@ -382,34 +388,80 @@ ${attempts}
   for (var p = 0; p < parts; p += 1) {
     stage.log(${JSON.stringify(PROBE_PART_PREFIX)} + (p + 1) + '/' + parts + ' ' + json.slice(p * ${PROBE_PART_LENGTH}, (p + 1) * ${PROBE_PART_LENGTH}));
   }
-  return {
+${probeHandlers(HEALTHY_FRAME)}
+})
+`;
+}
+
+/** A `frame` handler that answers each frame with an empty (valid) draw. */
+export const HEALTHY_FRAME = 'function () { return {}; }';
+
+/**
+ * A `frame` handler that leaves a rejected promise unhandled every time and
+ * answers with no draw: the sandbox faults (`unhandled-rejection`) at its
+ * first frame, a rebuilt one too. (A `frame` that throws is answered with
+ * `sandbox.no-draw`, which is no valid draw: that sandbox fails only after
+ * DRAW_TIMEOUT_MS, as `draw-timeout`.)
+ */
+export const CRASHING_FRAME =
+  "function () { Promise.reject(new Error('awp-crash')); }";
+
+/**
+ * A `frame` handler that never returns: from its first frame the Worker
+ * answers no ping (`heartbeat-timeout`) and keeps a CPU core busy.
+ */
+export const STUCK_FRAME = 'function () { while (true) {} }';
+
+/** The end of a probe entry: handlers that do nothing, but `frame`. */
+function probeHandlers(frame: string): string {
+  return `  return {
     init: function () {},
     spawn: function () {},
     despawn: function () {},
     params: function () {},
     meta: function () {},
-    frame: function () { return {}; }
-  };
+    frame: ${frame}
+  };`;
+}
+
+/**
+ * A probe entry that tries nothing and reports nothing: its factory only
+ * returns the handlers, with `frame` (a function expression's source,
+ * HEALTHY_FRAME, CRASHING_FRAME or STUCK_FRAME) as the `frame` handler.
+ * ASCII only, no `import(`, `eval(` or `require(`, so the import check
+ * takes it.
+ */
+export function probeEntryWithFrame(frame: string): string {
+  return `(function () {
+  'use strict';
+${probeHandlers(frame)}
 })
 `;
 }
 
 /**
- * Writes the probe pack to `<dir>/sandbox-probe.awpet`: the contract test
- * pack (test/helpers/awpet.ts) under the probe's id, with the probe as its
- * entry.
+ * Writes the probe pack at `version` to
+ * `<dir>/sandbox-probe-<version>.awpet`: the contract test pack
+ * (test/helpers/awpet.ts) under the probe's id and that version. Its entry
+ * is `entry`: the escape probe aimed at a probe server (probeEntrySource),
+ * or an entry's source (probeEntryWithFrame).
  */
 export async function writeProbePack(
   dir: string,
-  server: ProbeServer,
+  entry: ProbeServer | string,
+  version = '1.0.0',
 ): Promise<string> {
   const files: Map<string, Buffer | string> = contractPackFiles();
   const manifest = contractManifest();
   manifest.id = PROBE_PACK_ID;
   manifest.name = 'Sandbox probe';
+  manifest.version = version;
   files.set('manifest.json', manifestBytes(manifest));
-  files.set(String(manifest.entry), probeEntrySource(server));
-  const file = path.join(dir, `${PROBE_PACK_ID}.awpet`);
+  files.set(
+    String(manifest.entry),
+    typeof entry === 'string' ? entry : probeEntrySource(entry),
+  );
+  const file = path.join(dir, `${PROBE_PACK_ID}-${version}.awpet`);
   fs.writeFileSync(file, await zipBuffer(itemsOf(files, PROBE_PACK_ID)));
   return file;
 }
@@ -506,6 +558,28 @@ export function readStageView(panels: Page): Promise<StageViewSnapshot> {
         );
       }),
   );
+}
+
+/** What a StageView snapshot says of the probe pack and the sessions. */
+export interface ProbeState {
+  /** The probe pack's version installed; null when it is not. */
+  readonly version: string | null;
+  /** Why that version is marked failed this run; null when it is not. */
+  readonly runtimeFailed: string | null;
+  /** The session of each actor. */
+  readonly actors: readonly string[];
+  readonly sessions: readonly string[];
+}
+
+/** The ProbeState of `snapshot`. */
+export function probeState({ view }: StageViewSnapshot): ProbeState {
+  const pack = view.packs.installed.find((each) => each.id === PROBE_PACK_ID);
+  return {
+    version: pack?.version ?? null,
+    runtimeFailed: pack?.runtimeFailed ?? null,
+    actors: view.actors.map((actor) => actor.sessionKey),
+    sessions: view.sessions.map((entry) => entry.sessionKey),
+  };
 }
 
 /**
@@ -650,12 +724,139 @@ export function probeLine(text: string): (line: RunLogLine) => boolean {
   return (line) => line.category === 'packs' && line.message.startsWith(prefix);
 }
 
-/** Whether `line` says the probe pack's sandbox failed or was never made. */
-export function probeSandboxTrouble(line: RunLogLine): boolean {
-  return (
-    probeLine('sandbox failed')(line) ||
-    probeLine('has an actor but gets no sandbox')(line)
-  );
+/** The run log lines written at or after `since` (ms since the epoch). */
+export function linesSince(logs: string, since: number): RunLogLine[] {
+  return readRunLog(logs).filter((line) => line.at >= since);
+}
+
+/** `match`, for lines written at or after `since` (ms since the epoch) only. */
+export function writtenSince(
+  since: number,
+  match: (line: RunLogLine) => boolean,
+): (line: RunLogLine) => boolean {
+  return (line) => line.at >= since && match(line);
+}
+
+/** Waits `ms`. */
+export function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const FAILED = new RegExp(
+  `^pack ${PROBE_PACK_ID}: sandbox failed \\(([^)]+)\\)`,
+);
+
+/**
+ * Why a `sandbox failed` line of the probe pack (main/packs/sandbox-log.ts)
+ * says its sandbox failed; undefined for any other line.
+ */
+export function probeFailureReason(line: RunLogLine): string | undefined {
+  if (line.category !== 'packs') {
+    return undefined;
+  }
+  return FAILED.exec(line.message)?.[1];
+}
+
+/**
+ * A test of whether a run log line says the probe pack's sandbox failed or
+ * was never made: any failure, but one for a reason in `expected` (what
+ * the test makes the probe do).
+ */
+export function probeSandboxTrouble(
+  expected: readonly SandboxFailureReason[] = [],
+): (line: RunLogLine) => boolean {
+  const allowed: readonly string[] = expected;
+  return (line) => {
+    if (probeLine('sandbox failed')(line)) {
+      const reason = probeFailureReason(line);
+      return reason === undefined || !allowed.includes(reason);
+    }
+    return probeLine('has an actor but gets no sandbox')(line);
+  };
+}
+
+/**
+ * What main/packs answered one failure of the probe pack's sandbox
+ * (main/packs/runtime-failures.ts), as its run log line says.
+ */
+export interface RuntimeAnswer {
+  /** `restarting …` (true) or `not restarting …` (false). */
+  readonly restart: boolean;
+  readonly version: string;
+  readonly reason: string;
+  /** Which failure of that version this is: `restart N` or `failure N`. */
+  readonly count: number;
+  /** The restart limit the line names (`of N`, `past N restarts`). */
+  readonly limit: number;
+  /** Whether this answer marked the version failed (`marked it failed`). */
+  readonly marked: boolean;
+}
+
+const RESTARTING = new RegExp(
+  `^pack ${PROBE_PACK_ID}: restarting its sandbox of version (\\S+) \\(([^;]+); restart (\\d+) of (\\d+)\\)$`,
+);
+
+const NOT_RESTARTING = new RegExp(
+  `^pack ${PROBE_PACK_ID}: not restarting its sandbox of version (\\S+) \\(([^;]+); failure (\\d+), past (\\d+) restarts in this run\\): (marked it failed|marked failed already); `,
+);
+
+/**
+ * main/packs' answer to a failure of the probe pack's sandbox, from its
+ * run log line; undefined for any other line (a failure of a version not
+ * installed, `not counted`, included).
+ */
+export function probeRuntimeAnswer(
+  line: RunLogLine,
+): RuntimeAnswer | undefined {
+  if (line.category !== 'packs') {
+    return undefined;
+  }
+  const restarting = RESTARTING.exec(line.message);
+  if (restarting !== null) {
+    return {
+      restart: true,
+      version: restarting[1] ?? '',
+      reason: restarting[2] ?? '',
+      count: Number(restarting[3]),
+      limit: Number(restarting[4]),
+      marked: false,
+    };
+  }
+  const stopped = NOT_RESTARTING.exec(line.message);
+  if (stopped !== null) {
+    return {
+      restart: false,
+      version: stopped[1] ?? '',
+      reason: stopped[2] ?? '',
+      count: Number(stopped[3]),
+      limit: Number(stopped[4]),
+      marked: stopped[5] === 'marked it failed',
+    };
+  }
+  return undefined;
+}
+
+/**
+ * What main/packs answers PACK_RESTART_LIMIT + 1 failures in a row of the
+ * probe pack at `version`, each for `reason`: a restart for each of the
+ * first PACK_RESTART_LIMIT, then none, which marks the version failed.
+ */
+export function restartAnswers(
+  version: string,
+  reason: SandboxFailureReason,
+): RuntimeAnswer[] {
+  return Array.from({ length: PACK_RESTART_LIMIT + 1 }, (_, index) => {
+    const count = index + 1;
+    const restart = count <= PACK_RESTART_LIMIT;
+    return {
+      restart,
+      version,
+      reason,
+      count,
+      limit: PACK_RESTART_LIMIT,
+      marked: !restart,
+    };
+  });
 }
 
 /** The probe's report, put back together, and the `stage.log` texts it came in. */
