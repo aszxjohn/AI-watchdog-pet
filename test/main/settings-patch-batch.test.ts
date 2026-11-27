@@ -1,13 +1,15 @@
 /**
  * One `settings:patch`, one StageView delta (Story 3.6, Epic 1 retro R10),
- * and one install or removal of a pack, one delta: main wired as main.ts
- * wires it (real settings, detection on a fake clock with a fake codex
- * adapter, pool store, packs store, the packs' importer with its install in
- * a StageView batch, the pool's assigner, main/settings' characters, the
+ * one install or removal of a pack, one delta, and (Story 3.9) the sandbox
+ * failure that marks a pack failed, one delta: main wired as main.ts wires
+ * it (real settings, detection on a fake clock with a fake codex adapter,
+ * pool store, packs store, the packs' importer with its install in a
+ * StageView batch, the pool's assigner, main/settings' characters, the
  * windows source laid out by watchDisplays on a fake screen, StageView, the
- * settings IPC handlers and `packs:remove` in a batch), driven through the
- * panels' channels over fake electron. This is also the settings →
- * StageView → watchDisplays → canvas chain R10 found untested.
+ * settings IPC handlers, `packs:remove` and `packs:runtime-failed` each in
+ * a batch), driven through the panels' and the overlay's channels over
+ * fake electron. This is also the settings → StageView → watchDisplays →
+ * canvas chain R10 found untested.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -18,9 +20,13 @@ import { createDetection } from '../../src/main/detection/detection';
 import { createPackImporter } from '../../src/main/packs/importer';
 import { inspectPack } from '../../src/main/packs/inspect';
 import { installPack } from '../../src/main/packs/install';
-import { registerPackHandlers } from '../../src/main/packs/ipc';
+import {
+  registerPackHandlers,
+  registerPackSandboxHandlers,
+} from '../../src/main/packs/ipc';
 import { readInstalledManifest } from '../../src/main/packs/manifest';
 import { removePack } from '../../src/main/packs/remove';
+import { createRuntimeFailures } from '../../src/main/packs/runtime-failures';
 import { loadPacks, type PacksStore } from '../../src/main/packs/store';
 import { createAssigner } from '../../src/main/pool/assign';
 import { loadPool } from '../../src/main/pool/store';
@@ -35,12 +41,18 @@ import {
   watchDisplays,
   type ScreenEvent,
 } from '../../src/main/windows/stage-sources';
+import { PACK_RESTART_LIMIT } from '../../src/shared/constants';
 import {
   confidenceFor,
   detectionEventSchema,
   type DetectionEvent,
 } from '../../src/shared/detection-events';
-import { packsRemove, settingsPatch } from '../../src/shared/ipc';
+import {
+  packsRemove,
+  packsRuntimeFailed,
+  settingsPatch,
+} from '../../src/shared/ipc';
+import type { PackRuntimeFailure } from '../../src/shared/sandbox';
 import type { SettingsOp } from '../../src/shared/settings';
 import {
   stageViewDeltaSchema,
@@ -182,6 +194,14 @@ async function startMain({ installed = true }: { installed?: boolean } = {}) {
   registerPackHandlers(importer, { start: async () => {} }, (packId) =>
     hub.batch(() => removePack(packs, packId)),
   );
+  // As main.ts: each sandbox failure the overlay reports runs in a batch.
+  const runtimeFailures = createRuntimeFailures(packs);
+  registerPackSandboxHandlers(
+    async () => ({ ok: false, code: 'not-installed' }),
+    () => {},
+    () => ({ ok: false, code: 'not-installed' }),
+    (failure) => hub.batch(() => runtimeFailures.report(failure)),
+  );
 
   // Once ready: the canvas follows the displays and settings.
   const placed: CanvasPlacement[] = [];
@@ -241,6 +261,24 @@ async function startMain({ installed = true }: { installed?: boolean } = {}) {
     });
   }
 
+  /**
+   * The contract pack's sandbox failing, through the overlay's
+   * packs:runtime-failed, at the version installed.
+   */
+  async function runtimeFailed(reason: PackRuntimeFailure['reason']) {
+    const panelsUrl = fake.sender.mainFrame.url;
+    fake.sender.mainFrame.url = 'app://overlay/index.html';
+    try {
+      return await fake.ipcRenderer.invoke(packsRuntimeFailed.channel, {
+        packId: CONTRACT_PACK_ID,
+        version: packs.find(CONTRACT_PACK_ID)?.version,
+        reason,
+      });
+    } finally {
+      fake.sender.mainFrame.url = panelsUrl;
+    }
+  }
+
   return {
     clock,
     settings,
@@ -252,6 +290,7 @@ async function startMain({ installed = true }: { installed?: boolean } = {}) {
     event,
     ready,
     patch,
+    runtimeFailed,
   };
 }
 
@@ -516,5 +555,86 @@ describe('a pack installed or removed in one StageView batch, as main.ts wires t
     expect(hub.snapshot().view.packs.installed).toStrictEqual([]);
     expect(hub.snapshot().view.actors).toStrictEqual([]);
     expect(hub.snapshot().view.sessions).toHaveLength(1);
+  });
+});
+
+// Story 3.9: packs:runtime-failed in a StageView batch, as main.ts wires it.
+describe('I/O matrix', () => {
+  it('第 4 次 / 池子只剩它: the failures within the restarts send no delta; the 4th, of the only pack, is one delta carrying packs (with the mark) and actors (the actor taken back, the session still listed)', async () => {
+    const { hub, deltas, emit, event, ready, runtimeFailed } =
+      await startMain();
+    ready();
+    emit(event('turn.start'));
+    expect(hub.snapshot().view.actors).toHaveLength(1);
+    const before = deltas().length;
+    const rev = hub.snapshot().rev;
+
+    for (let n = 0; n < PACK_RESTART_LIMIT; n += 1) {
+      expect(await runtimeFailed('heartbeat-timeout')).toStrictEqual({
+        ok: true,
+        data: { restart: true },
+      });
+    }
+    expect(deltas()).toHaveLength(before);
+
+    expect(await runtimeFailed('draw-timeout')).toStrictEqual({
+      ok: true,
+      data: { restart: false },
+    });
+
+    const after = deltas().slice(before);
+    expect(sectionsOf(after)).toStrictEqual([['actors', 'packs']]);
+    expect(after[0]?.rev).toBe(rev + 1);
+    expect(stageViewDeltaSchema.safeParse(after[0]).success).toBe(true);
+    expect(after[0]?.sections.packs?.installed).toStrictEqual([
+      expect.objectContaining({
+        id: CONTRACT_PACK_ID,
+        runtimeFailed: 'draw-timeout',
+      }),
+    ]);
+    expect(hub.snapshot().view.actors).toStrictEqual([]);
+    expect(hub.snapshot().view.sessions).toHaveLength(1);
+  });
+
+  it('同版本重新匯入: importing the marked pack again at the same version clears the mark in one delta with the actor it gives back; it restarts from 0', async () => {
+    const { importer, hub, deltas, emit, event, ready, runtimeFailed } =
+      await startMain();
+    ready();
+    emit(event('turn.start'));
+    const [first] = hub.snapshot().view.actors;
+    for (let n = 0; n <= PACK_RESTART_LIMIT; n += 1) {
+      await runtimeFailed('worker-error');
+    }
+    expect(hub.snapshot().view.packs.installed[0]?.runtimeFailed).toBe(
+      'worker-error',
+    );
+    expect(hub.snapshot().view.actors).toStrictEqual([]);
+    const before = deltas().length;
+
+    await importer.start(await contractAwpet());
+    expect(hub.snapshot().view.packImport).toMatchObject({ phase: 'confirm' });
+    importer.confirm(true);
+    vi.advanceTimersByTime(0);
+
+    const carrying = deltas()
+      .slice(before)
+      .filter(
+        (delta) =>
+          delta.sections.packs !== undefined ||
+          delta.sections.characters !== undefined ||
+          delta.sections.actors !== undefined,
+      );
+    expect(sectionsOf(carrying)).toStrictEqual([['actors', 'packs']]);
+    const [pack] = hub.snapshot().view.packs.installed;
+    expect(pack).toBeDefined();
+    expect(pack).not.toHaveProperty('runtimeFailed');
+    const [back] = hub.snapshot().view.actors;
+    // The usual pick: ONE appeared once this run already, TWO not yet.
+    expect(back).toMatchObject({ sessionKey: 'codex:s1', characterKey: TWO });
+    expect(back?.actorId).not.toBe(first?.actorId);
+    expect(await runtimeFailed('worker-error')).toStrictEqual({
+      ok: true,
+      data: { restart: true },
+    });
   });
 });

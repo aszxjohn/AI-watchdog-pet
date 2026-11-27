@@ -26,7 +26,7 @@
  *    (a settings patch, an install and a removal each run in one StageView
  *    batch; removing a pack among them; the overlay's packs' entries and
  *    sandbox log lines, what it draws each pack with, and whether to
- *    rebuild a failed sandbox), and guards
+ *    rebuild a failed sandbox, in one StageView batch too), and guards
  *    every window webContents. The canvas's hover, right-click and WebGL
  *    context handlers come once the canvas windows exist; no right-click
  *    opens a menu yet (a character's menu is Story 4.3), and demo mode is
@@ -386,13 +386,15 @@ function startPrimaryInstance(): void {
   // The overlay's: each pack's entry for its sandbox, the run log lines
   // about the sandboxes (Story 3.5), what it draws each pack with (Story
   // 3.6), and whether to rebuild a failed sandbox, counted per pack and
-  // version in memory (Story 3.9).
+  // version in main/packs' store, in memory (Story 3.9). Each report runs
+  // in one StageView batch: the one that marks a pack failed changes the
+  // packs section and swaps that pack's actors out of the pool, one delta.
   const runtimeFailures = createRuntimeFailures(packs);
   registerPackSandboxHandlers(
     (packId) => readPackEntry(packs, packId),
     logPackEntry,
     (packId, version) => readPackManifest(packs, packId, version),
-    (failure) => runtimeFailures.report(failure),
+    (failure) => stageView.batch(() => runtimeFailures.report(failure)),
   );
   registerStageViewHandlers(stageView);
   // Each report is logged; a canvas that did not initialise after a

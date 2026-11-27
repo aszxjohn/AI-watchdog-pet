@@ -77,7 +77,8 @@ export function registerPackHandlers(
  *   overlay draws the pack with at a version, or why not
  *   (overlay-manifest.ts);
  * - `packs:runtime-failed` (Story 3.9): `runtimeFailed` counts a sandbox's
- *   failure and answers whether the overlay rebuilds it
+ *   failure, marks the version failed from its 4th on (a StageView
+ *   change), and answers whether the overlay rebuilds it
  *   (runtime-failures.ts).
  * registerIpcHandler has already checked the arguments against the shared
  * schemas; bad ones reach none of them.

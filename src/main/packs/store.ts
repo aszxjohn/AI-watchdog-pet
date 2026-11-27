@@ -40,6 +40,16 @@
  * store take the new entries and tell its listeners. fs is synchronous on
  * purpose, as in main/settings and main/pool. Log lines carry counts,
  * reasons, error codes and pack ids only, never a path or file contents.
+ *
+ * The packs' sandbox failures (Story 3.9) are kept here too, in memory
+ * only (never in index.json; the next run starts without them), by pack
+ * id: the version they are of, how many there were (countFailure), and,
+ * once runtime-failures.ts marks that version failed (markFailed), the
+ * reason. Only the version installed now counts. The mark is in the
+ * pack's StagePack (`runtimeFailed`), so marking tells the listeners;
+ * nothing is written. A save() that replaces a pack's entry (importing it
+ * again, any version, the same one included) or leaves it out (removing
+ * it) clears its count and mark before the listeners hear the change.
  */
 import nodeFs from 'node:fs';
 import path from 'node:path';
@@ -54,6 +64,7 @@ import {
   type PackIndexEntry,
   type StagePack,
 } from '../../shared/packs';
+import type { SandboxFailureReason } from '../../shared/sandbox';
 import type { StageViewPacksSections } from '../../shared/stage-view';
 import type { z } from '../../shared/zod-setup';
 import { errorCode, logEvent, type ConsoleLevel } from '../log/run-log';
@@ -159,11 +170,41 @@ export interface PacksStore {
   find(packId: string): PackIndexEntry | undefined;
   /**
    * Writes index.json with `entries` (sorted by id on the way) and, once it
-   * is written, takes them and tells the listeners. Throws what failed
-   * (entries that fail the shared schema, a write that fails, or no
+   * is written, takes them and tells the listeners. A pack whose entry is
+   * not in `entries` any more, or is another object than the one list()
+   * and find() give (a new install, even of the same version), has its
+   * sandbox failures and mark (Story 3.9) cleared first. Throws what
+   * failed (entries that fail the shared schema, a write that fails, or no
    * writing this run); nothing changes then.
    */
   save(entries: readonly PackIndexEntry[]): void;
+  /**
+   * Counts one more sandbox failure of `packId` at `version` (Story 3.9),
+   * in memory only, and answers how many that version has had this run;
+   * undefined, counting nothing, when `version` is not the one installed
+   * now (or the pack is not installed).
+   */
+  countFailure(packId: string, version: string): number | undefined;
+  /**
+   * Marks `packId` at `version` failed for this run (Story 3.9): from now
+   * on its StagePack carries `runtimeFailed: reason`. Writes nothing;
+   * tells the listeners. Answers whether it marked: false, changing
+   * nothing, when `version` is not the one installed now or is marked
+   * already (the first reason stays).
+   */
+  markFailed(
+    packId: string,
+    version: string,
+    reason: SandboxFailureReason,
+  ): boolean;
+}
+
+/** One pack's sandbox failures this run (Story 3.9), of one version. */
+interface PackFailures {
+  readonly version: string;
+  count: number;
+  /** Why the version was marked failed; null while it is not. */
+  marked: SandboxFailureReason | null;
 }
 
 /** How loading went; it decides what the cleanup may remove. */
@@ -212,15 +253,13 @@ function sortedById(
 
 /**
  * An installed pack as StageView carries it, with whether its `apiVersion`
- * fits this stage (Story 3.5).
+ * fits this stage (Story 3.5) and, when `runtimeFailed` is given, its
+ * failure mark (Story 3.9).
  */
-function stagePackOf({
-  id,
-  name,
-  version,
-  apiVersion,
-  characters,
-}: PackIndexEntry): StagePack {
+function stagePackOf(
+  { id, name, version, apiVersion, characters }: PackIndexEntry,
+  runtimeFailed: SandboxFailureReason | null,
+): StagePack {
   return {
     id,
     name,
@@ -228,12 +267,29 @@ function stagePackOf({
     apiVersion,
     characters: characters.map((character) => ({ ...character })),
     compatibility: checkApiCompatibility(apiVersion),
+    ...(runtimeFailed === null ? {} : { runtimeFailed }),
   };
 }
 
-/** The `packs` section for `entries`, a copy StageView may keep. */
-function sectionOf(entries: readonly PackIndexEntry[]): StageViewPacksSections {
-  return { packs: { installed: entries.map(stagePackOf) } };
+/**
+ * The `packs` section for `entries`, a copy StageView may keep, each pack
+ * with its mark in `failures` if that is of its version.
+ */
+function sectionOf(
+  entries: readonly PackIndexEntry[],
+  failures: ReadonlyMap<string, PackFailures>,
+): StageViewPacksSections {
+  return {
+    packs: {
+      installed: entries.map((entry) => {
+        const failed = failures.get(entry.id);
+        return stagePackOf(
+          entry,
+          failed?.version === entry.version ? failed.marked : null,
+        );
+      }),
+    },
+  };
 }
 
 function packs(count: number): string {
@@ -492,8 +548,39 @@ export function loadPacks({
   cleanUp(loaded);
   const canWrite = loaded.canWrite;
   let entries = present(loaded.entries);
-  let section = sectionOf(entries);
+  /** The sandbox failures this run, by pack id (Story 3.9). */
+  const failures = new Map<string, PackFailures>();
+  let section = sectionOf(entries, failures);
   const listeners = new Set<PacksListener>();
+
+  /** Works the section out again and tells the listeners. */
+  function changed(): void {
+    section = sectionOf(entries, failures);
+    const current = section;
+    for (const listener of listeners) {
+      try {
+        listener(current);
+      } catch (error) {
+        log(`a change listener failed (${errorCode(error)})`, 'error');
+      }
+    }
+  }
+
+  /** The failures of `packId` at `version`, while that is installed. */
+  function failuresOf(
+    packId: string,
+    version: string,
+  ): PackFailures | undefined {
+    if (entries.find((entry) => entry.id === packId)?.version !== version) {
+      return undefined;
+    }
+    let failed = failures.get(packId);
+    if (failed?.version !== version) {
+      failed = { version, count: 0, marked: null };
+      failures.set(packId, failed);
+    }
+    return failed;
+  }
 
   return {
     dir,
@@ -527,16 +614,38 @@ export function loadPacks({
         file,
         `${JSON.stringify({ schemaVersion, packs: sorted }, null, 2)}\n`,
       );
-      entries = sorted;
-      section = sectionOf(entries);
-      const current = section;
-      for (const listener of listeners) {
-        try {
-          listener(current);
-        } catch (error) {
-          log(`a change listener failed (${errorCode(error)})`, 'error');
+      // A Map may lose the entry being visited: iteration goes on safely.
+      for (const [packId, failed] of failures) {
+        const before = entries.find((entry) => entry.id === packId);
+        const after = sorted.find((entry) => entry.id === packId);
+        if (after === undefined || after !== before) {
+          failures.delete(packId);
+          log(
+            `pack ${packId}: ${after === undefined ? 'removed' : `installed again at ${after.version}`}; its ${failed.count} sandbox ${failed.count === 1 ? 'failure' : 'failures'} of version ${failed.version} this run ${failed.marked === null ? 'are' : 'and its failed mark are'} cleared`,
+          );
         }
       }
+      entries = sorted;
+      changed();
+    },
+
+    countFailure(packId, version) {
+      const failed = failuresOf(packId, version);
+      if (failed === undefined) {
+        return undefined;
+      }
+      failed.count += 1;
+      return failed.count;
+    },
+
+    markFailed(packId, version, reason) {
+      const failed = failuresOf(packId, version);
+      if (failed === undefined || failed.marked !== null) {
+        return false;
+      }
+      failed.marked = reason;
+      changed();
+      return true;
     },
   };
 }

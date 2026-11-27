@@ -334,3 +334,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-9-crash-restart.md`
   summary: 決定 `stage.*` 訊息洪水能不能經由 `draw` 被限速而讓包判 `draw-timeout`：現在 `draw` 與 `stage.*` 共用每包訊息額度（`PACK_MESSAGE_RATE_LIMIT` 120 則／秒，3.6 起），一直塞滿額度的包 10 秒後會失敗重啟；若不應該，回答 `frame` 的那則 `draw` 不計入額度（會改到 `pack-host-draw.test.ts` 3.6 的「在途」測試）
   evidence: 2026-11-26 3.9（中）審查 B7、E5、VG-2（medium）。使用者定案「`stage.*` 訊息超過頻率照舊只丟、不判失敗」；文件已改寫成實際行為（`stage.*` 本身只丟，但會連帶擠掉 `draw`），行為是否要改留給使用者決定。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-9-failure-mark.md`
+  summary: 角色包頁的「執行失敗，這次執行已停用：<原因>…」提示（`App.tsx` 的 `.pack-runtime-failed`）沒有任何渲染測試；3.9 的探針 e2e 應一併斷言第 4 次失敗後角色包頁出現這段提示，重新匯入後消失
+  evidence: 2026-11-27 3.9（下）審查 VG-2／B11。repo 的 panels 測試只測 `packListView` 純函式（vitest 只跑 node 環境），e2e 不檢查列表 DOM；使用者 2026-11-27 選擇跳過實機預覽，畫面上的提示還沒有人實際看過。
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-9-failure-mark.md`
+  summary: overlay 的 `looks.ts` 只以版本判斷外觀是否過期；同版本重新匯入、manifest 或 spritesheet 有改時不會重讀，3.9（下）的同版本重建會用舊外觀檢查新沙盒的 `draw`，可能整則丟棄而再判 `draw-timeout`
+  evidence: 2026-11-27 3.9（下）審查 E3。`looks.ts` 的 `onView` 只在 `installed.get(packId) !== entry.version` 時刪掉項目；main 端（`settings/characters.ts`、`packs/manifest.ts`）已經會在同版本重新匯入時重讀 manifest，overlay 這邊沒有。修法需要 StagePack 帶出「安裝代號」之類的識別。

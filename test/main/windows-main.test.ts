@@ -1452,7 +1452,7 @@ describe('the packs sandboxes (Story 3.5)', () => {
     ]);
   });
 
-  it("packs:runtime-failed goes to main/packs' failure counter over its store (Story 3.9)", async () => {
+  it("packs:runtime-failed goes to main/packs' failure counter over its store, in one StageView batch (Story 3.9)", async () => {
     await startMain();
     state.order = [];
 
@@ -1463,8 +1463,12 @@ describe('the packs sandboxes (Story 3.5)', () => {
         reason: 'draw-timeout',
       }),
     ).toStrictEqual({ restart: true });
+    // Every report runs in one batch, so the one that marks the pack sends
+    // the packs section and the actors it swaps as one delta.
     expect(state.order).toStrictEqual([
+      'stageView.batch begins',
       'runtimeFailures.report {"packId":"sample-pack","version":"1.2.0","reason":"draw-timeout"}',
+      'stageView.batch ends',
     ]);
   });
 

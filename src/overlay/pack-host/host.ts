@@ -105,9 +105,24 @@
  *   coming back gets a sandbox as a first one does. A rebuild whose entry
  *   main does not hand over stays, failed (its line as for a first
  *   actor), until its actors have left and SANDBOX_IDLE_MS has passed. A
- *   no leaves the failed sandbox as it is, and so its actors in the
- *   placeholder, until the same; so does a call that throws or an answer
- *   that is not ok (on the console).
+ *   call that throws or an answer that is not ok (on the console) leaves
+ *   the failed sandbox as it is, and so its actors in the placeholder,
+ *   until the same.
+ * - A no stops the failed sandbox: it stays failed, its actors in the
+ *   placeholder, until they have left and SANDBOX_IDLE_MS has passed.
+ *   main says no from the version's 4th failure on, and marks the version
+ *   failed (its StagePack's `runtimeFailed`; the actors main/pool swaps
+ *   out leave in the same StageView, demo mode's stay); or for a version
+ *   not installed now, never marked. Importing the pack again (any
+ *   version, the same one included) or removing it clears the mark, and
+ *   only that rebuilds a stopped sandbox: once a StageView has shown its
+ *   pack's mark at its version (the last one, for a sandbox built since
+ *   it came), a later one without it, where the pack is
+ *   still installed at that version and has an actor, rebuilds it as a
+ *   yes does (troubled until its first valid draw). The mark and the no
+ *   come in either order: a mark come and gone before the no rebuilds at
+ *   the no. A stopped sandbox whose mark never showed is never rebuilt
+ *   this way; another version goes by the version rule above.
  * - troubled(): from the failure until the rebuilt sandbox's first valid
  *   draw, the pack's actors are drawn as the placeholder (scene.ts). A
  *   sandbox built for a pack's first actor, or for a new version, is not
@@ -130,7 +145,7 @@ import {
 } from '../../shared/constants';
 import type { IpcResult } from '../../shared/ipc';
 import type { StageCall, StageMessage } from '../../shared/pack-api';
-import type { PackEntryResult } from '../../shared/packs';
+import type { PackEntryResult, StagePack } from '../../shared/packs';
 import {
   type PackLogEntry,
   type PackMessageDropReason,
@@ -314,6 +329,14 @@ interface Sandbox {
    * given a valid draw yet (Story 3.9).
    */
   recovering: boolean;
+  /** Whether main said not to rebuild it once it failed (Story 3.9). */
+  stopped: boolean;
+  /**
+   * Its pack's failure mark at its version (Story 3.9), as the StageViews
+   * since it was built have shown it: none yet, `seen` while they show
+   * it, `gone` once one no longer does.
+   */
+  mark: 'none' | 'seen' | 'gone';
   /** The ticks handled since it became ready, for the ping (Story 3.9). */
   ticks: number;
   /** The ticks handled since the last `sandbox.pong`, or since ready. */
@@ -371,6 +394,8 @@ export function createPackHost({
     actors: [],
     characters: {},
   };
+  /** The last StageView's installed packs: a new sandbox's mark (Story 3.9). */
+  let installed: StageView['packs']['installed'] = [];
 
   /** Asks main to write `entry` to the run log; failures go to the console. */
   const log = createPackLog(api, logError);
@@ -478,6 +503,8 @@ export function createPackHost({
         }
         if (result.data.restart) {
           restart(failed);
+        } else {
+          stop(failed);
         }
       },
       (error: unknown) => {
@@ -502,6 +529,33 @@ export function createPackHost({
     }
     keep(failed);
     void start(failed.packId, true);
+  }
+
+  /**
+   * main said not to rebuild `failed` (Story 3.9): it stays failed. Its
+   * pack's mark come and gone already (imported again while main was
+   * answering) rebuilds it now, as restart() does.
+   */
+  function stop(failed: Sandbox): void {
+    if (sandboxes.get(failed.packId) !== failed) {
+      return;
+    }
+    failed.stopped = true;
+    if (failed.mark === 'gone') {
+      restart(failed);
+    }
+  }
+
+  /**
+   * Follows `sandbox`'s pack's failure mark (Story 3.9) in a StageView
+   * where the pack is `pack` (undefined: not installed).
+   */
+  function followMark(sandbox: Sandbox, pack: StagePack | undefined): void {
+    if (pack?.runtimeFailed !== undefined && pack.version === sandbox.version) {
+      sandbox.mark = 'seen';
+    } else if (sandbox.mark === 'seen') {
+      sandbox.mark = 'gone';
+    }
   }
 
   function stopBootTimer(sandbox: Sandbox): void {
@@ -753,6 +807,8 @@ export function createPackHost({
       frameCharacters: new Map(),
       bitmaps: createBitmapWindow(() => clock.now()),
       recovering,
+      stopped: false,
+      mark: 'none',
       ticks: 0,
       sincePong: 0,
       sinceDraw: 0,
@@ -784,6 +840,12 @@ export function createPackHost({
     sandbox.phase = 'loading';
     sandbox.version = entry.version;
     sandbox.source = entry.source;
+    // Built while its pack is marked (demo mode, after the wait): the mark
+    // is in the last StageView already, and no later one may come.
+    followMark(
+      sandbox,
+      installed.find(({ id }) => id === packId),
+    );
     try {
       sandbox.frame = frames.create({
         onLoad: () => {
@@ -826,7 +888,16 @@ export function createPackHost({
   return {
     onView(view) {
       latest = { actors: view.actors, characters: view.characters };
+      installed = view.packs.installed;
       owners = actorsByPack(view.actors);
+      // Every sandbox's, with an actor or not: the actors main/pool swaps
+      // out leave in the StageView that brings the mark (Story 3.9).
+      for (const sandbox of sandboxes.values()) {
+        followMark(
+          sandbox,
+          view.packs.installed.find(({ id }) => id === sandbox.packId),
+        );
+      }
       for (const packId of owners.keys()) {
         const pack = view.packs.installed.find(({ id }) => id === packId);
         const sandbox = sandboxes.get(packId);
@@ -841,6 +912,10 @@ export function createPackHost({
                   : null;
           if (gone === null) {
             keep(sandbox);
+            if (sandbox.stopped && sandbox.mark === 'gone') {
+              // Imported again at this version (Story 3.9).
+              restart(sandbox);
+            }
             continue;
           }
           // Its pack's code must not keep running: the usual rules below

@@ -7,7 +7,18 @@ import {
 } from './constants';
 import { idSchema, packIdSchema, packVersionSchema } from './pack-api';
 import { PACK_ENTRY_FAILURE_CODES } from './packs';
+import {
+  SANDBOX_BOOT_FAILURES,
+  SANDBOX_FAILURE_REASONS,
+} from './sandbox-failures';
 import { z } from './zod-setup';
+
+export {
+  SANDBOX_BOOT_FAILURES,
+  SANDBOX_FAILURE_REASONS,
+  type SandboxBootFailure,
+  type SandboxFailureReason,
+} from './sandbox-failures';
 
 /**
  * The sandbox load chain's messages (Story 3.5, AD-7) and what the overlay
@@ -163,36 +174,6 @@ const readyRemovalsSchema = z
   })
   .readonly();
 
-/**
- * Why the bootstrap did not get the pack's `handlers`, in its order:
- * - `api-removal-failed`, `intrinsic-removal-failed`: a listed API or
- *   intrinsic is still there after removal;
- * - `ses-missing`: SES's `lockdown` is not there (or, after `lockdown()`,
- *   its `harden` or `Compartment`);
- * - `lockdown-threw`;
- * - `lockdown-output`: something was printed on the console from loading
- *   SES to the end of `lockdown()`;
- * - `entry-threw`: evaluating the entry threw (a syntax error included);
- * - `entry-not-factory`: the entry's value is not a function;
- * - `factory-threw`;
- * - `handlers-not-object`: the factory did not return an object (an array
- *   or a promise, from an async factory, does not count).
- * The pack's code runs only after the first four passed.
- */
-export const SANDBOX_BOOT_FAILURES = [
-  'api-removal-failed',
-  'intrinsic-removal-failed',
-  'ses-missing',
-  'lockdown-threw',
-  'lockdown-output',
-  'entry-threw',
-  'entry-not-factory',
-  'factory-threw',
-  'handlers-not-object',
-] as const;
-
-export type SandboxBootFailure = (typeof SANDBOX_BOOT_FAILURES)[number];
-
 /** Uncaught trouble in a running Worker: an `error` or an unhandled rejection. */
 export const SANDBOX_FAULTS = ['error', 'unhandled-rejection'] as const;
 
@@ -268,29 +249,8 @@ export type SandboxReport = z.infer<typeof sandboxReportSchema>;
 
 // ---------------------------------------------------------------------------
 // What the overlay writes to the run log (`packs:log`).
-
-/**
- * Why a pack's sandbox was taken down: the bootstrap's own reasons, plus
- * the Worker failing (`worker-error`, its iframe or bootstrap says so), an
- * unhandled rejection in it, a report that does not fit the protocol
- * (`bad-report`), and no `sandbox.ready` or `sandbox.failed` within
- * SANDBOX_BOOT_TIMEOUT_MS of adding its iframe (`boot-timeout`). And
- * (Story 3.9), once ready: no `sandbox.pong` in HEARTBEAT_TIMEOUT_TICKS
- * of the ticks the overlay handled it in (`heartbeat-timeout`), and no
- * valid `draw` in DRAW_TIMEOUT_MS of them while the pack had an own actor
- * (`draw-timeout`).
- */
-export const SANDBOX_FAILURE_REASONS = [
-  ...SANDBOX_BOOT_FAILURES,
-  'worker-error',
-  'unhandled-rejection',
-  'bad-report',
-  'boot-timeout',
-  'heartbeat-timeout',
-  'draw-timeout',
-] as const;
-
-export type SandboxFailureReason = (typeof SANDBOX_FAILURE_REASONS)[number];
+// Why a sandbox was taken down (SANDBOX_FAILURE_REASONS) is in
+// sandbox-failures.ts, exported from here too.
 
 /**
  * Why a pack with an actor on stage gets no sandbox: main's

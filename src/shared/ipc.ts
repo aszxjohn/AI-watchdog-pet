@@ -258,8 +258,9 @@ export const packsLog = {
  * failed (its version, and why). main/packs counts it for that pack at
  * that version and answers whether the overlay builds the pack a new
  * sandbox: yes for the first PACK_RESTART_LIMIT failures of a version
- * installed now, no after that, or for a version not installed (not
- * counted).
+ * installed now, no after that (the first of those marks the version
+ * failed: its StagePack's `runtimeFailed`), or for a version not
+ * installed (not counted).
  */
 export const packsRuntimeFailed = {
   channel: 'packs:runtime-failed',

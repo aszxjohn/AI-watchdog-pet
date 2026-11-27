@@ -1278,6 +1278,55 @@ describe('I/O matrix', () => {
     );
     expect(t.failures).toHaveLength(1);
   });
+
+  it('同版本重新匯入: main’s no stops the failed sandbox, its actor (demo mode’s, say) in the placeholder through the failure mark; the same version imported again clears the mark and rebuilds it, in the placeholder until its first valid draw', async () => {
+    const t = setup();
+    const actors = [actor('a1', ALPHA)];
+    await showReady(t, actors);
+    t.stuck.add(ALPHA);
+    const old = frameOf(t, ALPHA);
+    runTicks(t, 0, HEARTBEAT_TIMEOUT_TICKS);
+    await settle();
+    expect(old.removed).toBe(true);
+    expect(t.failures).toStrictEqual([
+      { packId: ALPHA, version: '1.0.0', reason: 'heartbeat-timeout' },
+    ]);
+
+    // main marks the version failed; demo mode keeps its actor on stage.
+    t.host.onView({
+      ...view(actors),
+      packs: {
+        installed: [
+          { ...stagePack(ALPHA), runtimeFailed: 'heartbeat-timeout' },
+          stagePack(BRAVO),
+        ],
+      },
+    });
+    await settle();
+    expect(frameOf(t, ALPHA)).toBe(old);
+    expect(t.host.phases().get(ALPHA)).toBe('failed');
+    expect(t.host.troubled(ALPHA)).toBe(true);
+
+    // Imported again at 1.0.0: the mark is gone, the version the same.
+    t.stuck.delete(ALPHA);
+    t.host.onView(view(actors));
+    await settle();
+    const fresh = frameOf(t, ALPHA);
+    expect(fresh).not.toBe(old);
+    fresh.handlers.onLoad();
+    fresh.handlers.onMessage(READY);
+    expect(t.host.troubled(ALPHA)).toBe(true);
+    t.host.tick({ t: 9000, events: [] });
+    expect(types(fresh)).toStrictEqual(['init', 'frame']);
+    expect(t.host.troubled(ALPHA)).toBe(true);
+    fresh.handlers.onMessage(draw({ a1: [SPRITE] }, 0));
+
+    expect(t.host.troubled(ALPHA)).toBe(false);
+    expect(t.host.drawOf(ALPHA)?.actors).toStrictEqual(
+      new Map([['a1', [SPRITE]]]),
+    );
+    expect(t.failures).toHaveLength(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

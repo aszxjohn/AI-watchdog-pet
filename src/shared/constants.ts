@@ -327,8 +327,10 @@ export const DRAW_TIMEOUT_TICKS = Math.ceil((DRAW_TIMEOUT_MS * TICK_HZ) / 1000);
 /**
  * How many times main/packs lets the overlay rebuild a failed sandbox of
  * one pack at one version in a run (Story 3.9): each of the first this
- * many failures is answered with a rebuild, the next ones with none.
- * Counted in memory only; another version counts from 0.
+ * many failures is answered with a rebuild, the next ones with none, and
+ * the first of those marks the version failed (StagePack `runtimeFailed`).
+ * Counted in memory only; importing the pack again (any version) or
+ * removing it counts from 0.
  */
 export const PACK_RESTART_LIMIT = 3;
 

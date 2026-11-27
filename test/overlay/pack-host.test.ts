@@ -623,6 +623,98 @@ describe('I/O matrix', () => {
     expect(t.host.troubled(ALPHA)).toBe(false);
   });
 
+  // Story 3.9: main's no and its failure mark (StagePack `runtimeFailed`)
+  // reach the overlay in either order; the actors main/pool swaps out
+  // leave in the StageView that brings the mark (demo mode's stay).
+  it.each<[string, readonly ('mark' | 'mark, actors off' | 'no' | 'import')[]]>(
+    [
+      ['the mark, then the no', ['mark', 'no', 'import']],
+      ['the no, then the mark', ['no', 'mark', 'import']],
+      ['the mark come and gone before the no', ['mark', 'import', 'no']],
+      [
+        'the mark taking the actors off, the import bringing them back',
+        ['mark, actors off', 'no', 'import'],
+      ],
+    ],
+  )(
+    '同版本重新匯入: %s: the stopped sandbox is rebuilt once, at the last step, in trouble',
+    async (_label, steps) => {
+      let reply: (
+        result: IpcResult<PackRuntimeFailedResult>,
+      ) => void = () => {};
+      const t = setup({
+        restart: () =>
+          new Promise((resolve) => {
+            reply = resolve;
+          }),
+      });
+      const actors = [actor('a1', ALPHA)];
+      const marked = [
+        { ...stagePack(ALPHA), runtimeFailed: 'worker-error' as const },
+        stagePack(BRAVO),
+      ];
+      t.host.onView(view(actors));
+      await settle();
+      t.frames[0]?.handlers.onLoad();
+      t.frames[0]?.handlers.onWorkerError();
+
+      for (const step of steps) {
+        expect(t.frames).toHaveLength(1);
+        expect(t.host.troubled(ALPHA)).toBe(true);
+        if (step === 'no') {
+          reply(answer(false));
+        } else {
+          t.host.onView(
+            step === 'import'
+              ? view(actors)
+              : view(step === 'mark' ? actors : [], marked),
+          );
+        }
+        await settle();
+      }
+
+      expect(t.frames).toHaveLength(2);
+      expect(t.requests).toStrictEqual([[ALPHA], [ALPHA]]);
+      expect(t.failures).toHaveLength(1);
+      expect(t.host.phases()).toStrictEqual(new Map([[ALPHA, 'loading']]));
+      expect(t.host.troubled(ALPHA)).toBe(true);
+      t.host.onView(view(actors));
+      await settle();
+      expect(t.frames).toHaveLength(2);
+    },
+  );
+
+  it('同版本重新匯入: a sandbox built while its pack is marked (demo mode, after the wait) and stopped is rebuilt at the import too', async () => {
+    let reply: (result: IpcResult<PackRuntimeFailedResult>) => void = () => {};
+    const t = setup({
+      restart: () =>
+        new Promise((resolve) => {
+          reply = resolve;
+        }),
+    });
+    const actors = [actor('a1', ALPHA)];
+    const marked = [
+      { ...stagePack(ALPHA), runtimeFailed: 'worker-error' as const },
+      stagePack(BRAVO),
+    ];
+    // The mark came before this sandbox: no StageView after it brings it.
+    t.host.onView(view(actors, marked));
+    await settle();
+    t.frames[0]?.handlers.onLoad();
+    t.frames[0]?.handlers.onWorkerError();
+    reply(answer(false));
+    await settle();
+    expect(t.frames).toHaveLength(1);
+    expect(t.host.troubled(ALPHA)).toBe(true);
+
+    t.host.onView(view(actors));
+    await settle();
+
+    expect(t.frames).toHaveLength(2);
+    expect(t.requests).toStrictEqual([[ALPHA], [ALPHA]]);
+    expect(t.host.troubled(ALPHA)).toBe(true);
+  });
+
   it.each<[string, () => Promise<IpcResult<PackRuntimeFailedResult>>]>([
     ['throws', () => Promise.reject(new Error('no handler'))],
     [

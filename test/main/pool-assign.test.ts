@@ -20,6 +20,7 @@ import {
   poolOf,
   type Assignment,
 } from '../../src/main/pool/assign';
+import { demoCharactersOf } from '../../src/main/pool/demo-mode';
 import { loadPool } from '../../src/main/pool/store';
 import { loadSettings } from '../../src/main/settings/store';
 import { createStageView } from '../../src/main/stage-view/stage-view';
@@ -508,6 +509,26 @@ describe('I/O matrix', () => {
     ).toStrictEqual([]);
   });
 
+  it('第 4 次: leaves out a pack marked failed this run (runtimeFailed), 上場 and 加入池子 set or not', () => {
+    const failed: StagePack = { ...ANOTHER, runtimeFailed: 'draw-timeout' };
+
+    expect(poolOf([SAMPLE, ANOTHER], values())).toStrictEqual([
+      THREE,
+      ONE,
+      TWO,
+    ]);
+    expect(poolOf([SAMPLE, failed], values())).toStrictEqual([ONE, TWO]);
+    expect(
+      poolOf(
+        [failed],
+        values({
+          packEnabled: { 'another-pack': true },
+          fixedOverrides: { [THREE]: { inPool: true } },
+        }),
+      ),
+    ).toStrictEqual([]);
+  });
+
   it('新 session: synced, the pool has characters, a new session: it gets a character and a new actorId; its actor and its first state come in one change', () => {
     const { heard, ready, start, cast, detection } = wire();
     ready();
@@ -966,6 +987,55 @@ describe('I/O matrix', () => {
       ['codex:a', ONE, 'actor-3'],
       ['codex:b', TWO, 'actor-4'],
       ['codex:c', ONE, 'actor-5'],
+    ]);
+  });
+
+  it('第 4 次: a pack marked failed: its actors swap to the rest of the pool in one change, with new actor ids; the others stay; 上場 is not touched', () => {
+    const { heard, packs, settings, ready, start, cast } = wire({
+      installed: [SAMPLE, ANOTHER],
+    });
+    ready();
+    start('codex:a');
+    start('codex:b');
+    expect(cast()).toStrictEqual([
+      ['codex:a', THREE, 'actor-1'],
+      ['codex:b', ONE, 'actor-2'],
+    ]);
+    heard.length = 0;
+
+    packs.update([SAMPLE, { ...ANOTHER, runtimeFailed: 'heartbeat-timeout' }]);
+
+    expect(cast()).toStrictEqual([
+      ['codex:a', TWO, 'actor-3'],
+      ['codex:b', ONE, 'actor-2'],
+    ]);
+    expect(heard).toStrictEqual([{ actors: expect.any(Array) }]);
+    expect(settings.get().values.packEnabled).toStrictEqual({});
+    expectValidChanges(heard);
+  });
+
+  it('池子只剩它 / 同版本重新匯入: the only pack marked failed takes every actor back, each session stays listed; the mark gone (imported again), they get characters again', () => {
+    const { heard, packs, ready, start, cast, sessionKeys } = wire();
+    ready();
+    start('codex:a');
+    start('codex:b');
+    expect(cast()).toStrictEqual([
+      ['codex:a', ONE, 'actor-1'],
+      ['codex:b', TWO, 'actor-2'],
+    ]);
+    heard.length = 0;
+
+    packs.update([{ ...SAMPLE, runtimeFailed: 'draw-timeout' }]);
+
+    expect(cast()).toStrictEqual([]);
+    expect(sessionKeys()).toStrictEqual(['codex:a', 'codex:b']);
+    expect(heard).toStrictEqual([{ actors: [] }]);
+
+    packs.update([SAMPLE]);
+
+    expect(cast()).toStrictEqual([
+      ['codex:a', ONE, 'actor-3'],
+      ['codex:b', TWO, 'actor-4'],
     ]);
   });
 
@@ -1845,6 +1915,27 @@ describe("demo mode's stage", () => {
 
     expect(cast()).toStrictEqual([['demo:1', THREE, 'actor-1']]);
     expect(heard).toStrictEqual([]);
+  });
+
+  it('示範中: the demo character’s pack marked failed keeps the demo actor, and demo mode still lists the character', () => {
+    const { ready, cast, packs, assigner, detection, heard } = wire({
+      installed: [SAMPLE, ANOTHER],
+    });
+    ready();
+    assigner.setDemo({ characterKey: THREE });
+    detection.setDemo('idle');
+    expect(cast()).toStrictEqual([['demo:1', THREE, 'actor-1']]);
+    heard.length = 0;
+
+    packs.update([SAMPLE, { ...ANOTHER, runtimeFailed: 'worker-error' }]);
+
+    expect(cast()).toStrictEqual([['demo:1', THREE, 'actor-1']]);
+    expect(heard).toStrictEqual([]);
+    expect(
+      demoCharactersOf(packs.get().packs.installed, null).map(
+        (character) => character.key,
+      ),
+    ).toContain(THREE);
   });
 
   it('a character of a pack that does not fit this stage is not shown', () => {
