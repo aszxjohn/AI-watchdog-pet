@@ -151,3 +151,6 @@ playwright-report/
 
 # macOS
 .DS_Store
+
+# Git worktrees the Claude Code app creates for parallel lanes
+.claude/worktrees/

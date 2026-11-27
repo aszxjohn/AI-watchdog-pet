@@ -1,3 +1,8 @@
 # Check out with LF on every platform. Windows runners default to
 # core.autocrlf=true, and oxfmt --check would then fail on CRLF.
 * text=auto eol=lf
+
+# Parallel lanes (2026-11-27): both lanes append entries at the end of these
+# files; union keeps both sides' additions instead of a merge conflict.
+_bmad-output/implementation-artifacts/deferred-work.md merge=union
+_bmad-output/implementation-artifacts/review-patterns.md merge=union
