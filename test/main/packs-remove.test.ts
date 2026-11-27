@@ -153,7 +153,7 @@ function stageViewOf(store: PacksStore) {
       get: () => ({
         sessions: [],
         adapters: [],
-        pool: { released: [] },
+        pool: { released: [], locked: [], lockOn: false },
         actors: [],
       }),
       onChange: () => () => {},

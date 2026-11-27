@@ -3,7 +3,10 @@ import {
   SETTINGS_DEFAULTS,
   settingsFieldSchemas,
 } from '../../src/shared/settings';
-import { DETECTION_ID_MAX_LENGTH } from '../../src/shared/detection-events';
+import {
+  DETECTION_ID_MAX_LENGTH,
+  type SessionKey,
+} from '../../src/shared/detection-events';
 import { ADAPTER_HEALTH_CODES, SOURCE_CODES } from '../../src/shared/sources';
 import {
   applyStageViewDelta,
@@ -76,6 +79,11 @@ const PACK = {
   ],
 };
 
+/** The `pool` section with `released`, nothing locked. */
+function poolOf(released: SessionKey[]) {
+  return { released, locked: [], lockOn: false };
+}
+
 const VIEW: StageView = {
   settings: { rev: 0, values: { ...SETTINGS_DEFAULTS, canvasDisplayId: null } },
   displays: [DISPLAY],
@@ -83,7 +91,7 @@ const VIEW: StageView = {
   power: POWER,
   sessions: [SESSION],
   adapters: [ADAPTER],
-  pool: { released: ['demo:1'] },
+  pool: poolOf(['demo:1']),
   actors: [],
   packs: { installed: [PACK] },
   packImport: { phase: 'idle' },
@@ -439,7 +447,7 @@ describe('stageViewSchema', () => {
       canvas: null,
       sessions: [],
       adapters: [],
-      pool: { released: [] },
+      pool: poolOf([]),
       packs: { installed: [] },
     });
   });
@@ -456,7 +464,7 @@ describe('stageViewSchema', () => {
     expectRoundTrip(stageViewSchema, {
       ...VIEW,
       sessions: [],
-      pool: { released: ['claude-code:a', 'demo:1'] },
+      pool: poolOf(['claude-code:a', 'demo:1']),
     });
   });
 
@@ -483,12 +491,9 @@ describe('stageViewSchema', () => {
     ['a pack installed twice', { ...VIEW, packs: { installed: [PACK, PACK] } }],
     [
       'released keys out of order',
-      { ...VIEW, pool: { released: ['demo:1', 'claude-code:a'] } },
+      { ...VIEW, pool: poolOf(['demo:1', 'claude-code:a']) },
     ],
-    [
-      'a key released twice',
-      { ...VIEW, pool: { released: ['demo:1', 'demo:1'] } },
-    ],
+    ['a key released twice', { ...VIEW, pool: poolOf(['demo:1', 'demo:1']) }],
     [
       'two sessions with one key',
       { ...VIEW, sessions: [SESSION, { ...SESSION, state: 'done' }] },
@@ -559,15 +564,15 @@ describe('stageViewDeltaSchema', () => {
     ['no sessions any more', { sessions: [] }],
     ['adapters', { adapters: [ADAPTER] }],
     ['sessions and adapters together', { sessions: [], adapters: [] }],
-    ['pool', { pool: { released: ['codex:0199a3c2-7f1e', 'demo:1'] } }],
-    ['nothing released any more', { pool: { released: [] } }],
+    ['pool', { pool: poolOf(['codex:0199a3c2-7f1e', 'demo:1']) }],
+    ['nothing released any more', { pool: poolOf([]) }],
     [
       'sessions and actors together (Story 3.4)',
       { sessions: [SESSION, CODEX_SESSION], actors: [ACTOR] },
     ],
     [
       'pool and actors together: a release takes the actor away',
-      { pool: { released: [ACTOR.sessionKey] }, actors: [] },
+      { pool: poolOf([ACTOR.sessionKey]), actors: [] },
     ],
     ['packs', { packs: { installed: [PACK] } }],
     ['no packs any more', { packs: { installed: [] } }],
@@ -689,7 +694,10 @@ describe('stageViewDeltaSchema', () => {
     ],
     [
       'a pool with a bad key',
-      { rev: 1, sections: { pool: { released: ['vim:1'] } } },
+      {
+        rev: 1,
+        sections: { pool: { released: ['vim:1'], locked: [], lockOn: false } },
+      },
     ],
     [
       'bad sessions',

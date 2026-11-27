@@ -16,8 +16,11 @@
  *   among equals; when every one is on stage already, the same over the
  *   whole pool. Appearances are counted in memory only: each new
  *   assignment, and each one kept from the last run, counts once.
- * - Who gets one: every session in `sessions` that is not released, once
- *   start-up sync is over. Before it (some source has not sent
+ * - Who gets one: every session in `sessions` that is not held back, once
+ *   start-up sync is over. Held back is one rule, src/shared/pool
+ *   heldBackBy, used everywhere below: while 鎖定展示 is on, every session
+ *   not locked (released or not, new ones too); otherwise every released
+ *   one. Before start-up sync is over (some source has not sent
  *   `sync.ready` and syncTimeoutMs has not passed) no assignment is made;
  *   at sync every session due one gets it, in one change. An empty pool
  *   gives none: the session is listed with no actor.
@@ -31,13 +34,14 @@
  *   while another is free, either not on stage or with every pool
  *   character on stage; otherwise it gets a new assignment.
  * - An assignment ends, and its actor with it, when its session leaves
- *   `sessions` (it ended or expired) or is released. Showing a released
- *   session again makes a new assignment, with a new `actorId`.
+ *   `sessions` (it ended or expired) or is held back (released; or, with
+ *   鎖定展示 on, not locked). A session no longer held back (shown again,
+ *   locked, 鎖定展示 off) gets a new assignment, with a new `actorId`.
  * - The pool shrinking (a pack no longer 上場, removed or not fitting
  *   this stage any more, a character out of the pool or gone from a new
  *   version) swaps characters at once (Story 3.9): outside demo mode,
  *   every assignment whose character is not in the pool ends, its actor
- *   with it, and its session, still shown and not released, gets a
+ *   with it, and its session, still shown and not held back, gets a
  *   character by the usual pick in the same change, with a new `actorId`
  *   and an appearance counted. All of them end before any pick, so none
  *   picks a character leaving the stage. An empty pool gives none. The
@@ -56,15 +60,16 @@
  * - Demo mode's stage (FR21 as changed on 2026-11-24; setDemo(), which
  *   main/pool's demo mode calls): demo mode is a tool for pack
  *   development that takes the stage for itself. While it is on, every
- *   shown session of another source loses its actor (released ones as
+ *   shown session of another source loses its actor (held-back ones as
  *   usual; the rest are parked, character and all, in memory only), new
  *   ones get none, and each `demo` session plays the character demo mode
  *   names, any installed character that fits this stage (in the pool or
- *   not), released or not, with a new actor id and no appearance counted.
- *   None when the character is null or not installed (any more). Every
- *   setDemo() with a stage starts the demo's actors anew (a pick reloads
- *   the character). When it is off again, the demo's actors end and each
- *   parked session still shown and not released comes back first: with
+ *   not), held back or not (鎖定展示 does not touch demo mode), with a new
+ *   actor id and no appearance counted. None when the character is null
+ *   or not installed (any more). Every setDemo() with a stage starts the
+ *   demo's actors anew (a pick reloads the character). When it is off
+ *   again, the demo's actors end and each
+ *   parked session still shown and not held back comes back first: with
  *   its character when a kept one would keep it (in the pool, and not on
  *   stage unless every pool character is), otherwise by the usual pick;
  *   either way with a new actor id and no appearance counted. The
@@ -87,7 +92,11 @@ import {
   characterKey,
   type StagePack,
 } from '../../shared/packs';
-import type { PoolAssignment, StageActor } from '../../shared/pool';
+import {
+  heldBackBy,
+  type PoolAssignment,
+  type StageActor,
+} from '../../shared/pool';
 import {
   isInPool,
   isPackEnabled,
@@ -240,7 +249,10 @@ export interface AssignerOptions {
       listener: (sections: Partial<StageViewDetectionSections>) => void,
     ): () => void;
   };
-  /** main/pool's store: the released keys and the saved assignments. */
+  /**
+   * main/pool's store: the released and locked keys, 鎖定展示 and the saved
+   * assignments.
+   */
   readonly store: Pick<
     PoolStore,
     'get' | 'onChange' | 'sweep' | 'assignments' | 'setAssignments'
@@ -269,9 +281,9 @@ export interface Assigner {
   onChange(listener: AssignerListener): () => void;
   /**
    * main/detection's start-up sync (main.ts wires its onSynced here):
-   * sweeps the store's released keys and the saved assignments, then
-   * assigns every session due a character, all in one change. Only the
-   * first call does anything.
+   * sweeps the store's released and locked keys and the saved assignments,
+   * then assigns every session due a character, all in one change. Only
+   * the first call does anything.
    */
   sync(
     reported: ReadonlySet<SessionKey>,
@@ -410,7 +422,7 @@ export function createAssigner({
   }
 
   /**
-   * After sync: ends the assignments of sessions gone or released and,
+   * After sync: ends the assignments of sessions gone or held back and,
    * outside demo mode, those whose character is out of the pool, gives
    * shown sessions their kept assignment, then a character to each one
    * still without, and publishes `actors` if they changed. While demo mode
@@ -425,7 +437,7 @@ export function createAssigner({
     }
     const shown = sections.sessions;
     const shownKeys = new Set<SessionKey>(shown.map((s) => s.sessionKey));
-    const released = new Set<SessionKey>(sections.pool.released);
+    const heldBack = heldBackBy(sections.pool);
     /** The character demo mode's sessions play now; null: none. */
     const demoCharacter =
       demo !== null &&
@@ -453,18 +465,18 @@ export function createAssigner({
         // gets a character by the usual pick below.
         const outOfPool =
           !demoActors.has(key) &&
-          !released.has(key) &&
+          !heldBack(key) &&
           !inPool.has(assignment.characterKey);
         if (outOfPool) {
           leftPool += 1;
         }
-        ends = demoActors.has(key) || released.has(key) || outOfPool;
+        ends = demoActors.has(key) || heldBack(key) || outOfPool;
       } else if (isDemoSession(key)) {
         ends =
           restartDemo ||
           !demoActors.has(key) ||
           assignment.characterKey !== demoCharacter;
-      } else if (released.has(key)) {
+      } else if (heldBack(key)) {
         ends = true;
       } else {
         live.delete(key);
@@ -479,13 +491,13 @@ export function createAssigner({
       }
     }
     for (const key of parked.keys()) {
-      if (!shownKeys.has(key) || released.has(key)) {
+      if (!shownKeys.has(key) || heldBack(key)) {
         parked.delete(key);
         dropped += 1;
       }
     }
     for (const key of restored.keys()) {
-      if (released.has(key)) {
+      if (heldBack(key)) {
         restored.delete(key);
         dropped += 1;
       }
@@ -511,7 +523,7 @@ export function createAssigner({
     } else {
       const due = shown.filter(
         (session) =>
-          !released.has(session.sessionKey) && !live.has(session.sessionKey),
+          !heldBack(session.sessionKey) && !live.has(session.sessionKey),
       );
       const onStage = new Set<CharacterKey>(
         [...live.values()].map((assignment) => assignment.characterKey),

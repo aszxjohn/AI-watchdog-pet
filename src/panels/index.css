@@ -243,12 +243,15 @@ body {
   font-size: 12px;
 }
 
-/* A released session: still listed with its state, the whole row faded. */
-.session-table tr.is-released > td {
+/*
+ * A session held back (released, or not locked while 鎖定展示 is on): still
+ * listed with its state, the row faded but for its 鎖定 checkbox.
+ */
+.session-table tr.is-held-back > td:not(.session-lock) {
   opacity: 0.5;
 }
 
-.released-mark {
+.held-back-mark {
   margin-left: 8px;
   padding: 1px 6px;
   border: 1px solid var(--muted);
@@ -264,6 +267,43 @@ body {
 
 .session-action {
   white-space: nowrap;
+}
+
+/* 管理 session's toolbar: 全部釋放, 全部顯示, 鎖定中, 鎖定展示 and its line. */
+.session-toolbar {
+  margin: 0 0 12px;
+}
+
+.session-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-locking-note {
+  color: var(--warning);
+  font-size: 12px;
+}
+
+.session-lock-on {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.session-lock-on input:disabled + span {
+  color: var(--muted);
+}
+
+.session-lock-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.session-lock {
+  width: 1%;
 }
 
 .adapter-list {

@@ -385,7 +385,7 @@ describe('registerIpcHandler', () => {
           power: { suspended: false, locked: false },
           sessions: [],
           adapters: [],
-          pool: { released: [] },
+          pool: { released: [], locked: [], lockOn: false },
           actors: [],
           packs: { installed: [] },
           packImport: { phase: 'idle' },

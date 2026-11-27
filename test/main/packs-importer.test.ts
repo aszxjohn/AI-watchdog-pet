@@ -727,7 +727,7 @@ describe('with the real check and install (the contract test pack)', () => {
         get: () => ({
           sessions: [],
           adapters: [],
-          pool: { released: [] },
+          pool: { released: [], locked: [], lockOn: false },
           actors: [],
         }),
         onChange: () => () => {},

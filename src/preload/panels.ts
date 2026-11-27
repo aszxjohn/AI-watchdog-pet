@@ -9,7 +9,10 @@ import {
   packsConfirm,
   packsExport,
   packsRemove,
+  poolSetLocked,
+  poolSetLockOn,
   poolSetReleased,
+  poolSetReleasedMany,
   settingsGet,
   settingsPatch,
 } from '../shared/ipc';
@@ -29,6 +32,11 @@ const api: PanelsApi = Object.freeze({
   pool: Object.freeze({
     setReleased: (sessionKey: SessionKey, released: boolean) =>
       invoke(poolSetReleased, sessionKey, released),
+    setReleasedMany: (sessionKeys: readonly SessionKey[], released: boolean) =>
+      invoke(poolSetReleasedMany, [...sessionKeys], released),
+    setLocked: (sessionKey: SessionKey, locked: boolean) =>
+      invoke(poolSetLocked, sessionKey, locked),
+    setLockOn: (on: boolean) => invoke(poolSetLockOn, on),
   }),
   packs: Object.freeze({
     choose: () => invoke(packsChoose),

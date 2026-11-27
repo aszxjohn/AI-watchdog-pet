@@ -16,7 +16,10 @@ import {
   packsConfirm,
   packsExport,
   packsRemove,
+  poolSetLocked,
+  poolSetLockOn,
   poolSetReleased,
+  poolSetReleasedMany,
   settingsGet,
   settingsPatch,
   stageViewDelta,
@@ -204,7 +207,7 @@ describe('settings and StageView contracts', () => {
       power: { suspended: false, locked: false },
       sessions: [],
       adapters: [],
-      pool: { released: [] },
+      pool: { released: [], locked: [], lockOn: false },
       actors: [],
       packs: { installed: [] },
       packImport: { phase: 'idle' },
@@ -460,6 +463,38 @@ describe('pool:set-released contract', () => {
     expectRejected(poolSetReleased.output, undefined);
     expectRejected(poolSetReleased.output, true);
   });
+});
+
+describe('pool:set-released-many, pool:set-locked and pool:set-lock-on contracts (session bulk-lock)', () => {
+  it.each([
+    [poolSetReleasedMany.channel, 'pool:set-released-many'],
+    [poolSetLocked.channel, 'pool:set-locked'],
+    [poolSetLockOn.channel, 'pool:set-lock-on'],
+  ])('%s is a valid channel name', (channel, expected) => {
+    expect(channel).toBe(expected);
+    expect(isIpcChannelName(channel)).toBe(true);
+  });
+
+  it('pool:set-released-many takes the keys and a flag', () => {
+    expectRoundTrip(poolSetReleasedMany.input, [['demo:1', 'codex:a'], true]);
+    expectRejected(poolSetReleasedMany.input, [[], true]);
+    expectRejected(poolSetReleasedMany.input, ['demo:1', true]);
+  });
+
+  it('pool:set-locked takes a key and a flag; pool:set-lock-on a flag', () => {
+    expectRoundTrip(poolSetLocked.input, ['demo:1', false]);
+    expectRejected(poolSetLocked.input, ['vim:1', true]);
+    expectRoundTrip(poolSetLockOn.input, [true]);
+    expectRejected(poolSetLockOn.input, ['demo:1', true]);
+  });
+
+  it.each([poolSetReleasedMany, poolSetLocked, poolSetLockOn])(
+    '$channel answers null',
+    (contract) => {
+      expectRoundTrip(contract.output, null);
+      expectRejected(contract.output, true);
+    },
+  );
 });
 
 describe('packs:choose and packs:confirm contracts', () => {

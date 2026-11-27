@@ -137,7 +137,12 @@ describe('panels preload', () => {
       'settings',
       'stageView',
     ]);
-    expect(Object.keys(api.pool)).toStrictEqual(['setReleased']);
+    expect(Object.keys(api.pool)).toStrictEqual([
+      'setReleased',
+      'setReleasedMany',
+      'setLocked',
+      'setLockOn',
+    ]);
     expect(Object.keys(api.packs)).toStrictEqual([
       'choose',
       'confirm',
@@ -186,7 +191,7 @@ describe('panels preload', () => {
         power: { suspended: false, locked: false },
         sessions: [],
         adapters: [],
-        pool: { released: [] },
+        pool: { released: [], locked: [], lockOn: false },
         actors: [],
         packs: { installed: [] },
         packImport: { phase: 'idle' },
@@ -248,7 +253,7 @@ describe('panels preload', () => {
     expect(listener).toHaveBeenCalledTimes(2);
     expect(listener.mock.lastCall?.[0]).toMatchObject({
       rev: 1,
-      view: { pool: { released: ['demo:1'] } },
+      view: { pool: { released: ['demo:1'], locked: [], lockOn: false } },
     });
 
     // Releasing it again changes nothing: success, no delta.
@@ -267,7 +272,7 @@ describe('panels preload', () => {
     expect(listener).toHaveBeenCalledTimes(3);
     expect(listener.mock.lastCall?.[0]).toMatchObject({
       rev: 2,
-      view: { pool: { released: [] } },
+      view: { pool: { released: [], locked: [], lockOn: false } },
     });
   });
 
@@ -290,7 +295,39 @@ describe('panels preload', () => {
       error: { code: 'invalid-input' },
     });
     expect(listener).toHaveBeenCalledOnce();
-    expect(pool?.get()).toStrictEqual({ pool: { released: [] } });
+    expect(pool?.get()).toStrictEqual({
+      pool: { released: [], locked: [], lockOn: false },
+    });
+  });
+
+  it('pool.setReleasedMany, pool.setLocked and pool.setLockOn reach a StageView listener through the pool section, one delta each', async () => {
+    startMain();
+    const api = await loadApi();
+    const listener = vi.fn<(snapshot: StageViewSnapshot) => void>();
+    api.stageView.subscribe(listener);
+    await settle();
+
+    const results = [
+      await api.pool.setReleasedMany(['demo:2', 'demo:1'], true),
+      await api.pool.setLocked('demo:1', true),
+      await api.pool.setLockOn(true),
+    ];
+    await settle();
+
+    expect(results).toStrictEqual(
+      Array.from({ length: 3 }, () => ({ ok: true, data: null })),
+    );
+    expect(listener).toHaveBeenCalledTimes(4);
+    expect(listener.mock.lastCall?.[0]).toMatchObject({
+      rev: 3,
+      view: {
+        pool: {
+          released: ['demo:1', 'demo:2'],
+          locked: ['demo:1'],
+          lockOn: true,
+        },
+      },
+    });
   });
 
   it('a packs.choose answers null at once; StageView shows reading while the dialog is open, and the phase before once it is cancelled', async () => {

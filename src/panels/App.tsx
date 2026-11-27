@@ -5,9 +5,10 @@
  * The page comes from the URL fragment (`#/<page id>`, src/shared/panels.ts):
  * main opens the window on a page by loading that fragment, and the links on
  * the left change it. 管理 session lists the detected sessions (each can be
- * released or shown again, and names the character it plays) and the
- * running adapters' health; 舞台設定
- * lists the displays for the canvas and the detection timings (計時);
+ * released or shown again and locked, and names the character it plays)
+ * under a toolbar (全部釋放, 全部顯示, 鎖定展示), and the running adapters'
+ * health; 舞台設定 lists the displays for the canvas and the detection
+ * timings (計時);
  * 角色包 lists the installed packs (上場, and 加入池子 per character; 匯出…
  * and 移除… per pack, with how the export went and the removal asked on
  * the pack's row) above the import (匯入角色包…, how it went, the replace
@@ -15,10 +16,11 @@
  *
  * Renderer state only ever comes from StageView (AD-20): a setting changes
  * through `settings.patch` (上場 and 加入池子 too), a release through
- * `pool.setReleased`, an import through `packs.choose` / `packs.confirm`,
- * an export through `packs.export` and a removal through `packs.remove`,
- * and the page shows the outcome once StageView brings it back, never
- * earlier.
+ * `pool.setReleased` / `pool.setReleasedMany`, a lock through
+ * `pool.setLocked` / `pool.setLockOn`, an import through `packs.choose` /
+ * `packs.confirm`, an export through `packs.export` and a removal through
+ * `packs.remove`, and the page shows the outcome once StageView brings it
+ * back, never earlier.
  */
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { PRELOAD_API_KEY, PRODUCT_NAME } from '../shared/constants';
@@ -65,18 +67,24 @@ import {
 import {
   ADAPTERS_HEADING,
   adapterRows,
-  createReleaseToggle,
+  createSessionActions,
   DEMO_MODE_HINT,
-  IDLE_RELEASE_TOGGLE,
+  IDLE_SESSION_ACTIONS,
   INFERRED_LABEL,
   inferredTitle,
+  LOCK_LABEL,
+  LOCK_ON_LABEL,
   NO_ADAPTERS_TEXT,
   NO_SESSIONS_TEXT,
-  RELEASED_LABEL,
+  RELEASE_ALL_CANCEL_LABEL,
+  RELEASE_ALL_CONFIRM_LABEL,
   SESSION_COLUMNS,
   SESSIONS_HEADING,
   sessionRows,
-  type ReleaseToggleState,
+  sessionToolbar,
+  type SessionActions,
+  type SessionActionState,
+  type SessionToolbar,
 } from './session-rows';
 import {
   createTimingSaver,
@@ -361,14 +369,115 @@ function StageSettings({
   );
 }
 
+/** The ids the 管理 session page's toolbar lines are referred to by. */
+const LOCKING_NOTE_ID = 'session-locking-note';
+const LOCK_NOTE_ID = 'session-lock-note';
+const RELEASE_ALL_CONFIRM_ID = 'release-all-confirm';
+
+/**
+ * 管理 session's toolbar: 全部釋放（N） (which asks, the question under the
+ * buttons), 全部顯示（M）, 鎖定中 beside them while 鎖定展示 is on, and
+ * the 鎖定展示 switch with its line. What each shows and when it is
+ * disabled is `toolbar` (sessionToolbar); what pressing it does is
+ * `actions` (createSessionActions).
+ */
+function SessionToolbarField({
+  toolbar,
+  actions,
+}: {
+  toolbar: SessionToolbar;
+  actions: SessionActions | undefined;
+}) {
+  const lockingNote =
+    toolbar.lockingNote === null ? undefined : LOCKING_NOTE_ID;
+  const confirm = toolbar.confirm;
+  return (
+    <div className="session-toolbar">
+      <div className="session-toolbar-row">
+        <button
+          type="button"
+          disabled={toolbar.releaseAll.disabled}
+          aria-describedby={lockingNote}
+          onClick={() => {
+            actions?.askReleaseAll();
+          }}
+        >
+          {toolbar.releaseAll.label}
+        </button>
+        <button
+          type="button"
+          disabled={toolbar.showAll.disabled}
+          aria-describedby={lockingNote}
+          onClick={() => {
+            void actions?.showAll(toolbar.showAll.keys);
+          }}
+        >
+          {toolbar.showAll.label}
+        </button>
+        {toolbar.lockingNote === null ? null : (
+          <span id={LOCKING_NOTE_ID} className="session-locking-note">
+            {toolbar.lockingNote}
+          </span>
+        )}
+        <label className="session-lock-on">
+          <input
+            type="checkbox"
+            checked={toolbar.lockOn.checked}
+            disabled={toolbar.lockOn.disabled}
+            aria-describedby={LOCK_NOTE_ID}
+            onChange={() => {
+              void actions?.setLockOn(!toolbar.lockOn.checked);
+            }}
+          />
+          <span>{LOCK_ON_LABEL}</span>
+        </label>
+      </div>
+      <p id={LOCK_NOTE_ID} className="hint session-lock-note">
+        {toolbar.lockNote}
+      </p>
+      {confirm === null ? null : (
+        <div
+          className="pack-remove-confirm"
+          role="group"
+          aria-labelledby={RELEASE_ALL_CONFIRM_ID}
+        >
+          <p id={RELEASE_ALL_CONFIRM_ID}>{confirm.text}</p>
+          <div className="pack-remove-confirm-actions">
+            <button
+              type="button"
+              disabled={confirm.disabled}
+              onClick={() => {
+                void actions?.releaseAll(confirm.keys);
+              }}
+            >
+              {RELEASE_ALL_CONFIRM_LABEL}
+            </button>
+            <button
+              type="button"
+              disabled={confirm.disabled}
+              onClick={() => {
+                actions?.keepAll();
+              }}
+            >
+              {RELEASE_ALL_CANCEL_LABEL}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * 管理 session: the sessions main/detection publishes and the health of
  * each running adapter, read from StageView only. Text and order come from
- * session-rows.ts; an inferred state carries a 推測 mark, a released
- * session is faded and marked 已釋放, and each row names the character the
- * session plays (a pack author's name, isolated with <bdi>) or 沒有角色. The 釋放 / 改回顯示 logic (buttons
- * disabled until main answers, a failure shown with the rows left as
- * StageView has them) is createReleaseToggle; this only renders it.
+ * session-rows.ts; an inferred state carries a 推測 mark, a session held
+ * back is faded and marked 已釋放 (or 未鎖定 while 鎖定展示 is on), and
+ * each row names the character the session plays (a pack author's name,
+ * isolated with <bdi>) or 沒有角色, with its 鎖定 checkbox first. The
+ * toolbar above the list is sessionToolbar. Every button and checkbox
+ * (disabled until main answers, a failure shown with the rows left as
+ * StageView has them) is createSessionActions; this only renders them.
  */
 function Sessions({
   awp,
@@ -377,16 +486,23 @@ function Sessions({
   awp: PanelsApi | undefined;
   snapshot: StageViewSnapshot | null;
 }) {
-  const [release, setRelease] =
-    useState<ReleaseToggleState>(IDLE_RELEASE_TOGGLE);
-  const toggle = useMemo(
+  const [actionState, setActionState] =
+    useState<SessionActionState>(IDLE_SESSION_ACTIONS);
+  const actions = useMemo(
     () =>
       awp === undefined
         ? undefined
-        : createReleaseToggle(
-            (sessionKey, released) =>
-              awp.pool.setReleased(sessionKey, released),
-            setRelease,
+        : createSessionActions(
+            {
+              setReleased: (sessionKey, released) =>
+                awp.pool.setReleased(sessionKey, released),
+              setReleasedMany: (sessionKeys, released) =>
+                awp.pool.setReleasedMany(sessionKeys, released),
+              setLocked: (sessionKey, locked) =>
+                awp.pool.setLocked(sessionKey, locked),
+              setLockOn: (on) => awp.pool.setLockOn(on),
+            },
+            setActionState,
           ),
     [awp],
   );
@@ -395,12 +511,23 @@ function Sessions({
     return <p className="coming-soon">讀取中…</p>;
   }
   const rows = sessionRows(snapshot.view);
+  const toolbar = sessionToolbar(
+    rows,
+    snapshot.view.pool,
+    actionState,
+    actions !== undefined,
+  );
   const adapters = adapterRows(snapshot.view);
+  const lockingNote =
+    toolbar.lockingNote === null ? undefined : LOCKING_NOTE_ID;
 
   return (
     <>
       <section className="sessions" aria-labelledby="sessions-heading">
         <h2 id="sessions-heading">{SESSIONS_HEADING}</h2>
+        {toolbar.visible ? (
+          <SessionToolbarField toolbar={toolbar} actions={actions} />
+        ) : null}
         {rows.length === 0 ? (
           <div className="sessions-empty">
             <p>{NO_SESSIONS_TEXT}</p>
@@ -422,14 +549,25 @@ function Sessions({
                 <tr
                   key={row.key}
                   data-state={row.stateCode}
-                  className={row.released ? 'is-released' : undefined}
+                  className={row.mark === null ? undefined : 'is-held-back'}
                 >
+                  <td className="session-lock">
+                    <input
+                      type="checkbox"
+                      checked={row.locked}
+                      disabled={toolbar.rowLockDisabled}
+                      aria-label={`${LOCK_LABEL} ${row.name}`}
+                      onChange={() => {
+                        void actions?.toggleLock(row);
+                      }}
+                    />
+                  </td>
                   <td>{row.source}</td>
                   <td>
                     {row.name}
-                    {row.released ? (
-                      <span className="released-mark">{RELEASED_LABEL}</span>
-                    ) : null}
+                    {row.mark === null ? null : (
+                      <span className="held-back-mark">{row.mark}</span>
+                    )}
                   </td>
                   <td>
                     <span
@@ -461,9 +599,10 @@ function Sessions({
                     <button
                       type="button"
                       aria-label={`${row.action} ${row.name}`}
-                      disabled={release.sending || toggle === undefined}
+                      aria-describedby={lockingNote}
+                      disabled={toolbar.rowReleaseDisabled}
                       onClick={() => {
-                        void toggle?.toggle(row);
+                        void actions?.toggle(row);
                       }}
                     >
                       {row.action}
@@ -474,9 +613,9 @@ function Sessions({
             </tbody>
           </table>
         )}
-        {release.error === null ? null : (
+        {actionState.error === null ? null : (
           <p className="setting-error" role="alert">
-            {release.error}
+            {actionState.error}
           </p>
         )}
       </section>

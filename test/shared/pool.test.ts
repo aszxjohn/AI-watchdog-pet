@@ -2,10 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { DETECTION_ID_MAX_LENGTH } from '../../src/shared/detection-events';
 import { ACTOR_ID_MAX_LENGTH } from '../../src/shared/pack-api';
 import {
+  heldBackBy,
   POOL_SCHEMA_VERSION,
+  POOL_SET_RELEASED_MANY_MAX_KEYS,
   poolAssignmentSchema,
   poolFileSchema,
+  poolSetLockedInputSchema,
+  poolSetLockOnInputSchema,
   poolSetReleasedInputSchema,
+  poolSetReleasedManyInputSchema,
   sortedSessionKeys,
   stageActorSchema,
   stageActorsSchema,
@@ -22,14 +27,16 @@ const ASSIGNMENT = {
 
 /** The Design Notes example, with a real-looking Claude Code key. */
 const FILE = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   released: [CLAUDE_KEY, 'demo:3'],
+  locked: [],
+  lockOn: false,
   assignments: [],
 };
 
 /** A file with an assignment (Story 3.4). */
 const ASSIGNED_FILE = {
-  schemaVersion: 2,
+  ...FILE,
   released: ['demo:3'],
   assignments: [
     ASSIGNMENT,
@@ -62,24 +69,21 @@ describe('sortedSessionKeys', () => {
 });
 
 describe('poolFileSchema (assignments.json)', () => {
-  it('is at schemaVersion 2 (Story 3.4)', () => {
-    expect(POOL_SCHEMA_VERSION).toBe(2);
+  it('is at schemaVersion 3 (session bulk-lock)', () => {
+    expect(POOL_SCHEMA_VERSION).toBe(3);
   });
 
   it.each([
     ['the design-notes file', FILE],
-    ['nothing released', { schemaVersion: 2, released: [], assignments: [] }],
+    ['nothing released', { ...FILE, released: [] }],
     [
       'keys in any order, one repeated (the store sorts them on reading)',
-      {
-        schemaVersion: 2,
-        released: ['demo:3', 'codex:a', 'demo:3'],
-        assignments: [],
-      },
+      { ...FILE, released: ['demo:3', 'codex:a', 'demo:3'] },
     ],
+    ['a native id with a colon', { ...FILE, released: ['cursor:a:b'] }],
     [
-      'a native id with a colon',
-      { schemaVersion: 2, released: ['cursor:a:b'], assignments: [] },
+      'locked keys in any order, 鎖定展示 on (session bulk-lock)',
+      { ...FILE, locked: ['demo:3', CLAUDE_KEY], lockOn: true },
     ],
     ['assignments', ASSIGNED_FILE],
     [
@@ -104,12 +108,16 @@ describe('poolFileSchema (assignments.json)', () => {
   });
 
   it.each([
-    ['no schemaVersion', { released: [], assignments: [] }],
-    ['schemaVersion 1', { ...FILE, schemaVersion: 1 }],
-    ['schemaVersion 3', { ...FILE, schemaVersion: 3 }],
-    ['schemaVersion as a string', { ...FILE, schemaVersion: '2' }],
-    ['no released list', { schemaVersion: 2, assignments: [] }],
-    ['no assignments list', { schemaVersion: 2, released: [] }],
+    ['no schemaVersion', { ...FILE, schemaVersion: undefined }],
+    ['schemaVersion 2', { ...FILE, schemaVersion: 2 }],
+    ['schemaVersion 4', { ...FILE, schemaVersion: 4 }],
+    ['schemaVersion as a string', { ...FILE, schemaVersion: '3' }],
+    ['no released list', { ...FILE, released: undefined }],
+    ['no assignments list', { ...FILE, assignments: undefined }],
+    ['no locked list', { ...FILE, locked: undefined }],
+    ['no lockOn', { ...FILE, lockOn: undefined }],
+    ['a lockOn that is not a boolean', { ...FILE, lockOn: 'true' }],
+    ['a bad locked key', { ...FILE, locked: ['vim:1'] }],
     ['released as an object', { ...FILE, released: { a: 1 } }],
     ['assignments as an object', { ...FILE, assignments: {} }],
     ['an unknown source', { ...FILE, released: ['vim:1'] }],
@@ -189,23 +197,64 @@ describe('poolAssignmentSchema', () => {
 });
 
 describe('stagePoolSchema (StageView pool section)', () => {
+  const NONE = { released: [], locked: [], lockOn: false };
+
   it.each([
-    ['nothing released', { released: [] }],
-    ['one key', { released: ['demo:1'] }],
-    ['sorted keys', { released: ['claude-code:x', 'codex:a', 'demo:1'] }],
+    ['nothing released', NONE],
+    ['one key', { ...NONE, released: ['demo:1'] }],
+    [
+      'sorted keys',
+      { ...NONE, released: ['claude-code:x', 'codex:a', 'demo:1'] },
+    ],
+    [
+      'locked keys, 鎖定展示 off',
+      { ...NONE, locked: ['claude-code:x', 'demo:1'] },
+    ],
+    [
+      'a key released and locked, 鎖定展示 on',
+      { released: ['demo:1'], locked: ['demo:1'], lockOn: true },
+    ],
   ])('round-trips %s', (_label, value) => {
     expectRoundTrip(stagePoolSchema, value);
   });
 
   it.each([
-    ['keys out of order', { released: ['demo:1', 'codex:a'] }],
-    ['a key twice', { released: ['demo:1', 'demo:1'] }],
-    ['a bad key', { released: ['demo'] }],
+    ['keys out of order', { ...NONE, released: ['demo:1', 'codex:a'] }],
+    ['a key twice', { ...NONE, released: ['demo:1', 'demo:1'] }],
+    ['a bad key', { ...NONE, released: ['demo'] }],
+    ['locked keys out of order', { ...NONE, locked: ['demo:1', 'codex:a'] }],
+    ['a locked key twice', { ...NONE, locked: ['demo:1', 'demo:1'] }],
+    ['鎖定展示 on with nothing locked', { ...NONE, lockOn: true }],
     ['no list', {}],
-    ['an extra field', { released: [], actors: [] }],
+    ['no locked list or lockOn', { released: [] }],
+    ['an extra field', { ...NONE, actors: [] }],
     ['a bare list', ['demo:1']],
   ])('rejects %s', (_label, value) => {
     expectRejected(stagePoolSchema, value);
+  });
+});
+
+describe('heldBackBy (who gets no character)', () => {
+  const KEYS = ['codex:a', 'codex:b', 'demo:1'] as const;
+
+  it.each([
+    [
+      '鎖定展示 off: the released ones',
+      { released: ['codex:a'], locked: ['codex:b'], lockOn: false },
+      [true, false, false],
+    ],
+    [
+      '鎖定展示 on: every one not locked, released or not',
+      { released: ['codex:a'], locked: ['codex:a'], lockOn: true },
+      [false, true, true],
+    ],
+  ] as const)('%s', (_label, pool, expected) => {
+    const heldBack = heldBackBy({
+      released: [...pool.released],
+      locked: [...pool.locked],
+      lockOn: pool.lockOn,
+    });
+    expect(KEYS.map((key) => heldBack(key))).toStrictEqual(expected);
   });
 });
 
@@ -280,5 +329,54 @@ describe('poolSetReleasedInputSchema', () => {
     ['an extra argument', ['demo:1', true, true]],
   ])('rejects %s', (_label, value) => {
     expectRejected(poolSetReleasedInputSchema, value);
+  });
+});
+
+describe('poolSetReleasedManyInputSchema (session bulk-lock)', () => {
+  const keys = (count: number) =>
+    Array.from({ length: count }, (_, i) => `demo:${i}`);
+
+  it.each([
+    ['release one', [['demo:1'], true]],
+    [
+      'show several again, one repeated',
+      [['codex:a', 'demo:1', 'demo:1'], false],
+    ],
+    ['exactly the limit', [keys(POOL_SET_RELEASED_MANY_MAX_KEYS), true]],
+  ])('round-trips %s', (_label, value) => {
+    expectRoundTrip(poolSetReleasedManyInputSchema, value);
+  });
+
+  it.each([
+    ['no keys', [[], true]],
+    ['one past the limit', [keys(POOL_SET_RELEASED_MANY_MAX_KEYS + 1), true]],
+    ['a bad key', [['demo:1', 'vim:1'], true]],
+    ['a key, not a list', ['demo:1', true]],
+    ['no flag', [['demo:1']]],
+    ['an extra argument', [['demo:1'], true, true]],
+  ])('rejects %s', (_label, value) => {
+    expectRejected(poolSetReleasedManyInputSchema, value);
+  });
+});
+
+describe('poolSetLockedInputSchema and poolSetLockOnInputSchema (session bulk-lock)', () => {
+  it.each([
+    [poolSetLockedInputSchema, ['demo:1', true]],
+    [poolSetLockedInputSchema, ['codex:a', false]],
+    [poolSetLockOnInputSchema, [true]],
+    [poolSetLockOnInputSchema, [false]],
+  ])('round-trips %#', (schema, value) => {
+    expectRoundTrip(schema, value);
+  });
+
+  it.each([
+    [poolSetLockedInputSchema, ['vim:1', true]],
+    [poolSetLockedInputSchema, ['demo:1']],
+    [poolSetLockedInputSchema, ['demo:1', 'true']],
+    [poolSetLockOnInputSchema, []],
+    [poolSetLockOnInputSchema, ['on']],
+    [poolSetLockOnInputSchema, [true, true]],
+  ])('rejects %#', (schema, value) => {
+    expectRejected(schema, value);
   });
 });

@@ -1,9 +1,11 @@
 /**
  * main/pool (Story 2.8, AD-23): the only owner and writer of
- * assignments.json, which remembers the sessions the user released and,
- * since Story 3.4, the character each session was assigned (main/pool's
- * assigner, assign.ts, decides those and hands them here to be saved). A
- * released session is still detected as usual and gets no character. The
+ * assignments.json, which remembers the sessions the user released, since
+ * Story 3.4 the character each session was assigned (main/pool's assigner,
+ * assign.ts, decides those and hands them here to be saved), and since the
+ * session bulk-lock the sessions the user locked and whether 鎖定展示 is
+ * on. A released (or, with 鎖定展示 on, unlocked) session is still detected
+ * as usual and gets no character (src/shared/pool heldBackBy). The
  * store offers its `pool` section the way main/detection offers its own
  * (get() and onChange()); it does not depend on main/detection, nor
  * main/detection on it: main.ts hands the assigner detection's start-up
@@ -14,30 +16,39 @@
  * - unreadable file (e.g. EACCES): nothing released, no assignment, and this
  *   run never writes;
  * - unusable file (not JSON, not an object, bad `schemaVersion`, newer than
- *   this build, a migration that fails, `released` or `assignments` missing
- *   or not a list, or an unknown field): renamed to
+ *   this build, a migration that fails, `released`, `locked` or
+ *   `assignments` missing or not a list, `lockOn` missing or not a boolean,
+ *   or an unknown field): renamed to
  *   `assignments.json.broken-<YYYYMMDD-HHmmss>` and nothing is released;
  *   if the rename fails, this run never writes;
- * - bad entries (Story 3.4), checked one by one: a released key that fails
- *   the shared schema, an assignment that does, or one naming a session key
- *   or an actor id an earlier one named. Those entries are dropped and the
- *   rest kept; the original is copied to a `.broken-` file and the
- *   corrected file is written back at once (as main/settings does with bad
- *   fields); if the copy fails, this run never writes.
+ * - bad entries (Story 3.4), checked one by one: a released or locked key
+ *   that fails the shared schema, an assignment that does, or one naming a
+ *   session key or an actor id an earlier one named. Those entries are
+ *   dropped and the rest kept; the original is copied to a `.broken-` file
+ *   and the corrected file is written back at once (as main/settings does
+ *   with bad fields); if the copy fails, this run never writes.
  * A version-1 file (released keys only) is migrated forward to version 2
- * with no assignment. The released keys read are sorted, each once; the
- * assignments are sorted by session key.
+ * with no assignment, a version-2 file to version 3 with nothing locked and
+ * 鎖定展示 off. The released and locked keys read are sorted, each once; a
+ * `lockOn` with no locked key left reads as off; the assignments are
+ * sorted by session key.
  *
  * Changes:
- * - setReleased releases a key or shows it again. One that changes nothing
- *   is no change: no notification, nothing written.
+ * - setReleased releases a key or shows it again; setReleasedMany does so
+ *   for several keys at once, as one change (one notification, one write).
+ * - setLocked locks a key or unlocks it; unlocking the last locked key
+ *   turns 鎖定展示 off in the same change. setLockOn turns 鎖定展示 on (only
+ *   while some key is locked) or off.
+ * - Any of them that changes nothing is no change: no notification,
+ *   nothing written.
  * - sweep(reported, unconfirmed), once, after detection's start-up sync:
- *   keeps the released keys detection reported since start and drops the
- *   rest (sessions saved from an earlier run that did not come back),
- *   except that a key whose source is in `unconfirmed` (its adapter was
- *   still syncing at the deadline, or failed to start: it may not have
- *   reported every session) is kept unswept (Epic 2 close-out B1). A key
- *   released and ended within one run stays released until the next
+ *   keeps the released and locked keys detection reported since start and
+ *   drops the rest (sessions saved from an earlier run that did not come
+ *   back), except that a key whose source is in `unconfirmed` (its adapter
+ *   was still syncing at the deadline, or failed to start: it may not have
+ *   reported every session) is kept unswept (Epic 2 close-out B1). When no
+ *   locked key is left, 鎖定展示 goes off in the same change. A key
+ *   released (or locked) and ended within one run stays so until the next
  *   start's sweep. The assignments are swept by main/pool's assigner,
  *   which calls this.
  * - setAssignments takes the assignments the assigner decided; nobody is
@@ -47,8 +58,8 @@
  *   through main/persist (temp file, fsync, rename). flushSync() writes
  *   what is pending right now (app quit). A failed write is logged, its
  *   temp file removed, and the keys and assignments kept in memory for the
- *   next flush; the panel is not told (the release holds for this run, and
- *   the assignments are worked out again at the next start).
+ *   next flush; the panel is not told (the release or lock holds for this
+ *   run, and the assignments are worked out again at the next start).
  *
  * fs is synchronous on purpose, as in main/settings. Log lines carry counts,
  * reasons and error codes only, never a session key, a path or file
@@ -66,8 +77,10 @@ import {
   POOL_SCHEMA_VERSION,
   poolAssignmentSchema,
   poolFileSchema,
+  poolSetReleasedManyInputSchema,
   sortedSessionKeys,
   type PoolAssignment,
+  type StagePool,
 } from '../../shared/pool';
 import type { SourceCode } from '../../shared/sources';
 import type { StageViewPoolSections } from '../../shared/stage-view';
@@ -94,19 +107,28 @@ export interface PoolFs extends AtomicWriteFs, BrokenFileFs {
 
 /**
  * Forward-only migrations of assignments.json. 1 → 2 (Story 3.4): the
- * released keys stay, with no assignment.
+ * released keys stay, with no assignment. 2 → 3 (session bulk-lock): the
+ * released keys and assignments stay, nothing is locked and 鎖定展示 is off.
  */
 export const POOL_MIGRATIONS: FileMigrations = Object.freeze({
   1: (data: Record<string, unknown>) => ({ ...data, assignments: [] }),
+  2: (data: Record<string, unknown>) => ({
+    ...data,
+    locked: [],
+    lockOn: false,
+  }),
 });
 
 /**
- * The file's shape, checked before its entries: the two lists are there
- * and nothing else is. Each entry is checked on its own afterwards.
+ * The file's shape, checked before its entries: the three lists and
+ * `lockOn` are there and nothing else is. Each entry is checked on its own
+ * afterwards.
  */
 const poolFileShapeSchema = z.strictObject({
   schemaVersion: z.literal(POOL_SCHEMA_VERSION),
   released: z.array(z.unknown()),
+  locked: z.array(z.unknown()),
+  lockOn: z.boolean(),
   assignments: z.array(z.unknown()),
 });
 
@@ -123,7 +145,10 @@ export interface PoolStoreOptions {
 export type PoolListener = (sections: StageViewPoolSections) => void;
 
 export interface PoolStore {
-  /** The `pool` section: the released keys, sorted, each once. */
+  /**
+   * The `pool` section: the released and locked keys, each sorted and once,
+   * and whether 鎖定展示 is on.
+   */
   get(): StageViewPoolSections;
   /** Called after every change. Returns an unsubscribe. */
   onChange(listener: PoolListener): () => void;
@@ -134,9 +159,31 @@ export interface PoolStore {
    */
   setReleased(sessionKey: SessionKey, released: boolean): boolean;
   /**
-   * After detection's start-up sync: drops every released key not in
-   * `reported`, except those whose source is in `unconfirmed`. Only the
-   * first call does anything. The assignments are left to the assigner.
+   * Releases every key of `sessionKeys` (true) or shows each again (false),
+   * as one change; answers whether that changed anything. Throws, changing
+   * nothing, when the keys fail `pool:set-released-many`'s shared schema
+   * (a bad key, none, or more than POOL_SET_RELEASED_MANY_MAX_KEYS).
+   */
+  setReleasedMany(
+    sessionKeys: readonly SessionKey[],
+    released: boolean,
+  ): boolean;
+  /**
+   * Locks `sessionKey` (true) or unlocks it (false); unlocking the last
+   * locked key turns 鎖定展示 off in the same change. Answers whether that
+   * changed anything. Throws only if `sessionKey` fails the shared schema.
+   */
+  setLocked(sessionKey: SessionKey, locked: boolean): boolean;
+  /**
+   * Turns 鎖定展示 on (true; nothing changes while no key is locked) or off
+   * (false). Answers whether that changed anything.
+   */
+  setLockOn(on: boolean): boolean;
+  /**
+   * After detection's start-up sync: drops every released or locked key
+   * not in `reported`, except those whose source is in `unconfirmed`, and
+   * turns 鎖定展示 off if no locked key is left. Only the first call does
+   * anything. The assignments are left to the assigner.
    */
   sweep(
     reported: ReadonlySet<SessionKey>,
@@ -161,21 +208,36 @@ export interface PoolStore {
   readonly canWrite: boolean;
 }
 
-interface Loaded {
+/** What the store keeps of its `pool` section; the lists are frozen. */
+interface PoolState {
   readonly released: readonly SessionKey[];
+  readonly locked: readonly SessionKey[];
+  readonly lockOn: StagePool['lockOn'];
+}
+
+interface Loaded {
+  readonly pool: PoolState;
   readonly assignments: readonly PoolAssignment[];
   readonly canWrite: boolean;
   /** Bad entries were dropped: the corrected file is written back at once. */
   readonly needsWrite: boolean;
 }
 
-const NOTHING_RELEASED: readonly SessionKey[] = Object.freeze([]);
+const NO_KEYS: readonly SessionKey[] = Object.freeze([]);
 const NO_ASSIGNMENTS: readonly PoolAssignment[] = Object.freeze([]);
+const NOTHING_HELD: PoolState = Object.freeze({
+  released: NO_KEYS,
+  locked: NO_KEYS,
+  lockOn: false,
+});
 
-/** Nothing released and no assignment, written (or not) as `canWrite` says. */
+/**
+ * Nothing released or locked, 鎖定展示 off and no assignment, written (or
+ * not) as `canWrite` says.
+ */
 function empty(canWrite: boolean): Loaded {
   return {
-    released: NOTHING_RELEASED,
+    pool: NOTHING_HELD,
     assignments: NO_ASSIGNMENTS,
     canWrite,
     needsWrite: false,
@@ -221,30 +283,44 @@ function sameAssignments(
 /** What the entries of a well-shaped file hold, and how many were bad. */
 interface ReadEntries {
   readonly released: readonly SessionKey[];
+  readonly locked: readonly SessionKey[];
   readonly assignments: readonly PoolAssignment[];
   readonly badReleased: number;
+  readonly badLocked: number;
   readonly badAssignments: number;
 }
 
-/**
- * Checks each entry on its own: a released key against the shared schema;
- * an assignment against it too, and against the assignments before it (a
- * session key or actor id named again is a bad entry, the first one wins).
- */
-function readEntries(
-  released: readonly unknown[],
-  assignments: readonly unknown[],
-): ReadEntries {
+/** The keys of `entries` that pass the shared schema, and how many did not. */
+function readKeys(entries: readonly unknown[]): {
+  readonly keys: SessionKey[];
+  readonly bad: number;
+} {
   const keys: SessionKey[] = [];
-  let badReleased = 0;
-  for (const entry of released) {
+  let bad = 0;
+  for (const entry of entries) {
     const parsed = sessionKeySchema.safeParse(entry);
     if (parsed.success) {
       keys.push(parsed.data);
     } else {
-      badReleased += 1;
+      bad += 1;
     }
   }
+  return { keys, bad };
+}
+
+/**
+ * Checks each entry on its own: a released or locked key against the
+ * shared schema; an assignment against it too, and against the assignments
+ * before it (a session key or actor id named again is a bad entry, the
+ * first one wins).
+ */
+function readEntries(
+  released: readonly unknown[],
+  locked: readonly unknown[],
+  assignments: readonly unknown[],
+): ReadEntries {
+  const releasedRead = readKeys(released);
+  const lockedRead = readKeys(locked);
   const kept: PoolAssignment[] = [];
   const sessions = new Set<string>();
   const actors = new Set<string>();
@@ -263,7 +339,14 @@ function readEntries(
     actors.add(parsed.data.actorId);
     kept.push(parsed.data);
   }
-  return { released: keys, assignments: kept, badReleased, badAssignments };
+  return {
+    released: releasedRead.keys,
+    locked: lockedRead.keys,
+    assignments: kept,
+    badReleased: releasedRead.bad,
+    badLocked: lockedRead.bad,
+    badAssignments,
+  };
 }
 
 function log(message: string, level: ConsoleLevel = 'info'): void {
@@ -285,13 +368,37 @@ function failedFields(issues: z.ZodError['issues']): string {
   return [...paths].join(', ');
 }
 
-/** The `pool` section for `keys`, a copy StageView may keep. */
-function sectionOf(keys: readonly SessionKey[]): StageViewPoolSections {
-  return { pool: { released: [...keys] } };
+/** The `pool` section for `state`, a copy StageView may keep. */
+function sectionOf(state: PoolState): StageViewPoolSections {
+  return {
+    pool: {
+      released: [...state.released],
+      locked: [...state.locked],
+      lockOn: state.lockOn,
+    },
+  };
 }
 
 function released(count: number): string {
   return `${count} released`;
+}
+
+function locked(count: number): string {
+  return `${count} locked`;
+}
+
+/** The locked count and, when it is on, 鎖定展示 (`lock on`). */
+function lockedState(state: PoolState): string {
+  return `${locked(state.locked.length)}${state.lockOn ? ', lock on' : ''}`;
+}
+
+/** `state` with `locked`, 鎖定展示 going off when none is left. */
+function withLocked(state: PoolState, next: readonly SessionKey[]): PoolState {
+  return {
+    ...state,
+    locked: Object.freeze([...next]),
+    lockOn: state.lockOn && next.length > 0,
+  };
 }
 
 function assigned(count: number): string {
@@ -391,18 +498,29 @@ export function loadPool({
         `does not match the schema (fields: ${failedFields(shaped.error.issues)})`,
       );
     }
-    const entries = readEntries(shaped.data.released, shaped.data.assignments);
-    const keys = Object.freeze(sortedSessionKeys(entries.released));
+    const entries = readEntries(
+      shaped.data.released,
+      shaped.data.locked,
+      shaped.data.assignments,
+    );
+    const lockedKeys = Object.freeze(sortedSessionKeys(entries.locked));
+    const pool: PoolState = Object.freeze({
+      released: Object.freeze(sortedSessionKeys(entries.released)),
+      locked: lockedKeys,
+      // On with nothing locked reads as off (the store never writes that).
+      lockOn: shaped.data.lockOn && lockedKeys.length > 0,
+    });
     const kept = sortedAssignments(entries.assignments);
-    const bad = entries.badReleased + entries.badAssignments;
+    const bad =
+      entries.badReleased + entries.badLocked + entries.badAssignments;
     if (bad > 0) {
-      return keepGoodEntries(keys, kept, entries);
+      return keepGoodEntries(pool, kept, entries);
     }
     log(
-      `loaded ${fileName}: ${released(keys.length)}, ${assigned(kept.length)}`,
+      `loaded ${fileName}: ${released(pool.released.length)}, ${assigned(kept.length)}, ${lockedState(pool)}`,
     );
     return {
-      released: keys,
+      pool,
       assignments: kept,
       canWrite: true,
       needsWrite: false,
@@ -414,11 +532,11 @@ export function loadPool({
    * has the corrected file written back at once. Counts only in the log.
    */
   function keepGoodEntries(
-    keys: readonly SessionKey[],
+    pool: PoolState,
     kept: readonly PoolAssignment[],
-    { badReleased, badAssignments }: ReadEntries,
+    { badReleased, badLocked, badAssignments }: ReadEntries,
   ): Loaded {
-    const problems = `${released(badReleased)}, ${assigned(badAssignments)}`;
+    const problems = `${released(badReleased)}, ${assigned(badAssignments)}, ${locked(badLocked)}`;
     let target: string;
     try {
       target = brokenBackupPath(fs, file, now());
@@ -429,18 +547,18 @@ export function loadPool({
         'error',
       );
       return {
-        released: keys,
+        pool,
         assignments: kept,
         canWrite: false,
         needsWrite: false,
       };
     }
     log(
-      `${fileName} has bad entries (${problems}); copied it to ${path.basename(target)} and dropping them: ${released(keys.length)}, ${assigned(kept.length)} kept`,
+      `${fileName} has bad entries (${problems}); copied it to ${path.basename(target)} and dropping them: ${released(pool.released.length)}, ${assigned(kept.length)}, ${locked(pool.locked.length)} kept`,
       'warn',
     );
     return {
-      released: keys,
+      pool,
       assignments: kept,
       canWrite: true,
       needsWrite: true,
@@ -449,29 +567,36 @@ export function loadPool({
 
   const loaded = load();
   const canWrite = loaded.canWrite;
-  let keys: readonly SessionKey[] = loaded.released;
+  let state: PoolState = loaded.pool;
   let saved: readonly PoolAssignment[] = loaded.assignments;
-  let section = sectionOf(keys);
+  let section = sectionOf(state);
   let dirty = loaded.needsWrite;
   let swept = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const listeners = new Set<PoolListener>();
 
   /**
-   * Writes the released keys and the assignments via main/persist when
-   * anything is pending.
+   * Writes the released and locked keys, 鎖定展示 and the assignments via
+   * main/persist when anything is pending.
    */
   function writeNow(): void {
     if (!canWrite || !dirty) {
       return;
     }
-    const text = `${JSON.stringify({ schemaVersion, released: keys, assignments: saved }, null, 2)}\n`;
+    const content = {
+      schemaVersion,
+      released: state.released,
+      locked: state.locked,
+      lockOn: state.lockOn,
+      assignments: saved,
+    };
+    const text = `${JSON.stringify(content, null, 2)}\n`;
     try {
       writeFileAtomic(fs, file, text);
       dirty = false;
     } catch (error) {
       log(
-        `cannot write ${fileName} (${errorCode(error)}); keeping the released sessions in memory and retrying on the next flush`,
+        `cannot write ${fileName} (${errorCode(error)}); keeping the released and locked sessions in memory and retrying on the next flush`,
         'error',
       );
     }
@@ -491,10 +616,10 @@ export function loadPool({
     writeNow();
   }
 
-  /** Takes `next` as the released keys: saved later, heard now. */
-  function change(next: readonly SessionKey[]): void {
-    keys = Object.freeze([...next]);
-    section = sectionOf(keys);
+  /** Takes `next` as the pool state: saved later, heard now. */
+  function change(next: PoolState): void {
+    state = Object.freeze(next);
+    section = sectionOf(state);
     dirty = true;
     scheduleFlush();
     const current = section;
@@ -521,16 +646,68 @@ export function loadPool({
 
     setReleased(sessionKey, release) {
       const key = sessionKeySchema.parse(sessionKey);
-      if (keys.includes(key) === release) {
+      if (state.released.includes(key) === release) {
         return false;
       }
       const next = release
-        ? sortedSessionKeys([...keys, key])
-        : keys.filter((kept) => kept !== key);
+        ? sortedSessionKeys([...state.released, key])
+        : state.released.filter((kept) => kept !== key);
       log(
         `${release ? 'released a session' : 'showed a session again'} (${released(next.length)})`,
       );
+      change({ ...state, released: Object.freeze(next) });
+      return true;
+    },
+
+    setReleasedMany(sessionKeys, release) {
+      const [given] = poolSetReleasedManyInputSchema.parse([
+        sessionKeys,
+        release,
+      ]);
+      const wanted = new Set<SessionKey>(given);
+      const next = release
+        ? sortedSessionKeys([...state.released, ...wanted])
+        : state.released.filter((kept) => !wanted.has(kept));
+      const count = Math.abs(next.length - state.released.length);
+      if (count === 0) {
+        return false;
+      }
+      log(
+        `${release ? 'released' : 'showed'} ${count} ${count === 1 ? 'session' : 'sessions'}${release ? '' : ' again'} at once (${released(next.length)})`,
+      );
+      change({ ...state, released: Object.freeze(next) });
+      return true;
+    },
+
+    setLocked(sessionKey, lock) {
+      const key = sessionKeySchema.parse(sessionKey);
+      if (state.locked.includes(key) === lock) {
+        return false;
+      }
+      const next = withLocked(
+        state,
+        lock
+          ? sortedSessionKeys([...state.locked, key])
+          : state.locked.filter((kept) => kept !== key),
+      );
+      const turnedOff = state.lockOn && !next.lockOn;
+      log(
+        `${lock ? 'locked a session' : 'unlocked a session'} (${lockedState(next)}${turnedOff ? '; lock turned off: nothing locked' : ''})`,
+      );
       change(next);
+      return true;
+    },
+
+    setLockOn(on) {
+      if (on && state.locked.length === 0) {
+        log('lock not turned on: nothing locked', 'warn');
+        return false;
+      }
+      if (on === state.lockOn) {
+        return false;
+      }
+      log(`lock turned ${on ? 'on' : 'off'} (${locked(state.locked.length)})`);
+      change({ ...state, lockOn: on });
       return true;
     },
 
@@ -553,30 +730,37 @@ export function loadPool({
         return;
       }
       swept = true;
-      /** Kept only because their source is unconfirmed. */
+      /** Released keys kept only because their source is unconfirmed. */
       let unswept = 0;
-      const kept = keys.filter((key) => {
-        if (reported.has(key)) {
-          return true;
-        }
-        if (unconfirmed.has(splitSessionKey(key).source)) {
+      const stays = (key: SessionKey): boolean =>
+        reported.has(key) || unconfirmed.has(splitSessionKey(key).source);
+      const kept = state.released.filter((key) => {
+        if (!reported.has(key) && stays(key)) {
           unswept += 1;
-          return true;
         }
-        return false;
+        return stays(key);
       });
-      const dropped = keys.length - kept.length;
-      // Counts and source codes only. With every source confirmed, the
-      // line reads as it did before Epic 2's close-out.
+      const dropped = state.released.length - kept.length;
+      const next = withLocked(
+        { ...state, released: Object.freeze(kept) },
+        state.locked.filter(stays),
+      );
+      const droppedLocked = state.locked.length - next.locked.length;
+      // Counts and source codes only. With every source confirmed and
+      // nothing locked, the line reads as it did before Epic 2's close-out.
       const unconfirmedNote =
         unconfirmed.size === 0
           ? ''
           : `; ${unswept} kept unreported from unconfirmed sources: ${[...unconfirmed].join(', ')}`;
+      const lockedNote =
+        state.locked.length === 0
+          ? ''
+          : `; locked: kept ${next.locked.length}, dropped ${droppedLocked}${state.lockOn && !next.lockOn ? ', lock turned off: nothing locked' : ''}`;
       log(
-        `start-up sweep: kept ${kept.length}, dropped ${dropped} (${reported.size} sessions reported${unconfirmedNote})`,
+        `start-up sweep: kept ${kept.length}, dropped ${dropped} (${reported.size} sessions reported${unconfirmedNote})${lockedNote}`,
       );
-      if (dropped > 0) {
-        change(kept);
+      if (dropped + droppedLocked > 0) {
+        change(next);
       }
     },
 

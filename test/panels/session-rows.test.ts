@@ -2,25 +2,33 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ADAPTERS_HEADING,
   adapterRows,
-  createReleaseToggle,
+  createSessionActions,
   DEMO_MODE_HINT,
-  IDLE_RELEASE_TOGGLE,
+  IDLE_SESSION_ACTIONS,
   INFERRED_LABEL,
   INFERRED_TITLE,
   INFERRED_TURN_END_TITLE,
   inferredTitle,
+  LOCKING_NOTE,
+  lockNoteText,
   nativeIdOf,
   NO_ADAPTERS_TEXT,
   NO_CHARACTER_TEXT,
   NO_SESSIONS_TEXT,
   RELEASE_ACTION,
+  releaseAllConfirmText,
+  releaseAllLabel,
   RELEASED_LABEL,
-  releaseErrorText,
   SESSION_COLUMNS,
+  sessionActionErrorText,
   sessionRows,
   SESSIONS_HEADING,
+  sessionToolbar,
   SHOW_AGAIN_ACTION,
-  type ReleaseToggleState,
+  showAllLabel,
+  UNLOCKED_LABEL,
+  type SessionActionState,
+  type SessionPoolApi,
 } from '../../src/panels/session-rows';
 import type { SessionKey } from '../../src/shared/detection-events';
 import type { IpcResult } from '../../src/shared/ipc';
@@ -40,7 +48,11 @@ const DEMO: StageSession = {
   confidence: 'exact',
 };
 
-const NOTHING_RELEASED: StagePool = { released: [] };
+const NOTHING_RELEASED: StagePool = {
+  released: [],
+  locked: [],
+  lockOn: false,
+};
 
 /** No actor and no installed pack: every row reads 沒有角色. */
 const NO_CHARACTERS: Pick<StageView, 'actors' | 'packs'> = {
@@ -69,6 +81,8 @@ describe('sessionRows', () => {
         stateCode: 'approval',
         inferred: false,
         released: false,
+        locked: false,
+        mark: null,
         character: '沒有角色',
         characterKey: null,
         action: '釋放',
@@ -211,7 +225,7 @@ describe('sessionRows', () => {
       sessionRows({
         ...NO_CHARACTERS,
         sessions,
-        pool: { released },
+        pool: { ...NOTHING_RELEASED, released },
       }).map((row) => row.key);
 
     expect(order([])).toStrictEqual(['codex:b', 'codex:a']);
@@ -249,8 +263,9 @@ describe('sessionRows', () => {
     ]);
   });
 
-  it('has the column headings 來源, 名稱, 狀態, 角色, 操作 (the 釋放 / 改回顯示 button)', () => {
+  it('has the column headings 鎖定 (the checkbox), 來源, 名稱, 狀態, 角色, 操作 (the 釋放 / 改回顯示 button)', () => {
     expect([...SESSION_COLUMNS]).toStrictEqual([
+      '鎖定',
       '來源',
       '名稱',
       '狀態',
@@ -332,7 +347,7 @@ describe('released sessions (Story 2.8)', () => {
     const rows = sessionRows({
       ...NO_CHARACTERS,
       sessions,
-      pool: { released: ['codex:b', 'demo:1'] },
+      pool: { ...NOTHING_RELEASED, released: ['codex:b', 'demo:1'] },
     });
 
     expect(
@@ -341,12 +356,13 @@ describe('released sessions (Story 2.8)', () => {
         row.state,
         row.inferred,
         row.released,
+        row.mark,
         row.action,
       ]),
     ).toStrictEqual([
-      ['codex:a', '要你批准', false, false, '釋放'],
-      ['codex:b', '工作中', true, true, '改回顯示'],
-      ['demo:1', '要你批准', false, true, '改回顯示'],
+      ['codex:a', '要你批准', false, false, null, '釋放'],
+      ['codex:b', '工作中', true, true, '已釋放', '改回顯示'],
+      ['demo:1', '要你批准', false, true, '已釋放', '改回顯示'],
     ]);
     expect(RELEASED_LABEL).toBe('已釋放');
     expect(RELEASE_ACTION).toBe('釋放');
@@ -368,7 +384,7 @@ describe('released sessions (Story 2.8)', () => {
       sessionRows({
         ...NO_CHARACTERS,
         sessions,
-        pool: { released },
+        pool: { ...NOTHING_RELEASED, released },
       }).map((row) => row.key);
     const before = order([]);
 
@@ -380,7 +396,7 @@ describe('released sessions (Story 2.8)', () => {
     const rows = sessionRows({
       ...NO_CHARACTERS,
       sessions: [sessions[0] as StageSession],
-      pool: { released: ['claude-code:gone'] },
+      pool: { ...NOTHING_RELEASED, released: ['claude-code:gone'] },
     });
     expect(rows.map((row) => [row.key, row.released])).toStrictEqual([
       ['codex:a', false],
@@ -441,7 +457,7 @@ describe('I/O matrix', () => {
   it('面板: each row names the character its session plays; a row with none reads 沒有角色; a released row is marked as before', () => {
     const rows = sessionRows({
       sessions: SESSIONS,
-      pool: { released: ['codex:c'] },
+      pool: { ...NOTHING_RELEASED, released: ['codex:c'] },
       actors: [
         actor('codex:a', 'sample-pack/probe-one', 'x1'),
         actor('codex:b', 'another-pack/probe-one', 'x2'),
@@ -514,132 +530,146 @@ describe('I/O matrix', () => {
   });
 });
 
-describe('releaseErrorText', () => {
+describe('sessionActionErrorText', () => {
   it('says which request failed, with the error code when there is one', () => {
     expect(
-      releaseErrorText(true, {
+      sessionActionErrorText('release', {
         code: 'invoke-failed',
         message: 'invoke failed',
       }),
     ).toBe('無法釋放 session（invoke-failed：invoke failed）');
-    expect(releaseErrorText(false, undefined)).toBe('無法改回顯示');
+    expect(sessionActionErrorText('show', undefined)).toBe('無法改回顯示');
+    expect(sessionActionErrorText('release-all', undefined)).toBe(
+      '無法全部釋放',
+    );
   });
 });
 
-describe('createReleaseToggle', () => {
-  type Reply = IpcResult<null>;
+type Reply = IpcResult<null>;
 
-  /** A pool.setReleased whose reply the test sends when it wants. */
-  function manualSetReleased() {
-    const calls: [SessionKey, boolean][] = [];
-    const pending: {
-      resolve: (reply: Reply) => void;
-      reject: (error: unknown) => void;
-    }[] = [];
-    const setReleased = vi.fn(
-      (sessionKey: SessionKey, released: boolean) =>
-        new Promise<Reply>((resolve, reject) => {
-          calls.push([sessionKey, released]);
-          pending.push({ resolve, reject });
-        }),
-    );
-    return {
-      setReleased,
-      calls,
-      answer: (reply: Reply) => pending.shift()?.resolve(reply),
-      fail: (error: unknown) => pending.shift()?.reject(error),
-    };
-  }
+/**
+ * `window.awp.pool` for createSessionActions: each call is recorded as
+ * [method, ...arguments] and answered when the test wants.
+ */
+function manualPool() {
+  const calls: unknown[][] = [];
+  const pending: {
+    resolve: (reply: Reply) => void;
+    reject: (error: unknown) => void;
+  }[] = [];
+  const reply = (...call: unknown[]) =>
+    new Promise<Reply>((resolve, reject) => {
+      calls.push(call);
+      pending.push({ resolve, reject });
+    });
+  const api: SessionPoolApi = {
+    setReleased: (key, released) => reply('setReleased', key, released),
+    setReleasedMany: (keys, released) =>
+      reply('setReleasedMany', keys, released),
+    setLocked: (key, locked) => reply('setLocked', key, locked),
+    setLockOn: (on) => reply('setLockOn', on),
+  };
+  return {
+    api,
+    calls,
+    answer: (answer: Reply) => pending.shift()?.resolve(answer),
+    fail: (error: unknown) => pending.shift()?.reject(error),
+  };
+}
 
+describe('createSessionActions', () => {
   function setup() {
-    const remote = manualSetReleased();
-    const states: ReleaseToggleState[] = [];
+    const remote = manualPool();
+    const states: SessionActionState[] = [];
     const logError = vi.fn();
-    const toggle = createReleaseToggle(
-      remote.setReleased,
+    const actions = createSessionActions(
+      remote.api,
       (state) => {
         states.push(state);
       },
       logError,
     );
-    return { remote, states, logError, toggle };
+    return { remote, states, logError, actions };
   }
 
   const SHOWN = { key: 'codex:a', released: false } as const;
   const RELEASED = { key: 'codex:a', released: true } as const;
+  const OK: Reply = { ok: true, data: null };
+  const SENDING = { sending: true, error: null, confirming: false };
+  const IDLE = { sending: false, error: null, confirming: false };
 
   it('starts idle', () => {
-    expect(IDLE_RELEASE_TOGGLE).toStrictEqual({ sending: false, error: null });
+    expect(IDLE_SESSION_ACTIONS).toStrictEqual(IDLE);
   });
 
   it('releases a shown row: reports sending while the reply is pending, then idle', async () => {
-    const { remote, states, toggle } = setup();
+    const { remote, states, actions } = setup();
 
-    const done = toggle.toggle(SHOWN);
+    const done = actions.toggle(SHOWN);
 
-    expect(states).toStrictEqual([{ sending: true, error: null }]);
-    expect(remote.calls).toStrictEqual([['codex:a', true]]);
-    remote.answer({ ok: true, data: null });
+    expect(states).toStrictEqual([SENDING]);
+    expect(remote.calls).toStrictEqual([['setReleased', 'codex:a', true]]);
+    remote.answer(OK);
     await done;
-    expect(states.at(-1)).toStrictEqual({ sending: false, error: null });
+    expect(states.at(-1)).toStrictEqual(IDLE);
   });
 
   it('shows a released row again', async () => {
-    const { remote, toggle } = setup();
+    const { remote, actions } = setup();
 
-    const done = toggle.toggle(RELEASED);
+    const done = actions.toggle(RELEASED);
 
-    expect(remote.calls).toStrictEqual([['codex:a', false]]);
-    remote.answer({ ok: true, data: null });
+    expect(remote.calls).toStrictEqual([['setReleased', 'codex:a', false]]);
+    remote.answer(OK);
     await done;
   });
 
-  it('ignores another press while one is on its way', async () => {
-    const { remote, toggle } = setup();
+  it('ignores another press while one is on its way, a batch or a lock too', async () => {
+    const { remote, actions } = setup();
 
-    const first = toggle.toggle(SHOWN);
-    await toggle.toggle({ key: 'demo:1', released: false });
+    const first = actions.toggle(SHOWN);
+    await actions.toggle({ key: 'demo:1', released: false });
+    await actions.showAll(['demo:1']);
+    await actions.toggleLock({ key: 'demo:1', locked: false });
+    await actions.setLockOn(true);
 
-    expect(remote.setReleased).toHaveBeenCalledOnce();
-    remote.answer({ ok: true, data: null });
+    expect(remote.calls).toHaveLength(1);
+    remote.answer(OK);
     await first;
   });
 
-  it('shows releaseErrorText for { ok: false }, ends sending, and never touches the rows', async () => {
-    const { remote, states, logError, toggle } = setup();
+  it('shows the error text for { ok: false }, ends sending, and never touches the rows', async () => {
+    const { remote, states, logError, actions } = setup();
     const refused = {
       code: 'sender-rejected',
       message: 'sender is not allowed',
     } as const;
 
-    const done = toggle.toggle(SHOWN);
+    const done = actions.toggle(SHOWN);
     remote.answer({ ok: false, error: refused });
     await done;
 
     expect(states).toStrictEqual([
-      { sending: true, error: null },
-      { sending: false, error: releaseErrorText(true, refused) },
+      SENDING,
+      { ...IDLE, error: sessionActionErrorText('release', refused) },
     ]);
     expect(logError).toHaveBeenCalledOnce();
   });
 
   it('shows the generic error when the call rejects', async () => {
-    const { remote, states, toggle } = setup();
+    const { remote, states, actions } = setup();
 
-    const done = toggle.toggle(RELEASED);
+    const done = actions.toggle(RELEASED);
     remote.fail(new Error('gone'));
     await done;
 
-    expect(states.at(-1)).toStrictEqual({
-      sending: false,
-      error: '無法改回顯示',
-    });
+    expect(states.at(-1)).toStrictEqual({ ...IDLE, error: '無法改回顯示' });
   });
 
   it('never rejects, and takes the next press, when onState throws on the outcome', async () => {
-    const remote = manualSetReleased();
-    const toggle = createReleaseToggle(
-      remote.setReleased,
+    const remote = manualPool();
+    const actions = createSessionActions(
+      remote.api,
       (state) => {
         if (!state.sending) {
           throw new Error('page gone');
@@ -648,43 +678,47 @@ describe('createReleaseToggle', () => {
       vi.fn(),
     );
 
-    const first = toggle.toggle(SHOWN);
-    remote.answer({ ok: true, data: null });
+    const first = actions.toggle(SHOWN);
+    remote.answer(OK);
     await expect(first).resolves.toBeUndefined();
 
     // Not stuck sending: the next press is sent.
-    const second = toggle.toggle(SHOWN);
-    expect(remote.setReleased).toHaveBeenCalledTimes(2);
-    remote.answer({ ok: true, data: null });
+    const second = actions.toggle(SHOWN);
+    expect(remote.calls).toHaveLength(2);
+    remote.answer(OK);
     await expect(second).resolves.toBeUndefined();
   });
 
   it('never rejects when onState throws on sending; nothing is sent and the next press still runs', async () => {
-    const remote = manualSetReleased();
-    const onState = vi.fn((state: ReleaseToggleState) => {
+    const remote = manualPool();
+    const onState = vi.fn((state: SessionActionState) => {
       if (state.sending) {
         throw new Error('page gone');
       }
     });
-    const toggle = createReleaseToggle(remote.setReleased, onState, vi.fn());
+    const actions = createSessionActions(remote.api, onState, vi.fn());
 
-    await expect(toggle.toggle(SHOWN)).resolves.toBeUndefined();
-    await expect(toggle.toggle(SHOWN)).resolves.toBeUndefined();
+    await expect(actions.toggle(SHOWN)).resolves.toBeUndefined();
+    await expect(actions.toggle(SHOWN)).resolves.toBeUndefined();
 
-    expect(remote.setReleased).not.toHaveBeenCalled();
+    expect(remote.calls).toStrictEqual([]);
+    const failed = {
+      ...IDLE,
+      error: sessionActionErrorText('release', undefined),
+    };
     expect(onState.mock.calls.map(([state]) => state)).toStrictEqual([
-      { sending: true, error: null },
-      { sending: false, error: releaseErrorText(true, undefined) },
-      { sending: true, error: null },
-      { sending: false, error: releaseErrorText(true, undefined) },
+      SENDING,
+      failed,
+      SENDING,
+      failed,
     ]);
   });
 
   it('never rejects, ends sending and keeps the error, when logError throws', async () => {
-    const remote = manualSetReleased();
-    const states: ReleaseToggleState[] = [];
-    const toggle = createReleaseToggle(
-      remote.setReleased,
+    const remote = manualPool();
+    const states: SessionActionState[] = [];
+    const actions = createSessionActions(
+      remote.api,
       (state) => {
         states.push(state);
       },
@@ -697,33 +731,261 @@ describe('createReleaseToggle', () => {
       message: 'invoke failed',
     } as const;
 
-    const done = toggle.toggle(SHOWN);
+    const done = actions.toggle(SHOWN);
     remote.answer({ ok: false, error: refused });
     await expect(done).resolves.toBeUndefined();
 
     expect(states.at(-1)).toStrictEqual({
-      sending: false,
-      error: releaseErrorText(true, refused),
+      ...IDLE,
+      error: sessionActionErrorText('release', refused),
     });
-    const again = toggle.toggle(SHOWN);
-    expect(remote.setReleased).toHaveBeenCalledTimes(2);
-    remote.answer({ ok: true, data: null });
+    const again = actions.toggle(SHOWN);
+    expect(remote.calls).toHaveLength(2);
+    remote.answer(OK);
     await again;
   });
 
   it('clears an earlier error on the next press, and can press again', async () => {
-    const { remote, states, toggle } = setup();
-    const failed = toggle.toggle(SHOWN);
+    const { remote, states, actions } = setup();
+    const failed = actions.toggle(SHOWN);
     remote.fail(new Error('gone'));
     await failed;
 
-    const done = toggle.toggle(SHOWN);
-    expect(states.at(-1)).toStrictEqual({ sending: true, error: null });
+    const done = actions.toggle(SHOWN);
+    expect(states.at(-1)).toStrictEqual(SENDING);
+    remote.answer(OK);
+    await done;
+
+    expect(states.at(-1)).toStrictEqual(IDLE);
+    expect(remote.calls).toHaveLength(2);
+  });
+});
+
+describe('I/O matrix', () => {
+  // Session bulk-lock: the toolbar and what its buttons send.
+  const SESSIONS = [
+    session({ sessionKey: 'codex:a', source: 'codex', displayName: 'a' }),
+    session({ sessionKey: 'codex:b', source: 'codex', displayName: 'b' }),
+    session({ sessionKey: 'demo:1' }),
+  ];
+
+  function rowsWith(pool: Partial<StagePool>) {
+    return sessionRows({
+      ...NO_CHARACTERS,
+      sessions: SESSIONS,
+      pool: { ...NOTHING_RELEASED, ...pool },
+    });
+  }
+
+  it('工具列: the numbers on the buttons are the rows not released and the rows released; the switch has one line saying what it does now', () => {
+    const rows = rowsWith({ released: ['codex:b'], locked: ['codex:a'] });
+
+    const toolbar = sessionToolbar(
+      rows,
+      { lockOn: false },
+      IDLE_SESSION_ACTIONS,
+      true,
+    );
+
+    expect(toolbar.visible).toBe(true);
+    expect(toolbar.releaseAll).toStrictEqual({
+      label: '全部釋放（2）',
+      disabled: false,
+      keys: ['codex:a', 'demo:1'],
+    });
+    expect(toolbar.showAll).toStrictEqual({
+      label: '全部顯示（1）',
+      disabled: false,
+      keys: ['codex:b'],
+    });
+    expect(toolbar.lockOn).toStrictEqual({ checked: false, disabled: false });
+    expect(toolbar.lockNote).toBe(lockNoteText(false, 1));
+    expect(toolbar.lockingNote).toBeNull();
+    expect(toolbar.rowReleaseDisabled).toBe(false);
+    expect(releaseAllLabel(0)).toBe('全部釋放（0）');
+    expect(showAllLabel(3)).toBe('全部顯示（3）');
+    expect(lockNoteText(false, 1)).toBe(
+      '關著：沒釋放的 session 都會分到角色。打開後，只有勾選鎖定的 1 個 session 有角色。',
+    );
+    expect(lockNoteText(false, 0)).toBe(
+      '關著：沒釋放的 session 都會分到角色。要打開，先在「鎖定」欄勾選想留下角色的 session。',
+    );
+    expect(lockNoteText(true, 2)).toBe(
+      '開著：只有勾選鎖定的 2 個 session 有角色，其他 session 和之後新出現的都不出角色。',
+    );
+  });
+
+  it('工具列: nothing to send disables a button; with no row locked the switch is disabled while off', () => {
+    const toolbar = sessionToolbar(
+      rowsWith({}),
+      { lockOn: false },
+      IDLE_SESSION_ACTIONS,
+      true,
+    );
+
+    expect(toolbar.releaseAll.disabled).toBe(false);
+    expect(toolbar.showAll).toMatchObject({
+      label: '全部顯示（0）',
+      disabled: true,
+    });
+    expect(toolbar.lockOn).toStrictEqual({ checked: false, disabled: true });
+    expect(toolbar.lockNote).toBe(lockNoteText(false, 0));
+  });
+
+  it('工具列: with no row it shows only while 鎖定展示 is on, so the switch can still be turned off; its line says no locked session is listed', () => {
+    expect(
+      sessionToolbar([], { lockOn: false }, IDLE_SESSION_ACTIONS, true).visible,
+    ).toBe(false);
+
+    const toolbar = sessionToolbar(
+      [],
+      { lockOn: true },
+      IDLE_SESSION_ACTIONS,
+      true,
+    );
+
+    expect(toolbar.visible).toBe(true);
+    expect(toolbar.lockOn).toStrictEqual({ checked: true, disabled: false });
+    expect(toolbar.lockNote).toBe(lockNoteText(true, 0));
+    expect(lockNoteText(true, 0)).toBe(
+      '開著，但清單上沒有勾選鎖定的 session，所以其他 session 都不出角色。關掉開關就恢復。',
+    );
+  });
+
+  it('打開鎖定: with 鎖定展示 on, only the ticked rows count; the others are faded and marked 未鎖定, released or not; every release button is disabled, with 鎖定中 beside them', () => {
+    const rows = rowsWith({
+      released: ['codex:a', 'codex:b'],
+      locked: ['codex:a'],
+      lockOn: true,
+    });
+    const toolbar = sessionToolbar(
+      rows,
+      { lockOn: true },
+      IDLE_SESSION_ACTIONS,
+      true,
+    );
+
+    expect(
+      rows.map((row) => [row.key, row.locked, row.released, row.mark]),
+    ).toStrictEqual([
+      ['codex:a', true, true, null],
+      ['codex:b', false, true, UNLOCKED_LABEL],
+      ['demo:1', false, false, UNLOCKED_LABEL],
+    ]);
+    expect(UNLOCKED_LABEL).toBe('未鎖定');
+    expect(toolbar.releaseAll.disabled).toBe(true);
+    expect(toolbar.showAll.disabled).toBe(true);
+    expect(toolbar.rowReleaseDisabled).toBe(true);
+    expect(toolbar.rowLockDisabled).toBe(false);
+    expect(toolbar.lockingNote).toBe(LOCKING_NOTE);
+    expect(LOCKING_NOTE).toBe('鎖定中');
+    expect(toolbar.lockOn).toStrictEqual({ checked: true, disabled: false });
+    expect(toolbar.lockNote).toBe(lockNoteText(true, 1));
+  });
+
+  it('鎖定（關著）: a ticked row with 鎖定展示 off is marked only as released or not', () => {
+    const rows = rowsWith({
+      released: ['codex:b'],
+      locked: ['codex:a', 'codex:b'],
+    });
+
+    expect(rows.map((row) => [row.key, row.locked, row.mark])).toStrictEqual([
+      ['codex:a', true, null],
+      ['codex:b', true, RELEASED_LABEL],
+      ['demo:1', false, null],
+    ]);
+  });
+
+  it('全部釋放: pressing it asks first and sends nothing; 全部釋放 on the question sends the keys listed in one request, then stops asking', async () => {
+    const remote = manualPool();
+    let state = IDLE_SESSION_ACTIONS;
+    const actions = createSessionActions(remote.api, (next) => {
+      state = next;
+    });
+    const rows = rowsWith({ released: ['codex:b'] });
+
+    actions.askReleaseAll();
+    const asking = sessionToolbar(rows, { lockOn: false }, state, true);
+
+    expect(remote.calls).toStrictEqual([]);
+    expect(asking.releaseAll.disabled).toBe(true);
+    expect(asking.confirm).toStrictEqual({
+      text: releaseAllConfirmText(2),
+      disabled: false,
+      keys: ['codex:a', 'demo:1'],
+    });
+    expect(releaseAllConfirmText(2)).toBe('把 2 個 session 的角色全部收起來？');
+
+    const done = actions.releaseAll(asking.confirm?.keys ?? []);
+    expect(remote.calls).toStrictEqual([
+      ['setReleasedMany', ['codex:a', 'demo:1'], true],
+    ]);
     remote.answer({ ok: true, data: null });
     await done;
 
-    expect(states.at(-1)).toStrictEqual({ sending: false, error: null });
-    expect(remote.setReleased).toHaveBeenCalledTimes(2);
+    expect(state).toStrictEqual(IDLE_SESSION_ACTIONS);
+    expect(
+      sessionToolbar(rows, { lockOn: false }, state, true).confirm,
+    ).toBeNull();
+  });
+
+  it('全部釋放: any other press while asking ends the question, so it never comes back by itself', async () => {
+    const remote = manualPool();
+    let state = IDLE_SESSION_ACTIONS;
+    const actions = createSessionActions(remote.api, (next) => {
+      state = next;
+    });
+    const rows = rowsWith({ locked: ['codex:a'] });
+
+    actions.askReleaseAll();
+    const done = actions.setLockOn(true);
+    remote.answer({ ok: true, data: null });
+    await done;
+
+    expect(state).toStrictEqual(IDLE_SESSION_ACTIONS);
+    expect(
+      sessionToolbar(rows, { lockOn: false }, state, true).confirm,
+    ).toBeNull();
+  });
+
+  it('取消: 取消 on the question stops asking and sends nothing', () => {
+    const remote = manualPool();
+    const states: SessionActionState[] = [];
+    const actions = createSessionActions(remote.api, (state) => {
+      states.push(state);
+    });
+
+    actions.askReleaseAll();
+    actions.keepAll();
+
+    expect(remote.calls).toStrictEqual([]);
+    expect(states).toStrictEqual([
+      { ...IDLE_SESSION_ACTIONS, confirming: true },
+      IDLE_SESSION_ACTIONS,
+    ]);
+  });
+
+  it('全部顯示, 鎖定 and 鎖定展示: each sends one request with what the row or toolbar says', async () => {
+    const remote = manualPool();
+    const actions = createSessionActions(remote.api, () => {});
+
+    for (const press of [
+      () => actions.showAll(['codex:b']),
+      () => actions.toggleLock({ key: 'codex:a', locked: false }),
+      () => actions.toggleLock({ key: 'codex:a', locked: true }),
+      () => actions.setLockOn(true),
+    ]) {
+      const done = press();
+      remote.answer({ ok: true, data: null });
+      await done;
+    }
+
+    expect(remote.calls).toStrictEqual([
+      ['setReleasedMany', ['codex:b'], false],
+      ['setLocked', 'codex:a', true],
+      ['setLocked', 'codex:a', false],
+      ['setLockOn', true],
+    ]);
   });
 });
 

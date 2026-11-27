@@ -322,3 +322,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-9-swap-character.md`
   summary: Story 3.9 第三條 AC「包更新後以原 `actorId` 重新送出」沒有測試鎖住：`test/overlay/pack-host.test.ts` 約 `:903` 只驗證舊沙盒移除、新沙盒的 `load` 來源，`test/overlay/pack-host-draw.test.ts` 約 `:860` 只驗證舊 draw 清掉；沒有斷言新沙盒第一個 tick 的 `init` 帶著原來的 actorId
   evidence: 2026-11-25 3.9（上）審查第 6 條（medium，測試缺口，行為本身由 `stage-messages.ts` 的 `composeTick` 在新 stage state 第一個 tick 送 `init`、內容是當下所有 actor 而來）。適合在 3.9（下）改 pack-host 重建流程時一起補，因為重建後同樣要以原 actorId 重送。
+- source_spec: `_bmad-output/implementation-artifacts/spec-session-bulk-lock.md`
+  summary: 「管理 session」頁的工具列（全部釋放與確認、全部顯示、鎖定展示開關）、每列的鎖定勾選框，以及鎖定展示開著時釋放鈕停用，這些 `App.tsx` 接線沒有任何測試；補一個在頁面上實際按這些控制項、再用 StageView 斷言結果的 e2e
+  evidence: 2026-11-27 插單審查 VG-1／B10。repo 沒有 React 渲染測試（vitest 只跑 node 環境），現有 e2e 只直接呼叫 `awp.pool.setReleased`；把開關誤接成送出目前值、或釋放鈕停用條件改回舊的，所有測試仍會通過。使用者 2026-11-26 實機預覽時手動確認過。

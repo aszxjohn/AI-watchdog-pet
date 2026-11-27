@@ -706,7 +706,7 @@ describe('with main/packs and StageView, as main.ts wires them', () => {
         get: () => ({
           sessions: [],
           adapters: [],
-          pool: { released: [] },
+          pool: { released: [], locked: [], lockOn: false },
           actors: [],
         }),
         onChange: () => () => {},

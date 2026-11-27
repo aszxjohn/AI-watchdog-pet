@@ -30,14 +30,15 @@ import { z } from './zod-setup';
  * - `displays`, `canvas`, `power`: main/windows (Story 1.6);
  * - `sessions`, `adapters`: main/detection (Story 2.3), passed on by
  *   main/pool's assigner (Story 3.4);
- * - `pool`: main/pool (Story 2.8), the released session keys. A panel
+ * - `pool`: main/pool (Story 2.8), the released session keys, and the
+ *   locked keys and whether 鎖定展示 is on (session bulk-lock). A panel
  *   matches them to `sessions` by key. Any one snapshot is a consistent
  *   view at a single `rev`; a session and its release may still arrive in
  *   different deltas (each delta is rev + 1);
  * - `actors`: main/pool's assigner (Story 3.4), the character each shown
  *   session plays. A change of a session and the change of `actors` it
- *   causes (a new actor, its state, its end), and a release and the actor
- *   it takes away, come in one delta;
+ *   causes (a new actor, its state, its end), and a change of `pool` and
+ *   the actors it adds or takes away, come in one delta;
  * - `packs`: main/packs (Story 3.2), the installed character packs;
  * - `packImport`: main/packs (Story 3.2), where the one import at a time
  *   is (reading, waiting for the user to confirm a replace, or its result);
@@ -258,7 +259,10 @@ export type StageViewDetectionSections = Pick<
   'sessions' | 'adapters'
 >;
 
-/** The section main/pool's store owns: the released keys. */
+/**
+ * The section main/pool's store owns: the released and locked keys and
+ * 鎖定展示.
+ */
 export type StageViewPoolSections = Pick<StageView, 'pool'>;
 
 /**

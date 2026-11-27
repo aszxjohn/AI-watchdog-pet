@@ -656,7 +656,7 @@ describe('I/O matrix', () => {
     expect(cast()).toStrictEqual([['codex:b', TWO, 'actor-2']]);
     expect(heard).toStrictEqual([
       {
-        pool: { released: ['codex:a'] },
+        pool: { released: ['codex:a'], locked: [], lockOn: false },
         actors: [expect.objectContaining({ sessionKey: 'codex:b' })],
       },
     ]);
@@ -1167,8 +1167,10 @@ describe('I/O matrix', () => {
     const written = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
     expect(poolFileSchema.safeParse(written).success).toBe(true);
     expect(written).toStrictEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       released: [],
+      locked: [],
+      lockOn: false,
       assignments: [
         { sessionKey: 'codex:a', actorId: 'actor-1', characterKey: ONE },
         { sessionKey: 'codex:b', actorId: 'actor-2', characterKey: TWO },
@@ -1334,7 +1336,7 @@ describe('I/O matrix', () => {
     expect(cast()).toStrictEqual([['codex:b', ONE, 'actor-1']]);
     expect(heard).toHaveLength(1);
     expect(heard[0]).toStrictEqual({
-      pool: { released: ['codex:a', 'cursor:x'] },
+      pool: { released: ['codex:a', 'cursor:x'], locked: [], lockOn: false },
       actors: [expect.objectContaining({ sessionKey: 'codex:b' })],
     });
     expectValidChanges(heard);
@@ -1893,5 +1895,184 @@ describe("demo mode's stage", () => {
 
     expect(heard).toStrictEqual([]);
     expect(poolLines()).toHaveLength(before);
+  });
+});
+
+describe('I/O matrix', () => {
+  // Session bulk-lock: 全部釋放 / 全部顯示, 鎖定 and 鎖定展示, through the
+  // one rule of who gets no character (src/shared/pool heldBackBy).
+
+  /** The store's `pool` section as heard. */
+  function pool(
+    released: readonly SessionKey[],
+    locked: readonly SessionKey[] = [],
+    lockOn = false,
+  ) {
+    return { released, locked, lockOn };
+  }
+
+  it('鎖定（關著）: with 鎖定展示 off, locking a row changes no actor: only the pool section is heard', () => {
+    const { heard, ready, start, store, cast } = wire();
+    ready();
+    start('codex:a');
+    start('codex:b');
+    const before = cast();
+    heard.length = 0;
+
+    store.setLocked('codex:a', true);
+
+    expect(cast()).toStrictEqual(before);
+    expect(heard).toStrictEqual([{ pool: pool([], ['codex:a']) }]);
+    expectValidChanges(heard);
+  });
+
+  it('全部釋放: releasing every listed session at once takes every actor away; pool and actors in one change', () => {
+    const { heard, ready, start, store, cast, savedAssignments } = wire();
+    ready();
+    start('codex:a');
+    start('codex:b');
+    heard.length = 0;
+
+    store.setReleasedMany(['codex:a', 'codex:b'], true);
+
+    expect(cast()).toStrictEqual([]);
+    expect(heard).toStrictEqual([
+      { pool: pool(['codex:a', 'codex:b']), actors: [] },
+    ]);
+    expect(savedAssignments()).toStrictEqual([]);
+    expectValidChanges(heard);
+  });
+
+  it('全部顯示: showing them all again gives each a character by the pool rule, with new actor ids, in one change', () => {
+    const { heard, ready, start, store, cast } = wire();
+    ready();
+    start('codex:a');
+    start('codex:b');
+    store.setReleasedMany(['codex:a', 'codex:b'], true);
+    heard.length = 0;
+
+    store.setReleasedMany(['codex:a', 'codex:b'], false);
+
+    // ONE and TWO have appeared once each: pool order.
+    expect(cast()).toStrictEqual([
+      ['codex:a', ONE, 'actor-3'],
+      ['codex:b', TWO, 'actor-4'],
+    ]);
+    expect(heard).toHaveLength(1);
+    expect(Object.keys(heard[0] ?? {}).sort()).toStrictEqual([
+      'actors',
+      'pool',
+    ]);
+  });
+
+  it('打開鎖定: A locked (and released), B not: with 鎖定展示 on, A has a character and B none, in one change; a new C gets none', () => {
+    const { heard, ready, start, store, cast } = wire();
+    ready();
+    start('codex:a');
+    start('codex:b');
+    store.setReleased('codex:a', true);
+    store.setLocked('codex:a', true);
+    expect(cast()).toStrictEqual([['codex:b', TWO, 'actor-2']]);
+    heard.length = 0;
+
+    store.setLockOn(true);
+
+    expect(cast()).toStrictEqual([['codex:a', ONE, 'actor-3']]);
+    expect(heard).toStrictEqual([
+      {
+        pool: pool(['codex:a'], ['codex:a'], true),
+        actors: [expect.objectContaining({ sessionKey: 'codex:a' })],
+      },
+    ]);
+    expectValidChanges(heard);
+
+    start('codex:c');
+
+    expect(cast()).toStrictEqual([['codex:a', ONE, 'actor-3']]);
+  });
+
+  it('取消最後一勾: unticking A while 鎖定展示 is on turns it off: back to the usual rule, in one change', () => {
+    const { heard, ready, start, store, cast } = wire();
+    ready();
+    start('codex:a');
+    start('codex:b');
+    store.setLocked('codex:a', true);
+    store.setLockOn(true);
+    expect(cast()).toStrictEqual([['codex:a', ONE, 'actor-1']]);
+    heard.length = 0;
+
+    store.setLocked('codex:a', false);
+
+    expect(store.get().pool.lockOn).toBe(false);
+    expect(cast()).toStrictEqual([
+      ['codex:a', ONE, 'actor-1'],
+      ['codex:b', TWO, 'actor-3'],
+    ]);
+    expect(heard).toHaveLength(1);
+    expect(heard[0]?.pool).toStrictEqual(pool([]));
+  });
+
+  it('重啟: A, locked last run with 鎖定展示 on, is not reported: the sweep drops it, 鎖定展示 goes off, and the sessions there get characters as usual', () => {
+    const { heard, ready, replay, cast, store } = wire({
+      saved: {
+        schemaVersion: 3,
+        released: [],
+        locked: ['codex:a'],
+        lockOn: true,
+        assignments: [],
+      },
+    });
+    replay('codex:b');
+    expect(store.get().pool).toStrictEqual(pool([], ['codex:a'], true));
+    heard.length = 0;
+
+    ready();
+
+    expect(cast()).toStrictEqual([['codex:b', ONE, 'actor-1']]);
+    expect(heard.at(-1)?.pool).toStrictEqual(pool([]));
+    expectValidChanges(heard);
+  });
+
+  it('重啟: with 鎖定展示 on, the saved assignment of a session not locked is dropped; it gets no character, and a new actor when the lock goes off', () => {
+    const { ready, replay, cast, store, savedAssignments } = wire({
+      saved: {
+        schemaVersion: 3,
+        released: [],
+        locked: ['codex:a'],
+        lockOn: true,
+        assignments: [
+          { sessionKey: 'codex:a', actorId: 'saved-a', characterKey: ONE },
+          { sessionKey: 'codex:b', actorId: 'saved-b', characterKey: TWO },
+        ],
+      },
+    });
+    replay('codex:a');
+    replay('codex:b');
+
+    ready();
+
+    expect(cast()).toStrictEqual([['codex:a', ONE, 'saved-a']]);
+    expect(savedAssignments().map((a) => a.sessionKey)).toStrictEqual([
+      'codex:a',
+    ]);
+
+    store.setLockOn(false);
+
+    const b = cast().find(([key]) => key === 'codex:b');
+    expect(b).toBeDefined();
+    expect(b?.[2]).not.toBe('saved-b');
+  });
+
+  it('示範: 鎖定展示 does not touch demo mode: the demo session plays while it is not locked', () => {
+    const { ready, start, store, assigner, detection, cast } = wire();
+    ready();
+    start('codex:a');
+    store.setLocked('codex:a', true);
+    store.setLockOn(true);
+
+    assigner.setDemo({ characterKey: TWO });
+    detection.setDemo('idle');
+
+    expect(cast()).toStrictEqual([['demo:1', TWO, 'actor-2']]);
   });
 });

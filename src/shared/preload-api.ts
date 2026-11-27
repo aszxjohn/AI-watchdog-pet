@@ -19,7 +19,10 @@ import type {
   packsGetManifest,
   packsLog,
   packsRemove,
+  poolSetLocked,
+  poolSetLockOn,
   poolSetReleased,
+  poolSetReleasedMany,
   settingsGet,
   settingsPatch,
 } from './ipc';
@@ -66,6 +69,28 @@ export interface PanelsApi {
       sessionKey: SessionKey,
       released: boolean,
     ): Promise<IpcResult<IpcData<typeof poolSetReleased>>>;
+    /**
+     * Releases every session at `sessionKeys` (true) or shows each again
+     * (false), as one change (全部釋放 / 全部顯示). The result comes back
+     * through StageView's `pool` section.
+     */
+    setReleasedMany(
+      sessionKeys: readonly SessionKey[],
+      released: boolean,
+    ): Promise<IpcResult<IpcData<typeof poolSetReleasedMany>>>;
+    /**
+     * Locks the session at `sessionKey` (true) or unlocks it (false). The
+     * result comes back through StageView's `pool` section.
+     */
+    setLocked(
+      sessionKey: SessionKey,
+      locked: boolean,
+    ): Promise<IpcResult<IpcData<typeof poolSetLocked>>>;
+    /**
+     * Turns 鎖定展示 on (true) or off (false). The result comes back
+     * through StageView's `pool` section.
+     */
+    setLockOn(on: boolean): Promise<IpcResult<IpcData<typeof poolSetLockOn>>>;
   };
   readonly packs: {
     /**

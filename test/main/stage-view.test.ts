@@ -54,7 +54,7 @@ function fakeAssigner() {
   let sections: StageViewAssignerSections = {
     sessions: [],
     adapters: [],
-    pool: { released: [] },
+    pool: poolOf([]),
     actors: [],
   };
   const listeners = new Set<
@@ -90,6 +90,11 @@ function fakeDetection(through: ReturnType<typeof fakeAssigner>) {
   };
 }
 
+/** main/pool's `pool` section with `released`, nothing locked. */
+function poolOf(released: SessionKey[]) {
+  return { released, locked: [], lockOn: false };
+}
+
 /**
  * main/pool's store's section as it reaches StageView: through the
  * assigner, the pool section only.
@@ -97,7 +102,7 @@ function fakeDetection(through: ReturnType<typeof fakeAssigner>) {
 function fakePool(through: ReturnType<typeof fakeAssigner>) {
   return {
     update(released: readonly unknown[]) {
-      through.update({ pool: { released: released as SessionKey[] } });
+      through.update({ pool: poolOf(released as SessionKey[]) });
     },
   };
 }
@@ -225,7 +230,7 @@ const WINDOWS_BEFORE_READY = {
 /** main/detection's sections with no session and no adapter. */
 const NO_DETECTION = { sessions: [], adapters: [] };
 /** main/pool's section with nothing released. */
-const NO_POOL = { pool: { released: [] } };
+const NO_POOL = { pool: poolOf([]) };
 /** main/pool's assigner's actors section with no actor. */
 const NO_ACTORS = { actors: [] };
 /** main/packs' section with no pack installed. */
@@ -627,7 +632,7 @@ describe("main/pool's section", () => {
         settings: settings.get(),
         ...WINDOWS_BEFORE_READY,
         ...NO_DETECTION,
-        pool: { released: ['claude-code:a', 'demo:1'] },
+        pool: poolOf(['claude-code:a', 'demo:1']),
         ...NO_ACTORS,
         ...NO_PACKS,
         ...NO_PACK_IMPORT,
@@ -648,13 +653,13 @@ describe("main/pool's section", () => {
     pool.update([]);
 
     expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
-      { rev: 1, sections: { pool: { released: ['demo:1'] } } },
-      { rev: 2, sections: { pool: { released: [] } } },
+      { rev: 1, sections: { pool: poolOf(['demo:1']) } },
+      { rev: 2, sections: { pool: poolOf([]) } },
     ]);
     for (const { args } of subscriber.sent) {
       expect(stageViewDeltaSchema.safeParse(args[0]).success).toBe(true);
     }
-    expect(hub.snapshot().view.pool).toStrictEqual({ released: [] });
+    expect(hub.snapshot().view.pool).toStrictEqual(poolOf([]));
   });
 
   it('keeps one rev counter across detection and pool changes: a session and its release may come in different deltas, and the view at the latest rev has both', () => {
@@ -663,7 +668,7 @@ describe("main/pool's section", () => {
 
     expect(hub.snapshot()).toMatchObject({
       rev: 2,
-      view: { sessions: [DEMO_SESSION], pool: { released: ['demo:1'] } },
+      view: { sessions: [DEMO_SESSION], pool: poolOf(['demo:1']) },
     });
   });
 
@@ -706,7 +711,7 @@ describe("main/pool's assigner: the actors section (Story 3.4)", () => {
     assigner.update({
       sessions: [CODEX_SESSION],
       adapters: [{ source: 'codex', health: 'ok' }],
-      pool: { released: [] },
+      pool: poolOf([]),
       actors: [ACTOR],
     });
 
@@ -749,7 +754,7 @@ describe("main/pool's assigner: the actors section (Story 3.4)", () => {
       sessions: [{ ...CODEX_SESSION, state: 'done' }],
       actors: [{ ...ACTOR, state: 'done' }],
     });
-    assigner.update({ pool: { released: ['codex:a'] }, actors: [] });
+    assigner.update({ pool: poolOf(['codex:a']), actors: [] });
 
     expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
       { rev: 1, sections: { sessions: [CODEX_SESSION], actors: [ACTOR] } },
@@ -760,14 +765,14 @@ describe("main/pool's assigner: the actors section (Story 3.4)", () => {
           actors: [{ ...ACTOR, state: 'done' }],
         },
       },
-      { rev: 3, sections: { pool: { released: ['codex:a'] }, actors: [] } },
+      { rev: 3, sections: { pool: poolOf(['codex:a']), actors: [] } },
     ]);
     for (const { args } of subscriber.sent) {
       expect(stageViewDeltaSchema.safeParse(args[0]).success).toBe(true);
     }
     expect(hub.snapshot().view).toMatchObject({
       sessions: [{ ...CODEX_SESSION, state: 'done' }],
-      pool: { released: ['codex:a'] },
+      pool: poolOf(['codex:a']),
       actors: [],
     });
   });
@@ -852,7 +857,7 @@ describe("main/packs' section", () => {
     packs.update([]);
 
     expect(subscriber.sent.map(({ args }) => args[0])).toStrictEqual([
-      { rev: 1, sections: { pool: { released: ['demo:1'] } } },
+      { rev: 1, sections: { pool: poolOf(['demo:1']) } },
       { rev: 2, sections: { packs: { installed: [PACK] } } },
       { rev: 3, sections: { packs: { installed: [] } } },
     ]);

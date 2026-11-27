@@ -9,7 +9,12 @@ import {
   packsGetManifestInputSchema,
   packsRemoveInputSchema,
 } from './packs';
-import { poolSetReleasedInputSchema } from './pool';
+import {
+  poolSetLockedInputSchema,
+  poolSetLockOnInputSchema,
+  poolSetReleasedInputSchema,
+  poolSetReleasedManyInputSchema,
+} from './pool';
 import { packsLogInputSchema } from './sandbox';
 import {
   settingsPatchResultSchema,
@@ -157,6 +162,40 @@ export const settingsPatch = {
 export const poolSetReleased = {
   channel: 'pool:set-released',
   input: poolSetReleasedInputSchema,
+  output: z.null(),
+} as const satisfies IpcContract;
+
+/**
+ * `pool:set-released-many`: releases every session at the keys given (true)
+ * or shows each again (false), as one change (the 管理 session page's
+ * 全部釋放 and 全部顯示). main/pool changes nothing for a key already so.
+ * Answers null; the change comes back through StageView's `pool` section.
+ */
+export const poolSetReleasedMany = {
+  channel: 'pool:set-released-many',
+  input: poolSetReleasedManyInputSchema,
+  output: z.null(),
+} as const satisfies IpcContract;
+
+/**
+ * `pool:set-locked`: locks the session at a key (true) or unlocks it
+ * (false), at any time; unlocking the last locked key turns 鎖定展示 off.
+ * Answers null; the change comes back through StageView's `pool` section.
+ */
+export const poolSetLocked = {
+  channel: 'pool:set-locked',
+  input: poolSetLockedInputSchema,
+  output: z.null(),
+} as const satisfies IpcContract;
+
+/**
+ * `pool:set-lock-on`: turns 鎖定展示 on (true) or off (false). main/pool
+ * does not turn it on while no key is locked. Answers null; the change
+ * comes back through StageView's `pool` section.
+ */
+export const poolSetLockOn = {
+  channel: 'pool:set-lock-on',
+  input: poolSetLockOnInputSchema,
   output: z.null(),
 } as const satisfies IpcContract;
 

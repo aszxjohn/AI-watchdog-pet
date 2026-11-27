@@ -197,7 +197,7 @@ describe('I/O matrix', () => {
         get: () => ({
           sessions: [],
           adapters: [],
-          pool: { released: [] },
+          pool: { released: [], locked: [], lockOn: false },
           actors: [],
         }),
         onChange: () => () => {},
