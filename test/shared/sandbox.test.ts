@@ -23,6 +23,7 @@ import {
   SANDBOX_REPORT_PREFIX,
   SANDBOX_SKIP_REASONS,
   sandboxLoadMessage,
+  sandboxPingMessage,
   sandboxRemovalSchema,
   sandboxReportSchema,
 } from '../../src/shared/sandbox';
@@ -82,6 +83,7 @@ describe('sandboxReportSchema', () => {
       },
     ],
     ['a fault', { type: 'sandbox.fault', fault: 'unhandled-rejection' }],
+    ['a pong (Story 3.9)', { type: 'sandbox.pong' }],
   ])('round-trips %s', (_label, value) => {
     expectRoundTrip(sandboxReportSchema, value);
   });
@@ -127,8 +129,17 @@ describe('sandboxReportSchema', () => {
     ['an unknown fault', { type: 'sandbox.fault', fault: 'oops' }],
     ['a stage call', { type: 'stage.log', text: 'x' }],
     ['an extra field', { type: 'sandbox.fault', fault: 'error', stack: 'x' }],
+    ['a pong with a field', { type: 'sandbox.pong', seq: 1 }],
+    ['the ping itself', { type: 'sandbox.ping' }],
   ])('rejects %s', (_label, value) => {
     expectRejected(sandboxReportSchema, value);
+  });
+
+  it('the ping (Story 3.9) is exactly its type, which starts with SANDBOX_REPORT_PREFIX', () => {
+    expect(sandboxPingMessage()).toStrictEqual({ type: 'sandbox.ping' });
+    expect(sandboxPingMessage().type.startsWith(SANDBOX_REPORT_PREFIX)).toBe(
+      true,
+    );
   });
 
   it('every report type starts with SANDBOX_REPORT_PREFIX', () => {
@@ -281,6 +292,8 @@ describe('packLogEntrySchema', () => {
       'unhandled-rejection',
       'bad-report',
       'boot-timeout',
+      'heartbeat-timeout',
+      'draw-timeout',
     ]);
     for (const codes of [
       SANDBOX_FAILURE_REASONS,

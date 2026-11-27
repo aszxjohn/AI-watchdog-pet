@@ -17,6 +17,12 @@
  *   the app changed its API version) says why, in the words an
  *   `api-incompatible` refusal uses (Story 3.5); it is not in the pool
  *   whatever its checkboxes say, and its program never runs.
+ * - A pack whose version main marked failed this run (Story 3.9, its
+ *   StagePack's `runtimeFailed`: its sandbox failed past
+ *   PACK_RESTART_LIMIT restarts) says so and why, the reason code worded
+ *   here (RUNTIME_FAILURE_TEXTS), and that importing it again or
+ *   restarting the app brings it back. It is out of the pool whatever its
+ *   checkboxes say (they stay as they are); demo mode still shows it.
  *
  * Also here: the one op each checkbox sends (an op changes one key only,
  * never a whole setting), when the checkboxes are disabled, and what
@@ -36,6 +42,7 @@
  *   here; what each button shows, when it is disabled and what pressing it
  *   does are packRowControls and createPackRowActions.
  */
+import { DRAW_TIMEOUT_MS, SANDBOX_BOOT_TIMEOUT_MS } from '../shared/constants';
 import type { IpcError, IpcResult } from '../shared/ipc';
 import {
   CHARACTER_HEIGHT_HINT_TOLERANCE,
@@ -51,6 +58,7 @@ import {
   type StagePackExport,
   type StagePacks,
 } from '../shared/packs';
+import type { SandboxFailureReason } from '../shared/sandbox';
 import {
   isInPool,
   isPackEnabled,
@@ -108,6 +116,43 @@ export function incompatibleText(
   return compatibility.compatible
     ? null
     : `無法上場：${apiIncompatibleText(compatibility.reason, compatibility.required)}`;
+}
+
+/**
+ * Why a pack's sandbox failed, as the list words each reason code main
+ * marks a pack with (Story 3.9).
+ */
+export const RUNTIME_FAILURE_TEXTS: Readonly<
+  Record<SandboxFailureReason, string>
+> = Object.freeze({
+  'api-removal-failed': '沙盒無法移除不允許使用的瀏覽器 API',
+  'intrinsic-removal-failed': '沙盒無法移除不允許使用的內建物件',
+  'ses-missing': '沙盒的安全環境（SES）沒有載入',
+  'lockdown-threw': '沙盒鎖定安全環境（SES lockdown）時出錯',
+  'lockdown-output': '沙盒鎖定安全環境（SES lockdown）時有非預期的主控台輸出',
+  'entry-threw': '入口程式求值時丟錯（包括語法錯誤）',
+  'entry-not-factory': '入口程式的值不是工廠函式',
+  'factory-threw': '工廠函式丟錯',
+  'handlers-not-object': '工廠沒有回傳 handlers 物件',
+  'worker-error': '包的 Worker 發生未捕捉的錯誤，或無法建立',
+  'unhandled-rejection': '包有沒處理的 Promise rejection',
+  'bad-report': '沙盒送來不符合規格的訊息',
+  'boot-timeout': `沙盒 ${SANDBOX_BOOT_TIMEOUT_MS / 1000} 秒內沒有開機完成`,
+  'heartbeat-timeout': '沙盒太久沒有回應心跳（包的程式可能卡住，例如無窮迴圈）',
+  'draw-timeout': `連續 ${DRAW_TIMEOUT_MS / 1000} 秒沒有有效的 draw`,
+});
+
+/**
+ * What the list says of a pack whose version main marked failed this run
+ * (Story 3.9): why (RUNTIME_FAILURE_TEXTS), and what brings it back. Null
+ * for a pack not marked.
+ */
+export function runtimeFailedText(
+  runtimeFailed: StagePack['runtimeFailed'],
+): string | null {
+  return runtimeFailed === undefined
+    ? null
+    : `執行失敗，這次執行已停用：${RUNTIME_FAILURE_TEXTS[runtimeFailed]}。重新匯入或重新啟動 app 後恢復。`;
 }
 
 /** An op one of the list's checkboxes sends: one key of one keyed setting. */
@@ -180,6 +225,8 @@ export interface PackListPack {
   readonly version: string;
   /** incompatibleText: why it cannot go on stage, or null. */
   readonly incompatible: string | null;
+  /** runtimeFailedText: why it is off stage this run (Story 3.9), or null. */
+  readonly runtimeFailed: string | null;
   readonly enabled: PackListCheckbox;
   /** In the manifest's order. */
   readonly characters: readonly PackListCharacter[];
@@ -203,6 +250,7 @@ export function packListView(
         name: pack.name,
         version: versionText(pack.version),
         incompatible: incompatibleText(pack.compatibility),
+        runtimeFailed: runtimeFailedText(pack.runtimeFailed),
         enabled: {
           id: `enabled:${pack.id}`,
           checked: enabled,

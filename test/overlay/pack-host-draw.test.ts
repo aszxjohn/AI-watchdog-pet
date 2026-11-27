@@ -2,7 +2,12 @@
  * pack-host's side of the stage messages and draws (Story 3.6): the check
  * of a `draw` (draw-rules.ts), and, around one pack-host with fake
  * iframes, a fake main, fake looks and a fake clock, what each tick posts
- * to a ready sandbox, which draws it keeps, and what it logs.
+ * to a ready sandbox, which draws it keeps, and what it logs. And (Story
+ * 3.9) the heartbeat and the draw timeout, counted in those ticks, and
+ * the sandbox rebuilt on main's yes. The fake iframes answer each ping
+ * with a pong at once, as the Worker bootstrap does, unless a test makes
+ * a pack's Worker stuck; main says no to a rebuild unless a test says
+ * yes.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { packLook, type PackLook } from '../../src/overlay/looks';
@@ -20,12 +25,19 @@ import {
   type PackHostApi,
   type SandboxFrameHandlers,
 } from '../../src/overlay/pack-host/host';
-import { bitmapCharactersOf } from '../../src/sandbox/worker-bootstrap';
+import {
+  bitmapCharactersOf,
+  isPingMessage,
+} from '../../src/sandbox/worker-bootstrap';
 import {
   BITMAP_MAX_PER_SECOND,
   BITMAP_MAX_SIDE,
   DRAW_MAX_BYTES,
   DRAW_MAX_COMMANDS,
+  DRAW_TIMEOUT_MS,
+  DRAW_TIMEOUT_TICKS,
+  HEARTBEAT_TICKS,
+  HEARTBEAT_TIMEOUT_TICKS,
   PACK_DROP_LOG_INTERVAL_MS,
   PACK_MESSAGE_RATE_LIMIT,
   PARTICLE_EMITTERS_MAX,
@@ -42,7 +54,9 @@ import type { StageActor } from '../../src/shared/pool';
 import {
   type PackLogEntry,
   packLogEntrySchema,
+  type PackRuntimeFailure,
   sandboxBitmapCharactersMessage,
+  sandboxPingMessage,
 } from '../../src/shared/sandbox';
 import type { StageCharacters, StageView } from '../../src/shared/stage-view';
 import { contractManifest } from '../helpers/awpet';
@@ -409,11 +423,17 @@ function setup(
     looks?: boolean;
     /** ALPHA's probe-one has advancedBitmap (bitmapLookOf). */
     bitmap?: boolean;
+    /** main's answer to `packs:runtime-failed` (Story 3.9); no by default. */
+    restart?: boolean;
   } = {},
 ) {
   const clock = fakeClock();
   const logs: PackLogEntry[] = [];
   const frames = new Map<string, FakeFrame>();
+  /** What `packs:runtime-failed` was called with (Story 3.9). */
+  const failures: PackRuntimeFailure[] = [];
+  /** The packs whose Worker is stuck: it answers no ping. */
+  const stuck = new Set<string>();
   /** The packs whose entry was asked for, in order: frames come in it. */
   const asked: string[] = [];
   const api: PackHostApi = {
@@ -434,6 +454,13 @@ function setup(
       logs.push(entry);
       return { ok: true as const, data: null };
     }),
+    runtimeFailed: vi.fn(async (failure: PackRuntimeFailure) => {
+      failures.push(failure);
+      return {
+        ok: true as const,
+        data: { restart: options.restart === true },
+      };
+    }),
   };
   const looks = new Map<string, PackLook>(
     options.looks === false
@@ -451,16 +478,25 @@ function setup(
     frames: {
       create(handlers) {
         const frame: FakeFrame = { handlers, posted: [], removed: false };
-        frames.set(asked.shift() ?? '', frame);
+        const packId = asked.shift() ?? '';
+        frames.set(packId, frame);
         return {
           hand() {},
           post(message) {
             if (!stageMessageSchema.safeParse(message).success) {
               // pack-host's own message, exactly as the bootstrap takes it:
-              // `type` and a list of strings `characterIds`, nothing else.
-              expect(bitmapCharactersOf(message)).toBeDefined();
+              // `type` and a list of strings `characterIds`, nothing else;
+              // or exactly the ping (Story 3.9).
+              expect(
+                bitmapCharactersOf(message) !== undefined ||
+                  isPingMessage(message),
+              ).toBe(true);
             }
             frame.posted.push(structuredClone(message));
+            if (isPingMessage(message) && !stuck.has(packId)) {
+              // The bootstrap answers at once, outside the pack's code.
+              handlers.onMessage({ type: 'sandbox.pong' });
+            }
           },
           remove() {
             frame.removed = true;
@@ -476,7 +512,7 @@ function setup(
     looks: { get: (packId) => looks.get(packId) },
     logError: () => {},
   });
-  return { host, clock, logs, frames, looks };
+  return { host, clock, logs, frames, looks, failures, stuck };
 }
 
 async function settle(): Promise<void> {
@@ -508,6 +544,59 @@ function frameOf(t: ReturnType<typeof setup>, packId: string): FakeFrame {
 
 function types(frame: FakeFrame): string[] {
   return frame.posted.map((message) => (message as { type: string }).type);
+}
+
+/** The ms between ticks. */
+const TICK = 1000 / TICK_HZ;
+
+/** A `frame` as pack-host posted it. */
+interface PostedFrame {
+  readonly seq: number;
+  readonly actors: readonly { readonly actorId: string }[];
+}
+
+/**
+ * Ticks `count` times, from tick number `from` (its stage time `from` ×
+ * TICK), the clock a tick on after each; after each tick, `answer` gets
+ * every `frame` that tick sent, with the pack it went to.
+ */
+function runTicks(
+  t: ReturnType<typeof setup>,
+  from: number,
+  count: number,
+  answer: (packId: string, frame: PostedFrame) => void = () => {},
+): void {
+  for (let n = from; n < from + count; n += 1) {
+    const before = new Map(
+      [...t.frames].map(([packId, frame]) => [packId, frame.posted.length]),
+    );
+    t.host.tick({ t: n * TICK, events: [] });
+    for (const [packId, frame] of t.frames) {
+      for (const message of frame.posted.slice(before.get(packId) ?? 0)) {
+        if ((message as { type: string }).type === 'frame') {
+          answer(packId, message as PostedFrame);
+        }
+      }
+    }
+    t.clock.advance(TICK);
+  }
+}
+
+/** Answers `frame` with a valid draw: an empty list for each of its actors. */
+function answerEmpty(t: ReturnType<typeof setup>) {
+  return (packId: string, frame: PostedFrame): void => {
+    frameOf(t, packId).handlers.onMessage(
+      draw(
+        Object.fromEntries(frame.actors.map(({ actorId }) => [actorId, []])),
+        frame.seq,
+      ),
+    );
+  };
+}
+
+/** The `sandbox-failed` lines. */
+function failedLines(t: ReturnType<typeof setup>): PackLogEntry[] {
+  return t.logs.filter((entry) => entry.kind === 'sandbox-failed');
 }
 
 describe('I/O matrix', () => {
@@ -605,16 +694,21 @@ describe('I/O matrix', () => {
     });
   });
 
-  it('一包變慢: a pack that never answers stops getting frames; the other goes on getting them and its draws are taken', async () => {
+  it(`一包變慢: a pack that never answers stops getting frames; the other goes on getting them and its draws are taken. Stuck (it answers no ping either), it fails as heartbeat-timeout at its ${HEARTBEAT_TIMEOUT_TICKS}th tick, its actors in the placeholder, and the other goes on as before`, async () => {
     const t = setup();
     await showReady(t, [actor('a1', ALPHA), actor('b1', BRAVO)]);
+    t.stuck.add(ALPHA);
     const alpha = frameOf(t, ALPHA);
     const bravo = frameOf(t, BRAVO);
+    const answerBravo = (packId: string, frame: PostedFrame): void => {
+      if (packId === BRAVO) {
+        bravo.handlers.onMessage(
+          draw({ b1: [{ ...SPRITE, x: frame.seq }] }, frame.seq),
+        );
+      }
+    };
 
-    for (let tick = 0; tick < 5; tick += 1) {
-      t.host.tick({ t: tick * 33, events: [] });
-      bravo.handlers.onMessage(draw({ b1: [{ ...SPRITE, x: tick }] }, tick));
-    }
+    runTicks(t, 0, 5, answerBravo);
 
     expect(types(alpha)).toStrictEqual(['init', 'frame']);
     expect(types(bravo)).toStrictEqual([
@@ -629,6 +723,40 @@ describe('I/O matrix', () => {
       { ...SPRITE, x: 4 },
     ]);
     expect(t.host.drawOf(ALPHA)).toBeUndefined();
+
+    // Story 3.9: its pings (one every HEARTBEAT_TICKS) go unanswered.
+    runTicks(t, 5, HEARTBEAT_TIMEOUT_TICKS - 6, answerBravo);
+    expect(t.host.phases().get(ALPHA)).toBe('ready');
+    expect(types(alpha)).toStrictEqual([
+      'init',
+      'frame',
+      ...Array.from(
+        { length: Math.floor((HEARTBEAT_TIMEOUT_TICKS - 1) / HEARTBEAT_TICKS) },
+        () => 'sandbox.ping',
+      ),
+    ]);
+    expect(failedLines(t)).toStrictEqual([]);
+
+    runTicks(t, HEARTBEAT_TIMEOUT_TICKS - 1, 1, answerBravo);
+    expect(failedLines(t)).toStrictEqual([
+      { kind: 'sandbox-failed', packId: ALPHA, reason: 'heartbeat-timeout' },
+    ]);
+    expect(alpha.removed).toBe(true);
+    expect(t.failures).toStrictEqual([
+      { packId: ALPHA, version: '1.0.0', reason: 'heartbeat-timeout' },
+    ]);
+    expect(t.host.troubled(ALPHA)).toBe(true);
+    expect(t.host.troubled(BRAVO)).toBe(false);
+
+    runTicks(t, HEARTBEAT_TIMEOUT_TICKS, 10, answerBravo);
+    expect(types(bravo).filter((type) => type === 'frame')).toHaveLength(
+      HEARTBEAT_TIMEOUT_TICKS + 10,
+    );
+    expect(t.host.drawOf(BRAVO)?.actors.get('b1')).toStrictEqual([
+      { ...SPRITE, x: HEARTBEAT_TIMEOUT_TICKS + 9 },
+    ]);
+    expect(t.host.phases().get(BRAVO)).toBe('ready');
+    expect(failedLines(t)).toHaveLength(1);
   });
 
   it('加入與移出: a draw naming an actor that left after its frame is still taken (checked against that frame’s actors)', async () => {
@@ -868,6 +996,336 @@ describe('I/O matrix', () => {
       packs: { installed: [stagePack(ALPHA, '1.1.0'), stagePack(BRAVO)] },
     });
     expect(t.host.drawOf(ALPHA)).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 3.9: the heartbeat, the draw timeout and the rebuild.
+
+describe('I/O matrix', () => {
+  it(`健康: a pack answering every frame (with empty draws) and every ping goes on with no failure, ten times ${HEARTBEAT_TIMEOUT_TICKS} ticks (past ${DRAW_TIMEOUT_MS} ms); it gets a ping every ${HEARTBEAT_TICKS} ticks, after that tick's stage messages`, async () => {
+    const t = setup();
+    await showReady(t, [actor('a1', ALPHA), actor('a2', ALPHA, 'probe-two')]);
+    const alpha = frameOf(t, ALPHA);
+
+    runTicks(t, 0, 10 * HEARTBEAT_TIMEOUT_TICKS, answerEmpty(t));
+
+    expect(failedLines(t)).toStrictEqual([]);
+    expect(t.failures).toStrictEqual([]);
+    expect(t.host.phases().get(ALPHA)).toBe('ready');
+    expect(t.host.troubled(ALPHA)).toBe(false);
+    const posted = types(alpha);
+    expect(posted.filter((type) => type === 'sandbox.ping')).toHaveLength(
+      (10 * HEARTBEAT_TIMEOUT_TICKS) / HEARTBEAT_TICKS,
+    );
+    expect(posted.filter((type) => type === 'frame')).toHaveLength(
+      10 * HEARTBEAT_TIMEOUT_TICKS,
+    );
+    // The init and the first HEARTBEAT_TICKS ticks' frames, then the ping.
+    const first = posted.indexOf('sandbox.ping');
+    expect(posted.slice(0, first)).toStrictEqual([
+      'init',
+      ...Array.from({ length: HEARTBEAT_TICKS }, () => 'frame'),
+    ]);
+    expect(alpha.posted[first]).toStrictEqual(sandboxPingMessage());
+    expect(
+      t.logs.filter((entry) => entry.kind === 'messages-dropped'),
+    ).toStrictEqual([]);
+  });
+
+  it('pong: a pong before ready fails the sandbox as a bad report; once ready, each pong starts the heartbeat count again', async () => {
+    const t = setup();
+    t.host.onView(view([actor('a1', ALPHA)]));
+    await settle();
+    const alpha = frameOf(t, ALPHA);
+    alpha.handlers.onLoad();
+    alpha.handlers.onMessage({ type: 'sandbox.pong' });
+    expect(failedLines(t)).toStrictEqual([
+      { kind: 'sandbox-failed', packId: ALPHA, reason: 'bad-report' },
+    ]);
+
+    const u = setup();
+    await showReady(u, [actor('a1', ALPHA)]);
+    u.stuck.add(ALPHA);
+    const answer = answerEmpty(u);
+    // A pong of its own now and then, just in time: never stuck long enough.
+    for (let n = 0; n < 5; n += 1) {
+      runTicks(
+        u,
+        n * (HEARTBEAT_TIMEOUT_TICKS - 1),
+        HEARTBEAT_TIMEOUT_TICKS - 1,
+        answer,
+      );
+      frameOf(u, ALPHA).handlers.onMessage({ type: 'sandbox.pong' });
+    }
+    expect(failedLines(u)).toStrictEqual([]);
+    runTicks(
+      u,
+      5 * (HEARTBEAT_TIMEOUT_TICKS - 1),
+      HEARTBEAT_TIMEOUT_TICKS,
+      answer,
+    );
+    expect(failedLines(u)).toStrictEqual([
+      { kind: 'sandbox-failed', packId: ALPHA, reason: 'heartbeat-timeout' },
+    ]);
+  });
+
+  it.each<[string, (t: ReturnType<typeof setup>, frame: PostedFrame) => void]>([
+    [
+      'over a limit (each draw dropped)',
+      (t, frame) => {
+        frameOf(t, ALPHA).handlers.onMessage(
+          draw(
+            {
+              a1: Array.from({ length: DRAW_MAX_COMMANDS + 1 }, () => SPRITE),
+            },
+            frame.seq,
+          ),
+        );
+      },
+    ],
+    [
+      'answered with sandbox.no-draw',
+      (t, frame) => {
+        frameOf(t, ALPHA).handlers.onMessage({
+          type: 'sandbox.no-draw',
+          seq: frame.seq,
+          reason: 'draw-too-large',
+        });
+      },
+    ],
+    ['never answered (its pings are)', () => {}],
+  ])(
+    `一直無效: a pack whose every frame is %s fails as draw-timeout once it has gone ${DRAW_TIMEOUT_MS} ms of ticks with its actor and no valid draw; main saying no leaves it failed, its actors in the placeholder`,
+    async (_label, answer) => {
+      const t = setup();
+      await showReady(t, [actor('a1', ALPHA)]);
+      const alpha = frameOf(t, ALPHA);
+
+      // The first tick sends the init: from the next the pack has its actor.
+      runTicks(t, 0, DRAW_TIMEOUT_TICKS, (_packId, frame) => {
+        answer(t, frame);
+      });
+      expect(t.host.phases().get(ALPHA)).toBe('ready');
+      expect(failedLines(t)).toStrictEqual([]);
+
+      runTicks(t, DRAW_TIMEOUT_TICKS, 1, (_packId, frame) => {
+        answer(t, frame);
+      });
+      expect(failedLines(t)).toStrictEqual([
+        { kind: 'sandbox-failed', packId: ALPHA, reason: 'draw-timeout' },
+      ]);
+      expect(alpha.removed).toBe(true);
+      expect(t.failures).toStrictEqual([
+        { packId: ALPHA, version: '1.0.0', reason: 'draw-timeout' },
+      ]);
+
+      await settle();
+      runTicks(t, DRAW_TIMEOUT_TICKS + 1, 10);
+      expect(frameOf(t, ALPHA)).toBe(alpha);
+      expect(t.host.phases().get(ALPHA)).toBe('failed');
+      expect(t.host.troubled(ALPHA)).toBe(true);
+      expect(t.host.drawOf(ALPHA)).toBeUndefined();
+    },
+  );
+
+  it('偶爾超限: a pack whose draws are mostly over a limit, with a valid one just in time each time, only has those dropped and does not fail; nor does one whose stage.log calls go over the stage.log rate of their own', async () => {
+    const t = setup();
+    await showReady(t, [actor('a1', ALPHA)]);
+    const alpha = frameOf(t, ALPHA);
+    const over = Array.from({ length: DRAW_MAX_COMMANDS + 1 }, () => SPRITE);
+
+    runTicks(t, 0, 3 * DRAW_TIMEOUT_TICKS, (_packId, frame) => {
+      const valid =
+        frame.seq % (DRAW_TIMEOUT_TICKS - 1) === DRAW_TIMEOUT_TICKS - 2;
+      alpha.handlers.onMessage(
+        draw({ a1: valid ? [SPRITE] : over }, frame.seq),
+      );
+      // Two stage.log calls a tick: past their own rate, dropped only.
+      alpha.handlers.onMessage({ type: 'stage.log', text: 'x' });
+      alpha.handlers.onMessage({ type: 'stage.log', text: 'y' });
+    });
+
+    expect(failedLines(t)).toStrictEqual([]);
+    expect(t.host.phases().get(ALPHA)).toBe('ready');
+    const dropped = new Set(
+      t.logs.flatMap((entry) =>
+        entry.kind === 'messages-dropped' ? [entry.reason] : [],
+      ),
+    );
+    expect(dropped).toStrictEqual(
+      new Set(['too-many-commands', 'log-rate-limited']),
+    );
+  });
+
+  it('只計處理到的 tick: no tick counts while the pack’s look has not come (no ping either); none counts towards the draw timeout while the pack has no own actor', async () => {
+    const t = setup({ looks: false });
+    await showReady(t, [actor('a1', ALPHA)]);
+    t.stuck.add(ALPHA);
+    const alpha = frameOf(t, ALPHA);
+    runTicks(t, 0, 2 * DRAW_TIMEOUT_TICKS);
+    expect(alpha.posted).toStrictEqual([]);
+    expect(failedLines(t)).toStrictEqual([]);
+
+    t.looks.set(ALPHA, lookOf(ALPHA));
+    runTicks(t, 0, HEARTBEAT_TIMEOUT_TICKS - 1);
+    expect(failedLines(t)).toStrictEqual([]);
+    runTicks(t, HEARTBEAT_TIMEOUT_TICKS - 1, 1);
+    expect(failedLines(t)).toStrictEqual([
+      { kind: 'sandbox-failed', packId: ALPHA, reason: 'heartbeat-timeout' },
+    ]);
+
+    // The draw timeout: alpha never draws, but answers its pings; bravo's
+    // actor keeps the stage ticking.
+    const u = setup();
+    await showReady(u, [actor('a1', ALPHA), actor('b1', BRAVO)]);
+    const answer = answerEmpty(u);
+    const bravoOnly = (packId: string, frame: PostedFrame): void => {
+      if (packId === BRAVO) {
+        answer(packId, frame);
+      }
+    };
+    // 1 tick with the init, then 199 with a1.
+    runTicks(u, 0, 200, bravoOnly);
+    u.host.onView(view([actor('b1', BRAVO)]));
+    // 1 more with a1 (its despawn goes), then none with an own actor,
+    // however many: well within SANDBOX_IDLE_MS of the clock.
+    runTicks(u, 200, 2 * DRAW_TIMEOUT_TICKS, bravoOnly);
+    expect(failedLines(u)).toStrictEqual([]);
+    expect(u.host.phases().get(ALPHA)).toBe('ready');
+
+    u.host.onView(view([actor('a2', ALPHA), actor('b1', BRAVO)]));
+    // 1 tick with the spawn, then the count goes on from 200.
+    runTicks(u, 800, DRAW_TIMEOUT_TICKS - 200, bravoOnly);
+    expect(failedLines(u)).toStrictEqual([]);
+    runTicks(u, 900, 1, bravoOnly);
+    expect(failedLines(u)).toStrictEqual([
+      { kind: 'sandbox-failed', packId: ALPHA, reason: 'draw-timeout' },
+    ]);
+  });
+
+  it('重建: on main’s yes the pack gets a new sandbox; its first tick sends init with every actor on stage, its own by their actorId; its actors stay in the placeholder through a no-draw and a dropped draw, until its first valid draw', async () => {
+    const t = setup({ restart: true });
+    await showReady(t, [
+      actor('a1', ALPHA),
+      actor('a2', ALPHA, 'probe-two'),
+      actor('b1', BRAVO),
+    ]);
+    t.stuck.add(ALPHA);
+    const old = frameOf(t, ALPHA);
+    const answer = answerEmpty(t);
+    runTicks(t, 0, HEARTBEAT_TIMEOUT_TICKS, (packId, frame) => {
+      if (packId === BRAVO) {
+        answer(packId, frame);
+      }
+    });
+    expect(old.removed).toBe(true);
+    expect(t.host.troubled(ALPHA)).toBe(true);
+
+    await settle();
+    const fresh = frameOf(t, ALPHA);
+    expect(fresh).not.toBe(old);
+    t.stuck.delete(ALPHA);
+    fresh.handlers.onLoad();
+    fresh.handlers.onMessage(READY);
+    expect(t.host.troubled(ALPHA)).toBe(true);
+    t.host.tick({ t: 9000, events: [] });
+
+    expect(types(fresh)).toStrictEqual(['init', 'frame']);
+    expect(fresh.posted[0]).toStrictEqual({
+      type: 'init',
+      actors: [
+        {
+          own: true,
+          actorId: 'a1',
+          characterId: 'probe-one',
+          params: { glow: true, bob: 2, skin: 'probe-one-plain' },
+          state: 'working',
+          displayName: 'session a1',
+        },
+        {
+          own: true,
+          actorId: 'a2',
+          characterId: 'probe-two',
+          params: { 'blink-every': 3, mood: 'calm' },
+          state: 'working',
+          displayName: 'session a2',
+        },
+        { own: false, actorId: 'b1', state: 'working' },
+      ],
+    });
+    expect(fresh.posted[1]).toMatchObject({ type: 'frame', seq: 0 });
+
+    fresh.handlers.onMessage({
+      type: 'sandbox.no-draw',
+      seq: 0,
+      reason: 'frame-threw',
+    });
+    expect(t.host.troubled(ALPHA)).toBe(true);
+    t.host.tick({ t: 9033, events: [] });
+    fresh.handlers.onMessage(draw({ a1: [{ ...SPRITE, asset: 'nope' }] }, 1));
+    expect(t.host.troubled(ALPHA)).toBe(true);
+    expect(t.host.drawOf(ALPHA)).toBeUndefined();
+    t.host.tick({ t: 9066, events: [] });
+    fresh.handlers.onMessage(draw({ a1: [SPRITE], a2: [] }, 2));
+
+    expect(t.host.troubled(ALPHA)).toBe(false);
+    expect(t.host.drawOf(ALPHA)?.actors).toStrictEqual(
+      new Map([
+        ['a1', [SPRITE]],
+        ['a2', []],
+      ]),
+    );
+    expect(t.failures).toHaveLength(1);
+  });
+
+  it('同版本重新匯入: main’s no stops the failed sandbox, its actor (demo mode’s, say) in the placeholder through the failure mark; the same version imported again clears the mark and rebuilds it, in the placeholder until its first valid draw', async () => {
+    const t = setup();
+    const actors = [actor('a1', ALPHA)];
+    await showReady(t, actors);
+    t.stuck.add(ALPHA);
+    const old = frameOf(t, ALPHA);
+    runTicks(t, 0, HEARTBEAT_TIMEOUT_TICKS);
+    await settle();
+    expect(old.removed).toBe(true);
+    expect(t.failures).toStrictEqual([
+      { packId: ALPHA, version: '1.0.0', reason: 'heartbeat-timeout' },
+    ]);
+
+    // main marks the version failed; demo mode keeps its actor on stage.
+    t.host.onView({
+      ...view(actors),
+      packs: {
+        installed: [
+          { ...stagePack(ALPHA), runtimeFailed: 'heartbeat-timeout' },
+          stagePack(BRAVO),
+        ],
+      },
+    });
+    await settle();
+    expect(frameOf(t, ALPHA)).toBe(old);
+    expect(t.host.phases().get(ALPHA)).toBe('failed');
+    expect(t.host.troubled(ALPHA)).toBe(true);
+
+    // Imported again at 1.0.0: the mark is gone, the version the same.
+    t.stuck.delete(ALPHA);
+    t.host.onView(view(actors));
+    await settle();
+    const fresh = frameOf(t, ALPHA);
+    expect(fresh).not.toBe(old);
+    fresh.handlers.onLoad();
+    fresh.handlers.onMessage(READY);
+    expect(t.host.troubled(ALPHA)).toBe(true);
+    t.host.tick({ t: 9000, events: [] });
+    expect(types(fresh)).toStrictEqual(['init', 'frame']);
+    expect(t.host.troubled(ALPHA)).toBe(true);
+    fresh.handlers.onMessage(draw({ a1: [SPRITE] }, 0));
+
+    expect(t.host.troubled(ALPHA)).toBe(false);
+    expect(t.host.drawOf(ALPHA)?.actors).toStrictEqual(
+      new Map([['a1', [SPRITE]]]),
+    );
+    expect(t.failures).toHaveLength(1);
   });
 });
 

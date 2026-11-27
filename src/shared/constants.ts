@@ -294,6 +294,47 @@ export const SANDBOX_BOOT_TIMEOUT_MS = 10_000;
 export const TICK_HZ = 30;
 
 /**
+ * How often pack-host sends a ready sandbox `sandbox.ping` (Story 3.9), in
+ * the world ticks it handles that sandbox (one second at TICK_HZ). The
+ * Worker bootstrap answers each with `sandbox.pong`, outside the pack's
+ * Compartment: a Worker stuck in the pack's code answers none.
+ */
+export const HEARTBEAT_TICKS = 30;
+
+/**
+ * How many world ticks pack-host handles a ready sandbox in with no
+ * `sandbox.pong` before it fails it as `heartbeat-timeout` (Story 3.9):
+ * five seconds at TICK_HZ. Only the ticks it handles that sandbox in
+ * count: none while the system sleeps, the screen is locked or the
+ * canvas's WebGL context is lost (no tick at all), nor while the pack's
+ * look has not come.
+ */
+export const HEARTBEAT_TIMEOUT_TICKS = 150;
+
+/**
+ * How long a ready sandbox may go with no valid `draw` (an empty one
+ * counts) before pack-host fails it as `draw-timeout` (Story 3.9). Counted
+ * in the world ticks pack-host handles that sandbox in while the pack has
+ * an own actor, each TICK_HZ-th of a second (so 300 ticks), never by the
+ * wall clock. A `draw` dropped (over a limit, not valid) and a `frame`
+ * answered with `sandbox.no-draw` or not at all are not valid draws.
+ */
+export const DRAW_TIMEOUT_MS = 10_000;
+
+/** DRAW_TIMEOUT_MS in world ticks (TICK_HZ a second): what pack-host counts. */
+export const DRAW_TIMEOUT_TICKS = Math.ceil((DRAW_TIMEOUT_MS * TICK_HZ) / 1000);
+
+/**
+ * How many times main/packs lets the overlay rebuild a failed sandbox of
+ * one pack at one version in a run (Story 3.9): each of the first this
+ * many failures is answered with a rebuild, the next ones with none, and
+ * the first of those marks the version failed (StagePack `runtimeFailed`).
+ * Counted in memory only; importing the pack again (any version) or
+ * removing it counts from 0.
+ */
+export const PACK_RESTART_LIMIT = 3;
+
+/**
  * Largest `draw` a pack may send, in bytes of its JSON form (Story 3.6).
  * The Worker bootstrap measures what the pack's `frame` returned before it
  * posts it, and answers `sandbox.no-draw` instead of a larger one; the

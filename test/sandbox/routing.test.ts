@@ -3,8 +3,9 @@
  * message checked against stageMessageSchema and handed to the pack's
  * handler, the pack's own actors kept for `stage.random`, `frame`'s answer
  * wrapped as `draw` (or `sandbox.no-draw`), and run() listening on the port
- * once it comes. With fake handlers and ports; the contract test pack's
- * entry is evaluated here without SES (the real boot is in build.test.ts).
+ * once it comes, answering pack-host's ping with a pong itself (Story
+ * 3.9). With fake handlers and ports; the contract test pack's entry is
+ * evaluated here without SES (the real boot is in build.test.ts).
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -20,6 +21,7 @@ import {
   NO_BITMAP_BRAND,
   createStage,
   type DrawReply,
+  isPingMessage,
   type NoDrawReport,
   type OwnActors,
   routeStageMessage,
@@ -33,6 +35,7 @@ import { DRAW_MAX_BYTES, DRAW_MAX_COMMANDS } from '../../src/shared/constants';
 import { imageBitmapsIn, jsonBytes } from '../../src/shared/draw-size';
 import {
   sandboxBitmapCharactersMessage,
+  sandboxPingMessage,
   sandboxReportSchema,
 } from '../../src/shared/sandbox';
 import {
@@ -497,6 +500,76 @@ describe('run: the stage messages on the port', () => {
       expect.objectContaining({ type: 'sandbox.ready' }),
       { type: 'draw', seq: 0, actors: { a1: [] } },
     ]);
+  });
+
+  it('心跳: a ping on the port is answered at once with a pong on it, by the bootstrap: no handler of the pack sees it (not even one named after it), and it comes between the answers to the stage messages around it; a message that only looks like a ping is ignored', () => {
+    const seen: string[] = [];
+    const worker = lockedScope({
+      init: () => {
+        seen.push('init');
+      },
+      frame: () => {
+        seen.push('frame');
+        return { a1: [] };
+      },
+      ['sandbox.ping']: () => {
+        seen.push('internal');
+      },
+    });
+    countConsole(worker.scope);
+    run('ENTRY', worker.scope);
+    const port = fakePort();
+    worker.emit('message', { data: { type: 'port' }, ports: [port.port] });
+
+    port.send(sandboxPingMessage());
+    port.send({ ...sandboxPingMessage(), seq: 1 });
+    port.send({ type: 'sandbox.pings' });
+    port.send(INIT);
+    port.send(frame(0, ['a1']));
+    port.send(sandboxPingMessage());
+    port.send(frame(1, ['a1']));
+
+    expect(seen).toStrictEqual(['init', 'frame', 'frame']);
+    expect(port.sent).toStrictEqual([
+      expect.objectContaining({ type: 'sandbox.ready' }),
+      { type: 'sandbox.pong' },
+      { type: 'draw', seq: 0, actors: { a1: [] } },
+      { type: 'sandbox.pong' },
+      { type: 'draw', seq: 1, actors: { a1: [] } },
+    ]);
+    // The overlay takes it as a report.
+    expect(sandboxReportSchema.safeParse(port.sent[1]).success).toBe(true);
+  });
+
+  it('心跳: the pong is the bootstrap’s, not the pack’s: a sandbox whose factory threw still answers a ping', () => {
+    const worker = lockedScope(() => {
+      throw new Error('factory');
+    });
+    countConsole(worker.scope);
+    run('ENTRY', worker.scope);
+    const port = fakePort();
+    worker.emit('message', { data: { type: 'port' }, ports: [port.port] });
+
+    port.send(sandboxPingMessage());
+
+    expect(port.sent).toStrictEqual([
+      expect.objectContaining({ type: 'sandbox.failed' }),
+      { type: 'sandbox.pong' },
+    ]);
+  });
+
+  it('isPingMessage takes exactly { type: "sandbox.ping" }, as pack-host makes it', () => {
+    expect(isPingMessage(sandboxPingMessage())).toBe(true);
+    for (const other of [
+      'sandbox.ping',
+      null,
+      {},
+      { type: 'sandbox.pong' },
+      { type: 'sandbox.ping', seq: 0 },
+      [{ type: 'sandbox.ping' }],
+    ]) {
+      expect(isPingMessage(other)).toBe(false);
+    }
   });
 
   it('a sandbox that failed to boot takes no stage message', () => {

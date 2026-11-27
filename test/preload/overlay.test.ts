@@ -8,6 +8,7 @@ import { createPackExporter } from '../../src/main/packs/exporter';
 import { createPackImporter } from '../../src/main/packs/importer';
 import { inspectPack } from '../../src/main/packs/inspect';
 import { installPack } from '../../src/main/packs/install';
+import { registerPackSandboxHandlers } from '../../src/main/packs/ipc';
 import { readInstalledManifest } from '../../src/main/packs/manifest';
 import { loadPacks } from '../../src/main/packs/store';
 import { createAssigner } from '../../src/main/pool/assign';
@@ -155,6 +156,7 @@ describe('overlay preload', () => {
       'getEntry',
       'getManifest',
       'log',
+      'runtimeFailed',
     ]);
     expect(Object.keys(api.stageView)).toStrictEqual(['subscribe']);
     expect(Object.isFrozen(api)).toBe(true);
@@ -371,6 +373,33 @@ describe('I/O matrix', () => {
     expect(lines(warn)).toContain(
       '[ipc] canvas:gpu: sender rejected: renderer panels may not use this channel',
     );
+  });
+});
+
+describe('packs.runtimeFailed (Story 3.9)', () => {
+  it("sends a sandbox's failure to main and gets main's answer back", async () => {
+    const reported: unknown[] = [];
+    registerPackSandboxHandlers(
+      async () => ({ ok: false, code: 'not-installed' }),
+      () => {},
+      () => ({ ok: false, code: 'not-installed' }),
+      (failure) => {
+        reported.push(failure);
+        return { restart: true };
+      },
+    );
+    const api = await loadApi();
+    const failure = {
+      packId: 'sample-pack',
+      version: '1.0.0',
+      reason: 'heartbeat-timeout',
+    } as const;
+
+    expect(await api.packs.runtimeFailed(failure)).toStrictEqual({
+      ok: true,
+      data: { restart: true },
+    });
+    expect(reported).toStrictEqual([failure]);
   });
 });
 

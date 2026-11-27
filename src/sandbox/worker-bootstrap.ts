@@ -42,7 +42,11 @@
  * 5. Once ready (Story 3.6), the stage's messages come in on that port.
  *    A message whose `type` starts with `sandbox.` is pack-host's own and
  *    never reaches the pack: exactly SandboxBitmapCharactersMessage sets
- *    the characters `stage.canvas` answers for, any other is ignored.
+ *    the characters `stage.canvas` answers for, exactly SandboxPingMessage
+ *    (Story 3.9) is answered at once with `sandbox.pong` on the port
+ *    (here, outside the Compartment: a Worker busy in the pack's code
+ *    answers none, which is how the overlay finds it stuck), any other is
+ *    ignored.
  *    Each other one that passes the pack API's stageMessageSchema goes to
  *    the pack's `handlers[type]`, when that is a function (reading it and
  *    calling it are each caught: a throwing handler stops nothing here);
@@ -85,6 +89,7 @@ import type {
   SandboxBitmapCharactersMessage,
   SandboxBootFailure,
   SandboxNoDrawReason,
+  SandboxPingMessage,
   SandboxRemoval,
   SandboxReport,
 } from '../shared/sandbox';
@@ -1201,6 +1206,23 @@ export function bitmapCharactersOf(
 }
 
 /**
+ * Whether `data` is exactly a SandboxPingMessage (`type` and no other key)
+ * (Story 3.9).
+ */
+export function isPingMessage(data: unknown): boolean {
+  const expected: SandboxPingMessage['type'] = 'sandbox.ping';
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    Object.keys(data).length === 1 &&
+    (data as { type?: unknown }).type === expected
+  );
+}
+
+/** The bootstrap's answer to a SandboxPingMessage (Story 3.9). */
+const PONG: SandboxReport = { type: 'sandbox.pong' };
+
+/**
  * The Worker's steps 3 to 5: listens for the port and for uncaught
  * trouble (reported once), boots, and reports. The boot report goes
  * first: `stage.*` calls the factory makes are sent after it. Reports
@@ -1209,7 +1231,8 @@ export function bitmapCharactersOf(
  * plain data when made (createStage), so arguments that cannot be sent
  * throw at the call, and the copy is what waits and goes. Once the port
  * is there, pack-host's own messages on it are taken here
- * (bitmapCharactersOf); once the boot gave `handlers`, the stage's
+ * (bitmapCharactersOf; a ping is answered with a pong at once, Story
+ * 3.9); once the boot gave `handlers`, the stage's
  * messages on it go to routeStageMessage, with the ImageBitmap brand
  * check the boot kept, and its answers go back with their transfer lists.
  */
@@ -1268,6 +1291,15 @@ export function run(
     first.addEventListener?.('message', (message) => {
       const { data } = message;
       if (isHostMessage(data)) {
+        if (isPingMessage(data)) {
+          try {
+            first.postMessage(PONG);
+          } catch {
+            // A plain report: it cannot fail; if it did, no pong is the
+            // overlay's sign of trouble.
+          }
+          return;
+        }
         const characterIds = bitmapCharactersOf(data);
         if (characterIds !== undefined) {
           bitmapCharacters.clear();

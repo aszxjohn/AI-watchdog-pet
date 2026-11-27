@@ -22,6 +22,7 @@ import {
   packVersionSchema,
   spritesheetSchema,
 } from './pack-api';
+import { SANDBOX_FAILURE_REASONS } from './sandbox-failures';
 import { z } from './zod-setup';
 
 /**
@@ -117,8 +118,8 @@ const installedPackShape = {
  * `pack://<id>/<version>/` answers, worked out at install, sorted: the
  * entry, every `assets` path, and the image (`meta.image`) of each
  * declared spritesheet. Which one is the entry only the installed
- * `manifest.json` says. Story 3.9 adds its failure mark here as an
- * optional field.
+ * `manifest.json` says. A pack's failure mark (Story 3.9) is not kept
+ * here: main/packs keeps it in memory only and StagePack carries it.
  */
 export const packIndexEntrySchema = z.strictObject({
   ...installedPackShape,
@@ -166,11 +167,19 @@ export type PackCompatibility = z.infer<typeof packCompatibilitySchema>;
 
 /**
  * One installed pack as StageView carries it: index.json's entry without
- * `servedPaths`, with whether it fits this stage (Story 3.5).
+ * `servedPaths`, with whether it fits this stage (Story 3.5) and, only
+ * when the version installed is marked failed this run (Story 3.9), why:
+ * `runtimeFailed` is the reason code of the failure that marked it, the
+ * first one past PACK_RESTART_LIMIT restarts of its sandbox. A marked pack
+ * is out of the pool as if not 上場 (its 上場 setting stays as it is);
+ * demo mode still shows it. The mark is kept in main's memory only: the
+ * next run starts without it, and importing the pack again (any version)
+ * or removing it clears it.
  */
 export const stagePackSchema = z.strictObject({
   ...installedPackShape,
   compatibility: packCompatibilitySchema,
+  runtimeFailed: z.enum(SANDBOX_FAILURE_REASONS).optional(),
 });
 
 export type StagePack = z.infer<typeof stagePackSchema>;

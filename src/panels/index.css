@@ -440,7 +440,9 @@ body {
   font-size: 12px;
 }
 
-.pack-incompatible {
+/* A pack that does not fit the API, or (Story 3.9) marked failed this run. */
+.pack-incompatible,
+.pack-runtime-failed {
   margin: 4px 0 0;
   color: var(--warning);
   font-size: 12px;

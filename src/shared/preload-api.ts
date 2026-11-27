@@ -19,6 +19,7 @@ import type {
   packsGetManifest,
   packsLog,
   packsRemove,
+  packsRuntimeFailed,
   poolSetLocked,
   poolSetLockOn,
   poolSetReleased,
@@ -26,7 +27,7 @@ import type {
   settingsGet,
   settingsPatch,
 } from './ipc';
-import type { PackLogEntry } from './sandbox';
+import type { PackLogEntry, PackRuntimeFailure } from './sandbox';
 import type { SettingsPatch } from './settings';
 import type { StageViewSnapshot } from './stage-view';
 
@@ -169,6 +170,13 @@ export interface OverlayApi {
     ): Promise<IpcResult<IpcData<typeof packsGetManifest>>>;
     /** Writes one line about a pack's sandbox to the run log. */
     log(entry: PackLogEntry): Promise<IpcResult<IpcData<typeof packsLog>>>;
+    /**
+     * Says a pack's sandbox failed (Story 3.9); main answers whether the
+     * overlay builds the pack a new one.
+     */
+    runtimeFailed(
+      failure: PackRuntimeFailure,
+    ): Promise<IpcResult<IpcData<typeof packsRuntimeFailed>>>;
   };
 }
 

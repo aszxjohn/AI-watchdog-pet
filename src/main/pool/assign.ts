@@ -10,7 +10,10 @@
  *   the pool (加入池子), in manifest order. Both are read only through
  *   isPackEnabled and isInPool (src/shared/settings). A pack whose
  *   `apiVersion` does not fit this stage is left out (Story 3.5): its
- *   entry is never handed to a sandbox.
+ *   entry is never handed to a sandbox. So is a pack marked failed this
+ *   run (its StagePack's `runtimeFailed`, Story 3.9: its sandbox failed
+ *   past PACK_RESTART_LIMIT restarts), as if not 上場; its 上場 setting
+ *   stays as it is, and importing it again puts it back.
  * - Which character: among the pool's characters no actor plays right now,
  *   the one with the fewest appearances this run, the first in pool order
  *   among equals; when every one is on stage already, the same over the
@@ -37,16 +40,16 @@
  *   `sessions` (it ended or expired) or is held back (released; or, with
  *   鎖定展示 on, not locked). A session no longer held back (shown again,
  *   locked, 鎖定展示 off) gets a new assignment, with a new `actorId`.
- * - The pool shrinking (a pack no longer 上場, removed or not fitting
- *   this stage any more, a character out of the pool or gone from a new
- *   version) swaps characters at once (Story 3.9): outside demo mode,
- *   every assignment whose character is not in the pool ends, its actor
- *   with it, and its session, still shown and not held back, gets a
- *   character by the usual pick in the same change, with a new `actorId`
- *   and an appearance counted. All of them end before any pick, so none
- *   picks a character leaving the stage. An empty pool gives none. The
- *   pool growing gives a character to each shown session still without
- *   one, at once, and moves no one who has one.
+ * - The pool shrinking (a pack no longer 上場, removed, not fitting this
+ *   stage any more or marked failed, a character out of the pool or gone
+ *   from a new version) swaps characters at once (Story 3.9): outside
+ *   demo mode, every assignment whose character is not in the pool ends,
+ *   its actor with it, and its session, still shown and not held back,
+ *   gets a character by the usual pick in the same change, with a new
+ *   `actorId` and an appearance counted. All of them end before any pick,
+ *   so none picks a character leaving the stage. An empty pool gives none.
+ *   The pool growing gives a character to each shown session still
+ *   without one, at once, and moves no one who has one.
  * - The pool is worked out from the settings values and installed packs
  *   the assigner last heard, through watchPool(), which main.ts calls right
  *   after createStageView: StageView hears a settings or packs change
@@ -64,11 +67,11 @@
  *   usual; the rest are parked, character and all, in memory only), new
  *   ones get none, and each `demo` session plays the character demo mode
  *   names, any installed character that fits this stage (in the pool or
- *   not), held back or not (鎖定展示 does not touch demo mode), with a new
- *   actor id and no appearance counted. None when the character is null
- *   or not installed (any more). Every setDemo() with a stage starts the
- *   demo's actors anew (a pick reloads the character). When it is off
- *   again, the demo's actors end and each
+ *   not, its pack marked failed or not), held back or not (鎖定展示 does
+ *   not touch demo mode), with a new actor id and no appearance counted.
+ *   None when the character is null or not installed (any more). Every
+ *   setDemo() with a stage starts the demo's actors anew (a pick reloads
+ *   the character). When it is off again, the demo's actors end and each
  *   parked session still shown and not held back comes back first: with
  *   its character when a kept one would keep it (in the pool, and not on
  *   stage unless every pool character is), otherwise by the usual pick;
@@ -145,9 +148,9 @@ function compareIds(a: string, b: string): number {
 }
 
 /**
- * The pool, in order: each pack of `installed` that is 上場 and fits this
- * stage's API, by id, × each of its characters that joins the pool, in
- * manifest order.
+ * The pool, in order: each pack of `installed` that is 上場, fits this
+ * stage's API and is not marked failed this run (`runtimeFailed`), by id,
+ * × each of its characters that joins the pool, in manifest order.
  */
 export function poolOf(
   installed: readonly StagePack[],
@@ -156,7 +159,10 @@ export function poolOf(
   return [...installed]
     .sort((a, b) => compareIds(a.id, b.id))
     .filter(
-      (pack) => pack.compatibility.compatible && isPackEnabled(values, pack.id),
+      (pack) =>
+        pack.compatibility.compatible &&
+        pack.runtimeFailed === undefined &&
+        isPackEnabled(values, pack.id),
     )
     .flatMap((pack) =>
       pack.characters

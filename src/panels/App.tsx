@@ -805,6 +805,11 @@ function PackList({
                     {pack.incompatible}
                   </p>
                 )}
+                {pack.runtimeFailed === null ? null : (
+                  <p className="pack-runtime-failed" role="note">
+                    {pack.runtimeFailed}
+                  </p>
+                )}
                 {controls.confirm === null ? null : (
                   <div
                     className="pack-remove-confirm"

@@ -1,8 +1,9 @@
 /**
- * overlay/renderer (Stories 3.6, 3.7, 3.8): what is drawn each display
+ * overlay/renderer (Stories 3.6 to 3.9): what is drawn each display
  * frame (buildScene: placing, mapping, the latest draws, the placeholder,
- * the badges, clipping, order, the areas that take the mouse), the
- * missing-character log, and the texture store with a fake backend.
+ * a pack in trouble, the badges, clipping, order, the areas that take the
+ * mouse), the missing-character log, and the texture store with a fake
+ * backend.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { packLook, type PackLook } from '../../src/overlay/looks';
@@ -143,6 +144,8 @@ interface Setup {
   canvas?: StageView['canvas'];
   /** Whether a texture is there; all are, by default. */
   ready?: SceneInput['ready'];
+  /** The packs in trouble (Story 3.9); none by default. */
+  troubled?: readonly string[];
 }
 
 function input({
@@ -162,12 +165,14 @@ function input({
     fallback: false,
   },
   ready = () => true,
+  troubled = [],
 }: Setup): SceneInput {
   return {
     view: { actors, characters, packs: { installed }, canvas },
     look: (packId) => looks[packId],
     draw: (packId) => draws[packId],
     ready,
+    troubled: (packId) => troubled.includes(packId),
   };
 }
 
@@ -1070,6 +1075,58 @@ describe('I/O matrix', () => {
     expect(particles.emittersOf('a1')).toStrictEqual([]);
     expect(particles.emittersOf('a2')).toHaveLength(1);
     expect(particles.emittersOf('a2')[0]?.active).toBe(true);
+  });
+});
+
+// Story 3.9: a pack whose sandbox failed (or was rebuilt and has not drawn
+// yet) has all its actors in the placeholder.
+
+describe('I/O matrix', () => {
+  it('當掉: every placed actor of a pack in trouble is drawn as the placeholder whatever its state (one that maps, one with no draw yet, one with an empty list), with its badge, taking the mouse, its pack’s draw unused; the other pack’s actors are drawn as usual; once out of trouble the latest draw is drawn again', () => {
+    const actors = [
+      actor('a1', `${ALPHA}/probe-one`, 'working'),
+      actor('a2', `${ALPHA}/probe-two`, 'thinking'),
+      actor('a3', `${ALPHA}/probe-one`, 'working'),
+      actor('b1', `${BRAVO}/probe-one`, 'working'),
+    ];
+    const draws = {
+      [ALPHA]: drawOf({ a1: [SPRITE, SPARKLE], a2: [] }),
+      [BRAVO]: drawOf({ b1: [SPRITE] }),
+    };
+
+    const scene = buildScene(input({ actors, draws, troubled: [ALPHA] }));
+
+    const byId = new Map(scene.actors.map((each) => [each.actorId, each]));
+    for (const actorId of ['a1', 'a2', 'a3']) {
+      expect(byId.get(actorId)).toMatchObject({
+        sprites: [],
+        emitters: [],
+        placeholder: expect.any(Object),
+      });
+      expect('bitmap' in (byId.get(actorId) ?? {})).toBe(false);
+      expect(byId.get(actorId)?.badge?.state).toBeDefined();
+    }
+    expect(byId.get('a1')?.placeholder).toStrictEqual(PROBE_ONE_HITBOX);
+    expect(hasPlaceholder(byId.get('b1'))).toBe(false);
+    expect(byId.get('b1')?.sprites).toStrictEqual([sceneSprite(SPRITE)]);
+    expect(scene.areas.map((area) => area.key).sort()).toStrictEqual([
+      'claude-code:a1',
+      'claude-code:a2',
+      'claude-code:a3',
+      'claude-code:b1',
+    ]);
+    expect(particleActorsOf(scene).map((each) => each.actorId)).toStrictEqual([
+      'b1',
+    ]);
+
+    const after = buildScene(input({ actors, draws, troubled: [] }));
+    expect(after.actors.some(hasPlaceholder)).toBe(false);
+    expect(after.actors.find((each) => each.actorId === 'a1')).toMatchObject({
+      sprites: [sceneSprite(SPRITE)],
+      emitters: [SPARKLE],
+    });
+    // a3, left out of the draw, is not drawn once out of trouble.
+    expect(after.actors.some((each) => each.actorId === 'a3')).toBe(false);
   });
 });
 

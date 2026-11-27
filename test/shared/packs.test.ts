@@ -49,6 +49,7 @@ import {
   PACK_IMPORT_REPORTED_ISSUES_MAX,
   PACK_REJECTED_NAME_MAX_LENGTH,
 } from '../../src/shared/constants';
+import { SANDBOX_FAILURE_REASONS } from '../../src/shared/sandbox';
 import { expectRejected, expectRoundTrip } from './schema-helpers';
 
 const CHARACTER = { id: 'probe-a', name: '探針甲', height: 110 };
@@ -174,17 +175,30 @@ describe('stagePacksSchema', () => {
     ['served paths, which stay in main', { installed: [ENTRY] }],
     ['a pack without its compatibility', { installed: [INSTALLED] }],
     ['no installed list', {}],
+    [
+      'a failure mark that is not a sandbox failure reason',
+      { installed: [{ ...STAGE_PACK, runtimeFailed: 'tired' }] },
+    ],
   ])('rejects %s', (_label, value) => {
     expectRejected(stagePacksSchema, value);
   });
 
-  it('a stage pack is an index entry without servedPaths, with its compatibility', () => {
+  it('a stage pack is an index entry without servedPaths, with its compatibility and (Story 3.9) its optional failure mark', () => {
     expect(Object.keys(stagePackSchema.shape)).toStrictEqual([
       ...Object.keys(packIndexEntrySchema.shape).filter(
         (key) => key !== 'servedPaths',
       ),
       'compatibility',
+      'runtimeFailed',
     ]);
+  });
+
+  it('round-trips a pack marked failed this run, with any sandbox failure reason (Story 3.9)', () => {
+    for (const runtimeFailed of SANDBOX_FAILURE_REASONS) {
+      expectRoundTrip(stagePacksSchema, {
+        installed: [{ ...STAGE_PACK, runtimeFailed }],
+      });
+    }
   });
 
   it('round-trips a pack that does not fit this stage, with why and the version it needs', () => {

@@ -1,8 +1,9 @@
 /**
  * main/packs store (Story 3.2): packs/index.json (loading, broken files,
  * migrations, save), the start-up cleanup of what an install left behind,
- * and the packs section as StageView carries it. Real files in a temp
- * folder.
+ * the packs section as StageView carries it, and (Story 3.9) the sandbox
+ * failures counted and marked in memory, cleared by a save that replaces
+ * or removes the pack. Real files in a temp folder.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -42,6 +43,14 @@ const BETA: PackIndexEntry = {
     { id: 'probe-c', name: '探針丙', height: 140 },
   ],
   servedPaths: ['main.js'],
+};
+const GAMMA: PackIndexEntry = {
+  id: 'gamma-pack',
+  name: '丙包',
+  version: '2.0.0',
+  apiVersion: '1.0',
+  characters: [{ id: 'probe-d', name: '探針丁', height: 120 }],
+  servedPaths: ['entry.js'],
 };
 
 /** What StageView carries of an entry (whose apiVersion fits). */
@@ -564,5 +573,163 @@ describe('save', () => {
     store.save([ALPHA]);
 
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe('I/O matrix', () => {
+  /** A store with ALPHA and BETA saved, ALPHA's version marked failed. */
+  function marked() {
+    const store = load();
+    store.save([ALPHA, BETA]);
+    for (let n = 0; n < 4; n += 1) {
+      store.countFailure(ALPHA.id, ALPHA.version);
+    }
+    expect(store.markFailed(ALPHA.id, ALPHA.version, 'draw-timeout')).toBe(
+      true,
+    );
+    const heard: unknown[] = [];
+    store.onChange((sections) => heard.push(sections));
+    return { store, heard };
+  }
+
+  it('第 4 次: counts the failures of the version installed only; marking it puts runtimeFailed on its StagePack and tells the listeners once, writing nothing', () => {
+    const store = load();
+    store.save([ALPHA, BETA]);
+    const written = fs.readFileSync(index, 'utf8');
+    const heard: unknown[] = [];
+    store.onChange((sections) => heard.push(sections));
+
+    expect(store.countFailure(ALPHA.id, ALPHA.version)).toBe(1);
+    expect(store.countFailure(ALPHA.id, ALPHA.version)).toBe(2);
+    expect(store.countFailure(BETA.id, BETA.version)).toBe(1);
+    expect(store.countFailure(ALPHA.id, '9.9.9')).toBeUndefined();
+    expect(store.countFailure('gamma-pack', '1.0.0')).toBeUndefined();
+    expect(heard).toStrictEqual([]);
+
+    expect(store.markFailed(ALPHA.id, ALPHA.version, 'draw-timeout')).toBe(
+      true,
+    );
+
+    const expected = {
+      packs: {
+        installed: [
+          { ...staged(ALPHA), runtimeFailed: 'draw-timeout' },
+          staged(BETA),
+        ],
+      },
+    };
+    expect(heard).toStrictEqual([expected]);
+    expect(store.get()).toBe(heard[0]);
+    expect(stagePacksSchema.safeParse(store.get().packs).success).toBe(true);
+    expect(fs.readFileSync(index, 'utf8')).toBe(written);
+    expect(tree()).toStrictEqual(['index.json']);
+    expect(store.list()).toStrictEqual([ALPHA, BETA]);
+    // The count goes on past the mark.
+    expect(store.countFailure(ALPHA.id, ALPHA.version)).toBe(3);
+
+    // Marked already (the first reason stays), or not the version installed.
+    expect(store.markFailed(ALPHA.id, ALPHA.version, 'worker-error')).toBe(
+      false,
+    );
+    expect(store.markFailed(BETA.id, '9.9.9', 'worker-error')).toBe(false);
+    expect(store.markFailed('gamma-pack', '1.0.0', 'worker-error')).toBe(false);
+    expect(heard).toHaveLength(1);
+    expect(store.get()).toStrictEqual(expected);
+  });
+
+  it('同版本重新匯入: a save with a new entry of the same version clears its count and mark before the listeners hear it; a save that keeps the entry keeps them', () => {
+    const { store, heard } = marked();
+
+    store.save([...store.list(), GAMMA]);
+
+    expect(store.get().packs.installed[0]).toStrictEqual({
+      ...staged(ALPHA),
+      runtimeFailed: 'draw-timeout',
+    });
+    expect(store.countFailure(ALPHA.id, ALPHA.version)).toBe(5);
+
+    store.save([
+      ...store.list().filter((e) => e.id !== ALPHA.id),
+      { ...ALPHA },
+    ]);
+
+    expect(heard).toHaveLength(2);
+    expect(heard[1]).toStrictEqual({
+      packs: { installed: [staged(ALPHA), staged(BETA), staged(GAMMA)] },
+    });
+    expect(store.countFailure(ALPHA.id, ALPHA.version)).toBe(1);
+    expect(packsLines('info')).toContain(
+      '[packs] pack alpha-pack: installed again at 1.2.0; its 5 sandbox failures of version 1.2.0 this run and its failed mark are cleared',
+    );
+  });
+
+  it('新版本: a save with another version clears its count and mark; the new version counts from 0', () => {
+    const { store, heard } = marked();
+
+    store.save([
+      ...store.list().filter((e) => e.id !== ALPHA.id),
+      { ...ALPHA, version: '1.3.0' },
+    ]);
+
+    expect(heard).toStrictEqual([
+      {
+        packs: {
+          installed: [staged({ ...ALPHA, version: '1.3.0' }), staged(BETA)],
+        },
+      },
+    ]);
+    expect(store.countFailure(ALPHA.id, '1.3.0')).toBe(1);
+    expect(packsLines('info')).toContain(
+      '[packs] pack alpha-pack: installed again at 1.3.0; its 4 sandbox failures of version 1.2.0 this run and its failed mark are cleared',
+    );
+
+    // Back to 1.2.0: no old mark or count comes back with it.
+    store.save([
+      ...store.list().filter((e) => e.id !== ALPHA.id),
+      { ...ALPHA },
+    ]);
+
+    expect(store.get().packs.installed[0]).toStrictEqual(staged(ALPHA));
+    expect(store.countFailure(ALPHA.id, ALPHA.version)).toBe(1);
+  });
+
+  it('移除: a save without the pack clears its count and mark; installed again later, it starts unmarked from 0', () => {
+    const { store, heard } = marked();
+
+    store.save([BETA]);
+
+    expect(heard).toStrictEqual([{ packs: { installed: [staged(BETA)] } }]);
+    expect(packsLines('info')).toContain(
+      '[packs] pack alpha-pack: removed; its 4 sandbox failures of version 1.2.0 this run and its failed mark are cleared',
+    );
+
+    store.save([ALPHA, BETA]);
+
+    expect(store.get().packs.installed[0]).toStrictEqual(staged(ALPHA));
+    expect(store.countFailure(ALPHA.id, ALPHA.version)).toBe(1);
+  });
+
+  it('a save that fails clears nothing', () => {
+    const store = load({
+      fs: fsWith({
+        writeFileSync: ((target: string, ...rest: unknown[]) => {
+          if (store.list().length > 0) {
+            throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+          }
+          return (fs.writeFileSync as (...args: unknown[]) => void)(
+            target,
+            ...rest,
+          );
+        }) as PacksFs['writeFileSync'],
+      }),
+    });
+    store.save([ALPHA]);
+    store.countFailure(ALPHA.id, ALPHA.version);
+    store.markFailed(ALPHA.id, ALPHA.version, 'boot-timeout');
+
+    expect(() => store.save([])).toThrow(/ENOSPC/);
+
+    expect(store.get().packs.installed[0]?.runtimeFailed).toBe('boot-timeout');
+    expect(store.countFailure(ALPHA.id, ALPHA.version)).toBe(2);
   });
 });

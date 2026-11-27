@@ -7,7 +7,18 @@ import {
 } from './constants';
 import { idSchema, packIdSchema, packVersionSchema } from './pack-api';
 import { PACK_ENTRY_FAILURE_CODES } from './packs';
+import {
+  SANDBOX_BOOT_FAILURES,
+  SANDBOX_FAILURE_REASONS,
+} from './sandbox-failures';
 import { z } from './zod-setup';
+
+export {
+  SANDBOX_BOOT_FAILURES,
+  SANDBOX_FAILURE_REASONS,
+  type SandboxBootFailure,
+  type SandboxFailureReason,
+} from './sandbox-failures';
 
 /**
  * The sandbox load chain's messages (Story 3.5, AD-7) and what the overlay
@@ -27,7 +38,9 @@ import { z } from './zod-setup';
  *    on that port (before `init`, the bootstrap alone may get one
  *    SandboxBitmapCharactersMessage), and the bootstrap answers each
  *    `frame` with the pack's `draw`, its ImageBitmaps transferred, or with
- *    `sandbox.no-draw` when the pack gave none it could send.
+ *    `sandbox.no-draw` when the pack gave none it could send. Every
+ *    HEARTBEAT_TICKS world ticks the overlay also posts a SandboxPingMessage
+ *    (Story 3.9), which the bootstrap answers with `sandbox.pong`.
  * 5. The overlay writes what happened to the run log (`packs:log`,
  *    PackLogEntry).
  *
@@ -77,6 +90,23 @@ export function sandboxBitmapCharactersMessage(
   characterIds: readonly string[],
 ): SandboxBitmapCharactersMessage {
   return { type: 'sandbox.bitmap-characters', characterIds: [...characterIds] };
+}
+
+/**
+ * What pack-host posts a ready sandbox on the port every HEARTBEAT_TICKS
+ * world ticks (Story 3.9). Like SandboxBitmapCharactersMessage, its `type`
+ * starts with SANDBOX_REPORT_PREFIX: the Worker bootstrap answers it at
+ * once with `sandbox.pong`, outside the Compartment, and the pack never
+ * sees it. A Worker busy in the pack's code (a `frame` that never
+ * returns) answers none.
+ */
+export interface SandboxPingMessage {
+  readonly type: 'sandbox.ping';
+}
+
+/** The SandboxPingMessage. */
+export function sandboxPingMessage(): SandboxPingMessage {
+  return { type: 'sandbox.ping' };
 }
 
 /**
@@ -144,36 +174,6 @@ const readyRemovalsSchema = z
   })
   .readonly();
 
-/**
- * Why the bootstrap did not get the pack's `handlers`, in its order:
- * - `api-removal-failed`, `intrinsic-removal-failed`: a listed API or
- *   intrinsic is still there after removal;
- * - `ses-missing`: SES's `lockdown` is not there (or, after `lockdown()`,
- *   its `harden` or `Compartment`);
- * - `lockdown-threw`;
- * - `lockdown-output`: something was printed on the console from loading
- *   SES to the end of `lockdown()`;
- * - `entry-threw`: evaluating the entry threw (a syntax error included);
- * - `entry-not-factory`: the entry's value is not a function;
- * - `factory-threw`;
- * - `handlers-not-object`: the factory did not return an object (an array
- *   or a promise, from an async factory, does not count).
- * The pack's code runs only after the first four passed.
- */
-export const SANDBOX_BOOT_FAILURES = [
-  'api-removal-failed',
-  'intrinsic-removal-failed',
-  'ses-missing',
-  'lockdown-threw',
-  'lockdown-output',
-  'entry-threw',
-  'entry-not-factory',
-  'factory-threw',
-  'handlers-not-object',
-] as const;
-
-export type SandboxBootFailure = (typeof SANDBOX_BOOT_FAILURES)[number];
-
 /** Uncaught trouble in a running Worker: an `error` or an unhandled rejection. */
 export const SANDBOX_FAULTS = ['error', 'unhandled-rejection'] as const;
 
@@ -216,7 +216,8 @@ export const SANDBOX_REPORT_PREFIX = 'sandbox.';
  * - `sandbox.failed`: why not (the removals and console lines so far);
  * - `sandbox.fault`: uncaught trouble later on;
  * - `sandbox.no-draw` (Story 3.6): the `frame` of `seq` gets no `draw`, and
- *   why.
+ *   why;
+ * - `sandbox.pong` (Story 3.9): the answer to a SandboxPingMessage.
  */
 export const sandboxReportSchema = z.discriminatedUnion('type', [
   z.strictObject({
@@ -239,29 +240,17 @@ export const sandboxReportSchema = z.discriminatedUnion('type', [
     seq: z.int().nonnegative(),
     reason: z.enum(SANDBOX_NO_DRAW_REASONS),
   }),
+  z.strictObject({
+    type: z.literal('sandbox.pong'),
+  }),
 ]);
 
 export type SandboxReport = z.infer<typeof sandboxReportSchema>;
 
 // ---------------------------------------------------------------------------
 // What the overlay writes to the run log (`packs:log`).
-
-/**
- * Why a pack's sandbox was taken down: the bootstrap's own reasons, plus
- * the Worker failing (`worker-error`, its iframe or bootstrap says so), an
- * unhandled rejection in it, a report that does not fit the protocol
- * (`bad-report`), and no `sandbox.ready` or `sandbox.failed` within
- * SANDBOX_BOOT_TIMEOUT_MS of adding its iframe (`boot-timeout`).
- */
-export const SANDBOX_FAILURE_REASONS = [
-  ...SANDBOX_BOOT_FAILURES,
-  'worker-error',
-  'unhandled-rejection',
-  'bad-report',
-  'boot-timeout',
-] as const;
-
-export type SandboxFailureReason = (typeof SANDBOX_FAILURE_REASONS)[number];
+// Why a sandbox was taken down (SANDBOX_FAILURE_REASONS) is in
+// sandbox-failures.ts, exported from here too.
 
 /**
  * Why a pack with an actor on stage gets no sandbox: main's
@@ -413,3 +402,36 @@ export type PackLogEntry = z.infer<typeof packLogEntrySchema>;
 
 /** `packs:log`'s arguments: one entry. */
 export const packsLogInputSchema = z.tuple([packLogEntrySchema]);
+
+// ---------------------------------------------------------------------------
+// What the overlay asks main once a sandbox failed (Story 3.9).
+
+/**
+ * One failure of a pack's sandbox, as the overlay tells main
+ * (`packs:runtime-failed`): the pack, the version its sandbox ran, and
+ * why it failed (any SandboxFailureReason: a boot failure counts too).
+ */
+export const packRuntimeFailureSchema = z.strictObject({
+  packId: packIdSchema,
+  version: packVersionSchema,
+  reason: z.enum(SANDBOX_FAILURE_REASONS),
+});
+
+export type PackRuntimeFailure = z.infer<typeof packRuntimeFailureSchema>;
+
+/** `packs:runtime-failed`'s arguments: one failure. */
+export const packsRuntimeFailedInputSchema = z.tuple([
+  packRuntimeFailureSchema,
+]);
+
+/**
+ * `packs:runtime-failed`'s answer: whether the overlay builds the pack a
+ * new sandbox (`restart`), or leaves the failed one as it is.
+ */
+export const packRuntimeFailedResultSchema = z.strictObject({
+  restart: z.boolean(),
+});
+
+export type PackRuntimeFailedResult = z.infer<
+  typeof packRuntimeFailedResultSchema
+>;

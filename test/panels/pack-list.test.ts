@@ -33,6 +33,8 @@ import {
   REMOVE_FAILURE_TEXTS,
   removeConfirmText,
   removeFailedText,
+  RUNTIME_FAILURE_TEXTS,
+  runtimeFailedText,
   versionText,
   type PackListActionState,
   type PackListPack,
@@ -53,6 +55,7 @@ import {
   type StagePackExport,
   type StagePacks,
 } from '../../src/shared/packs';
+import { SANDBOX_FAILURE_REASONS } from '../../src/shared/sandbox';
 import {
   SETTINGS_DEFAULTS,
   settingsPatchSchema,
@@ -254,6 +257,38 @@ describe('I/O matrix', () => {
     );
   });
 
+  it('第 4 次: a pack marked failed this run (Story 3.9) says why, in the words of its reason code, and what brings it back; its 上場 and 加入池子 stay as they are', () => {
+    const values = settings(
+      { 'alpha-pack': false },
+      { 'alpha-pack/beta': { inPool: false } },
+    );
+    const marked = { ...ALPHA, runtimeFailed: 'draw-timeout' as const };
+
+    const view = packListView({ installed: [marked, BRAVO] }, values);
+
+    expect(view.map((pack) => pack.runtimeFailed)).toStrictEqual([
+      '執行失敗，這次執行已停用：連續 10 秒沒有有效的 draw。重新匯入或重新啟動 app 後恢復。',
+      null,
+    ]);
+    // Everything else is as for the same pack not marked.
+    expect({ ...view[0], runtimeFailed: null }).toStrictEqual(
+      packListView(PACKS, values)[0],
+    );
+    expect(view[0]?.enabled.checked).toBe(false);
+    expect(runtimeFailedText(undefined)).toBeNull();
+    // Each of the reason codes has words of its own.
+    expect(Object.keys(RUNTIME_FAILURE_TEXTS).sort()).toStrictEqual(
+      [...SANDBOX_FAILURE_REASONS].sort(),
+    );
+    const texts = SANDBOX_FAILURE_REASONS.map((reason) =>
+      runtimeFailedText(reason),
+    );
+    expect(new Set(texts).size).toBe(SANDBOX_FAILURE_REASONS.length);
+    expect(runtimeFailedText('heartbeat-timeout')).toBe(
+      '執行失敗，這次執行已停用：沙盒太久沒有回應心跳（包的程式可能卡住，例如無窮迴圈）。重新匯入或重新啟動 app 後恢復。',
+    );
+  });
+
   it('列出: each pack by id with its name, version and characters in manifest order, all checked', () => {
     const view = packListView(PACKS, settings());
 
@@ -266,6 +301,7 @@ describe('I/O matrix', () => {
       name: '甲包',
       version: '版本 1.2.0',
       incompatible: null,
+      runtimeFailed: null,
       enabled: {
         id: 'enabled:alpha-pack',
         checked: true,
