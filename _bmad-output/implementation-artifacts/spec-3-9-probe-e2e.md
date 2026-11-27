@@ -2,7 +2,7 @@
 title: 'Story 3.9 收尾：探針 e2e（當掉、卡死、角色包頁提示）'
 type: 'chore'
 created: '2026-11-27'
-status: 'in-review'
+status: 'done'
 baseline_commit: 'ea3e3165eef0db5fa6ff87f15ed9cae2420c5528'
 route: 'dispatch'
 review_loop_iteration: 0
@@ -99,8 +99,9 @@ helpers 讓探針包可以換入口與版本；`probeSandboxTrouble` 可以指�
 - stuck：beforeAll 掛 overlay 的 `worker` 事件，追蹤 url 開頭 `blob:null/` 的 Worker 與它們的 `close`。CPU 以 pid＋creationTime 對應行程；收回後的量測方式必須與對照相同。
 - 本機驗證：`npm run typecheck` 通過；`npx playwright test --list` 列出新檔 6 個測試（全部 40 個、6 個檔）。e2e 未在本機執行，要靠 CI。
 - 風險：CI 若沒有 GPU，GPU 行程可能仍吃 CPU，使「CPU 回落」誤判；`blob:null/` 這個 url 前綴只靠推論，未實測。若 CI 證實做不到，依定案寫明原因並只留 Worker 關閉的斷言。
-- 2026-11-27 審查後修補 6 條（見 Review Triage Log：B3、B4、B5、B9、B12、V1），CPU 判定的誤判風險記進 deferred-work。全套 `npx vitest run`（5719 通過、2 skip）、`npm run lint`、`npm run typecheck`、`npx playwright test --list`（新檔 6 個測試）都通過；e2e 仍只在 CI 跑。
+- 2026-11-27 審查後修補 6 條（見 Review Triage Log：B3、B4、B5、B9、B12、V1），CPU 判定的 GPU 誤判風險曾記進 deferred-work，第 1 次 CI 的數據否定後已刪除（使用者 2026-11-27 同意）。全套 `npx vitest run`（5719 通過、2 skip）、`npm run lint`、`npm run typecheck`、`npx playwright test --list`（新檔 6 個測試）都通過；e2e 仍只在 CI 跑。
 - 2026-11-27 第 1 次 CI（run 45943562808，commit `30c25b1` 在內）：macOS、Windows 都只有「沒有殘留」失敗，其餘新測試全過（crash 4 個、卡死，以及 Worker 關閉、Worker 數＝4、`blob:null/` 前綴）。依 Spec Change Log 第 1 條修正 CPU 判定。
+- 2026-11-27 第 2 次 CI（run 45945016723，commit `028d173`）：check 與 e2e 在 macOS、Windows 全部通過；兩個新檔的 6 個測試在兩個平台都有執行、沒有 skip（Windows 唯一的 skip 是既有的「macOS 隱藏」）。spec 標 done。
 
 ## Spec Change Log
 
