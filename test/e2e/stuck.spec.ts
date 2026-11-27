@@ -17,7 +17,12 @@
  * frames; a sandbox's is made from a blob by an opaque-origin document, so
  * its url starts with `blob:null/`) and the CPU time of each of the app's
  * processes through `app.getAppMetrics()`, measured against itself: once
- * while a Worker is stuck (the control), once after the last one is gone.
+ * while a Worker is stuck (the control), then after the last one is gone
+ * until the CPU has dropped. DevTools reports a Worker closed as soon as
+ * its iframe goes, but Chromium ends one still running a script only some
+ * time later (about 2 s on CI, both systems, 2026-11-27): the Worker before
+ * the control's may still be running in it, and the CPU drops a while
+ * after the last Worker is reported closed.
  *
  * One launch for the whole file (serial). The tests read the run log, the
  * panels' StageView, the overlay's Workers and main's process metrics.
@@ -106,8 +111,21 @@ const CPU_SPAN_MS = 2_000;
  */
 const STUCK_RATE_MIN = 0.2;
 
+/**
+ * The most CPU use one stuck Worker can show: it is one thread. The control
+ * may see two at once (the one before still ending, see the file comment).
+ */
+const ONE_WORKER_RATE_MAX = 1;
+
 /** How long the overlay's sandbox Workers may take to close. */
 const WORKER_CLOSE_TIMEOUT_MS = 15_000;
+
+/**
+ * How long the app's CPU may take to drop once the last sandbox Worker is
+ * reported closed: well past the time Chromium takes to end a Worker still
+ * running a script.
+ */
+const CPU_SETTLE_TIMEOUT_MS = 15_000;
 
 /** How a sandbox Worker's url starts (src/sandbox/iframe.ts). */
 const SANDBOX_WORKER_URL = 'blob:null/';
@@ -267,7 +285,8 @@ test.describe('I/O matrix', () => {
       trouble,
     );
     // The control: the rebuilt sandbox's Worker is stuck in its first
-    // frame until the heartbeat times out, well after the measure ends.
+    // frame until the heartbeat times out, well after the measure ends
+    // (the Worker before it may still be ending; see the file comment).
     await pause(Math.max(0, rebuilt.at + CONTROL_DELAY_MS - Date.now()));
     controlWorkers = openSandboxWorkers();
     control = await measureCpu(CPU_SPAN_MS);
@@ -310,9 +329,11 @@ test.describe('I/O matrix', () => {
       });
   });
 
-  test('沒有殘留: with the 4th failure past and the actor taken back, every sandbox Worker the overlay had is closed, and no process of the app uses half the CPU the busiest one did while a Worker was stuck', async () => {
-    // The wait for the Workers, the measure, and some room for the rest.
-    test.setTimeout(WORKER_CLOSE_TIMEOUT_MS + CPU_SPAN_MS + 30_000);
+  test('沒有殘留: with the 4th failure past and the actor taken back, every sandbox Worker the overlay had is closed, and the CPU drops: soon no process of the app uses half of what one stuck Worker did in the control', async () => {
+    // The wait for the Workers, the measures, and some room for the rest.
+    test.setTimeout(
+      WORKER_CLOSE_TIMEOUT_MS + CPU_SETTLE_TIMEOUT_MS + CPU_SPAN_MS + 30_000,
+    );
     // The control saw a sandbox Worker open and a process busy: there was
     // something to go.
     expect(controlWorkers.length).toBeGreaterThanOrEqual(1);
@@ -332,15 +353,24 @@ test.describe('I/O matrix', () => {
       .map((worker) => worker.url());
     expect(unclosed).toStrictEqual([]);
 
-    const after = await measureCpu(CPU_SPAN_MS);
-    expect(after.cumulative).toBe(control.cumulative);
-    const busy = after.processes.filter((each) => each.rate >= busiest / 2);
-    // Both spans in the message: whether a process busy after was busy in
+    // Measured again until no process is that busy, or the time is up.
+    const threshold = Math.min(busiest, ONE_WORKER_RATE_MAX) / 2;
+    const deadline = Date.now() + CPU_SETTLE_TIMEOUT_MS;
+    const after: CpuSpan[] = [];
+    let busy: readonly ProcessCpu[];
+    do {
+      const span = await measureCpu(CPU_SPAN_MS);
+      after.push(span);
+      busy = span.processes.filter((each) => each.rate >= threshold);
+    } while (busy.length > 0 && Date.now() < deadline);
+    // Every span in the message: whether a process busy after was busy in
     // the control too (a GPU process drawing in software, say) or a Worker
     // was left behind.
+    const spans = `control: ${JSON.stringify(control)}; after: ${JSON.stringify(after)}`;
+    expect(busy, spans).toStrictEqual([]);
     expect(
-      busy,
-      `control: ${JSON.stringify(control)}; after: ${JSON.stringify(after)}`,
-    ).toStrictEqual([]);
+      after.map((span) => span.cumulative),
+      spans,
+    ).toStrictEqual(after.map(() => control.cumulative));
   });
 });

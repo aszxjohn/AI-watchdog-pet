@@ -100,8 +100,15 @@ helpers 讓探針包可以換入口與版本；`probeSandboxTrouble` 可以指�
 - 本機驗證：`npm run typecheck` 通過；`npx playwright test --list` 列出新檔 6 個測試（全部 40 個、6 個檔）。e2e 未在本機執行，要靠 CI。
 - 風險：CI 若沒有 GPU，GPU 行程可能仍吃 CPU，使「CPU 回落」誤判；`blob:null/` 這個 url 前綴只靠推論，未實測。若 CI 證實做不到，依定案寫明原因並只留 Worker 關閉的斷言。
 - 2026-11-27 審查後修補 6 條（見 Review Triage Log：B3、B4、B5、B9、B12、V1），CPU 判定的誤判風險記進 deferred-work。全套 `npx vitest run`（5719 通過、2 skip）、`npm run lint`、`npm run typecheck`、`npx playwright test --list`（新檔 6 個測試）都通過；e2e 仍只在 CI 跑。
+- 2026-11-27 第 1 次 CI（run 45943562808，commit `30c25b1` 在內）：macOS、Windows 都只有「沒有殘留」失敗，其餘新測試全過（crash 4 個、卡死，以及 Worker 關閉、Worker 數＝4、`blob:null/` 前綴）。依 Spec Change Log 第 1 條修正 CPU 判定。
 
 ## Spec Change Log
+
+- 2026-11-27（CI 觸發）
+  - 觸發：第 1 次 CI 兩個平台的「沒有殘留」在最後的 CPU 斷言失敗。對照時最忙的行程是 1.64 核（macOS）、1.72 核（Windows），收回後同一個行程平均 0.83 核、0.94 核；GPU 行程收回後約 0.01 核，審查 B1 擔心的 GPU 誤判沒有發生。對照超過 1 核、收回後不到 1 核，表示 Worker 會停，只是在 DevTools 回報關閉後約 2 秒才停（Chromium 對還在跑腳本的 Worker 延後強制結束）。
+  - 修改：Design Notes「CPU 自我校正」的「收回後」改成重複量 2 秒、15 秒內要回落，門檻改成 `min(對照最大值, 1) / 2`。frozen 的矩陣（Worker 全部關閉、CPU 回落）不變。
+  - 避開的錯誤狀態：Worker 一回報關閉就只量一次，量到 Chromium 結束 Worker 前的那 2 秒而誤判殘留；對照同時看到兩個 Worker，門檻被抬到接近 1 核，真的殘留一個也可能漏抓。
+  - KEEP：crash.spec 全部、卡死測試、Worker 關閉的斷言（`blob:null/` 前綴、數量等於 4、全部 close），兩個平台都已通過，不要改。
 
 ## Review Triage Log
 
@@ -142,7 +149,8 @@ helpers 讓探針包可以換入口與版本；`probeSandboxTrouble` 可以指�
 
 **CPU 自我校正：** 用 `app.evaluate` 讀 `app.getAppMetrics()`，算每個 pid 在一段時間內的 CPU 秒數增量。優先用 `cumulativeCPUUsage`；沒有的話，在區間頭尾各呼叫一次，取 `percentCPUUsage`。
 - 對照：某次 `sandbox ready` 之後約 0.3 秒起，量 2 秒，這時 Worker 正卡在迴圈裡（心跳 5 秒才逾時）。最大速率要明顯大於 0。
-- 收回後：同樣量 2 秒，每個 pid 的速率都要小於對照最大值的一半。
+- 收回後：Worker 都回報關閉後，每次量 2 秒、重複量，15 秒內要有一次每個 pid 的速率都小於 `min(對照最大值, 1) / 2`。上限 1 是因為一個卡住的 Worker 是一條執行緒，最多吃 1 核；對照可能同時看到兩個（前一個還沒結束）。
+- DevTools 在 iframe 移除時就回報 Worker 關閉，但 Chromium 對還在跑腳本的 Worker 要過一陣子（CI 上約 2 秒）才真正結束，所以收回後不能只量一次。
 - 這樣兩邊單位一致，不依賴 Windows 的計法。
 
 ## Verification
